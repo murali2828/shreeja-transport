@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Shreeja — Transport Management</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root { --brand: #1565c0; --brand-light: #42a5f5; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: linear-gradient(135deg, #1565c0 0%, #1e88e5 50%, #42a5f5 100%);
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  body::before {
+    content:''; position:fixed; top:-20%; right:-10%; width:55%; height:70%;
+    background: radial-gradient(ellipse, rgba(100,181,246,.35) 0%, transparent 70%);
+    border-radius:50%; pointer-events:none; z-index:0;
+  }
+  body::after {
+    content:''; position:fixed; bottom:-15%; left:-10%; width:45%; height:60%;
+    background: radial-gradient(ellipse, rgba(13,71,161,.4) 0%, transparent 70%);
+    border-radius:50%; pointer-events:none; z-index:0;
+  }
+  .glass { background:rgba(255,255,255,.88); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); border:1px solid rgba(255,255,255,.6); }
+  .glass-dark { background:rgba(255,255,255,.92); backdrop-filter:blur(16px); border-right:1px solid rgba(255,255,255,.5); }
+  .btn { display:inline-flex; align-items:center; gap:5px; padding:6px 12px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; transition:.15s; border:none; }
+  .btn-primary { background:#1565c0; color:#fff; }
+  .btn-primary:hover { background:#0d47a1; }
+  .btn-secondary { background:rgba(255,255,255,.9); color:#374151; border:1px solid rgba(255,255,255,.6); }
+  .btn-secondary:hover { background:#fff; }
+  .btn-success { background:#059669; color:#fff; }
+  .btn-danger  { background:#dc2626; color:#fff; }
+  .btn-sm { padding:4px 8px; font-size:11px; }
+  .input { width:100%; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,.5); background:rgba(255,255,255,.85); font-size:13px; outline:none; }
+  .input:focus { border-color:#1565c0; box-shadow:0 0 0 2px rgba(21,101,192,.2); }
+  .label { display:block; font-size:11px; font-weight:600; color:#4b5563; margin-bottom:3px; }
+  .card { border-radius:14px; box-shadow:0 4px 24px rgba(21,101,192,.12); }
+  .th { padding:8px 12px; font-size:11px; font-weight:700; color:#1565c0; text-transform:uppercase; letter-spacing:.05em; background:rgba(219,234,254,.5); border-bottom:1px solid rgba(147,197,253,.4); text-align:left; }
+  .td { padding:8px 12px; font-size:13px; color:#1f2937; border-bottom:1px solid rgba(219,234,254,.5); }
+  tr:hover td { background:rgba(239,246,255,.6); }
+  .badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+  .badge-green  { background:#d1fae5; color:#065f46; }
+  .badge-yellow { background:#fef3c7; color:#92400e; }
+  .badge-blue   { background:#dbeafe; color:#1e40af; }
+  .badge-red    { background:#fee2e2; color:#991b1b; }
+  .badge-gray   { background:#f3f4f6; color:#4b5563; }
+  .nav-item { display:flex; align-items:center; gap:10px; padding:8px 12px; border-radius:10px; font-size:13px; font-weight:500; cursor:pointer; color:#374151; transition:.15s; text-decoration:none; }
+  .nav-item:hover { background:rgba(219,234,254,.6); color:#1565c0; }
+  .nav-item.active { background:#1565c0; color:#fff; }
+  .nav-label { font-size:10px; font-weight:700; color:#9ca3af; text-transform:uppercase; letter-spacing:.1em; padding:4px 12px; }
+  .stat-card { border-radius:14px; padding:16px; display:flex; align-items:center; gap:14px; }
+  .stat-icon { width:42px; height:42px; border-radius:10px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:20px; flex-shrink:0; }
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:100; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .modal { border-radius:16px; width:100%; max-width:480px; overflow:hidden; box-shadow:0 25px 60px rgba(0,0,0,.2); }
+  .page { display:none; }
+  .page.active { display:block; }
+  select.input { cursor:pointer; }
+  .top-bar { background:linear-gradient(90deg,#1565c0 0%,#1976d2 100%); }
+  .shimmer { background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%); background-size:400% 100%; animation:shimmer 1.2s infinite; border-radius:6px; }
+  @keyframes shimmer { 0%{background-position:100% 0} 100%{background-position:-100% 0} }
+  .dot { width:8px;height:8px;border-radius:50%;display:inline-block; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="login-screen" style="position:relative;z-index:1;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px">
+  <div style="width:100%;max-width:360px">
+    <div style="text-align:center;margin-bottom:32px">
+      <div style="display:inline-flex;align-items:center;gap:12px;margin-bottom:6px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+          <div style="width:12px;height:12px;background:#fff;border-radius:3px;opacity:.9"></div>
+          <div style="width:12px;height:12px;background:#fff;border-radius:3px;opacity:.9"></div>
+          <div style="width:12px;height:12px;background:#fff;border-radius:3px;opacity:.9"></div>
+          <div style="width:12px;height:12px;background:#fff;border-radius:3px;opacity:.9"></div>
+        </div>
+        <span style="color:#fff;font-weight:800;font-size:2rem;letter-spacing:.02em;text-shadow:0 2px 8px rgba(0,0,0,.2)">Shreeja</span>
+      </div>
+      <p style="color:rgba(255,255,255,.75);font-size:13px;font-weight:500">Secondary Transport Management System</p>
+    </div>
+    <div class="glass card" style="border-radius:20px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.2)">
+      <div style="padding:28px 28px 12px">
+        <div style="font-size:20px;font-weight:700;color:#1f2937;margin-bottom:2px">Welcome back</div>
+        <div style="font-size:12px;color:#6b7280;margin-bottom:20px">Sign in to your Shreeja account</div>
+        <div style="margin-bottom:14px">
+          <label class="label">Username</label>
+          <input id="login-user" class="input" type="text" placeholder="Enter username" value="admin" />
+        </div>
+        <div style="margin-bottom:18px">
+          <label class="label">Password</label>
+          <input id="login-pass" class="input" type="password" placeholder="Enter password" value="Admin@1234" />
+        </div>
+        <button onclick="doLogin()" style="width:100%;padding:11px;border-radius:12px;background:linear-gradient(90deg,#1565c0,#1e88e5);color:#fff;font-weight:700;font-size:14px;border:none;cursor:pointer;box-shadow:0 4px 14px rgba(21,101,192,.4);transition:.15s"
+          onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform=''">
+          Sign In
+        </button>
+        <div style="margin-top:16px;background:rgba(219,234,254,.5);border-radius:10px;padding:10px 12px">
+          <div style="font-size:10px;font-weight:700;color:#1565c0;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Demo Credentials</div>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <div onclick="setLogin('admin','Admin@1234')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:#fff;border-radius:7px;border:1px solid rgba(147,197,253,.5)" onmouseover="this.style.background='#eff6ff'" onmouseout="this.style.background='#fff'">
+              <div><span style="font-family:monospace;font-size:12px;font-weight:700;color:#1565c0">admin</span> <span style="font-size:10px;color:#6b7280">/ Admin@1234</span></div>
+              <span style="font-size:10px;background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:999px;font-weight:600">Admin</span>
+            </div>
+            <div onclick="setLogin('planner','Planner@1234')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:#fff;border-radius:7px;border:1px solid rgba(147,197,253,.5)" onmouseover="this.style.background='#eff6ff'" onmouseout="this.style.background='#fff'">
+              <div><span style="font-family:monospace;font-size:12px;font-weight:700;color:#1565c0">planner</span> <span style="font-size:10px;color:#6b7280">/ Planner@1234</span></div>
+              <span style="font-size:10px;background:#d1fae5;color:#065f46;padding:2px 6px;border-radius:999px;font-weight:600">Planner</span>
+            </div>
+            <div onclick="setLogin('executor','Executor@1234')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:#fff;border-radius:7px;border:1px solid rgba(147,197,253,.5)" onmouseover="this.style.background='#eff6ff'" onmouseout="this.style.background='#fff'">
+              <div><span style="font-family:monospace;font-size:12px;font-weight:700;color:#1565c0">executor</span> <span style="font-size:10px;color:#6b7280">/ Executor@1234</span></div>
+              <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:999px;font-weight:600">Executor</span>
+            </div>
+          </div>
+          <p style="text-align:center;color:#9ca3af;font-size:10px;margin-top:8px">Click any row to auto-fill credentials</p>
+        </div>
+      </div>
+      <div style="padding:12px 28px 20px;border-top:1px solid rgba(219,234,254,.6)">
+        <p style="color:#9ca3af;font-size:11px;text-align:center">© 2026 Shreeja Dairy — Transport Management</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app" style="display:none;position:relative;z-index:1;height:100vh;flex-direction:column">
+
+  <!-- TOP BAR -->
+  <div class="top-bar" style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;flex-shrink:0;box-shadow:0 2px 12px rgba(0,0,0,.2)">
+    <div style="display:flex;align-items:center;gap:12px">
+      <button onclick="toggleSidebar()" style="background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;color:#fff;display:flex" onmouseover="this.style.background='rgba(255,255,255,.2)'" onmouseout="this.style.background='none'">
+        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px">
+          <div style="width:8px;height:8px;background:#fff;border-radius:2px;opacity:.9"></div>
+          <div style="width:8px;height:8px;background:#fff;border-radius:2px;opacity:.9"></div>
+          <div style="width:8px;height:8px;background:#fff;border-radius:2px;opacity:.9"></div>
+          <div style="width:8px;height:8px;background:#fff;border-radius:2px;opacity:.9"></div>
+        </div>
+        <span style="color:#fff;font-weight:800;font-size:18px;letter-spacing:.02em">Shreeja</span>
+      </div>
+      <div style="width:1px;height:20px;background:rgba(255,255,255,.3);margin:0 4px"></div>
+      <span style="color:rgba(255,255,255,.85);font-size:13px;font-weight:500">Secondary Transport</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button style="background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;color:#fff" onmouseover="this.style.background='rgba(255,255,255,.2)'" onmouseout="this.style.background='none'">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="11" cy="11" r="8"/><path stroke-linecap="round" d="m21 21-4.35-4.35"/></svg>
+      </button>
+      <button style="background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;color:#fff" onmouseover="this.style.background='rgba(255,255,255,.2)'" onmouseout="this.style.background='none'">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 00-5-5.917V5a1 1 0 10-2 0v.083A6 6 0 006 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+      </button>
+      <div style="width:1px;height:20px;background:rgba(255,255,255,.3)"></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div id="hdr-avatar" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.25);border:2px solid rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:12px">A</div>
+        <div>
+          <div id="hdr-name" style="color:#fff;font-size:12px;font-weight:600;line-height:1.2">Administrator</div>
+          <div id="hdr-role" style="color:rgba(255,255,255,.65);font-size:10px">admin</div>
+        </div>
+      </div>
+      <button onclick="doLogout()" style="background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;color:rgba(255,255,255,.7)" title="Logout" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,.7)'">
+        <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- BODY -->
+  <div style="display:flex;flex:1;overflow:hidden">
+
+    <!-- SIDEBAR -->
+    <aside id="sidebar" class="glass-dark" style="width:208px;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden;transition:.2s">
+      <div style="padding:12px 12px 8px">
+        <div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;background:rgba(219,234,254,.4)">
+          <div id="sb-avatar" style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#1565c0,#42a5f5);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:13px;flex-shrink:0">A</div>
+          <div style="min-width:0">
+            <div id="sb-name" style="font-size:12px;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Administrator</div>
+            <div id="sb-role" style="font-size:10px;color:#1565c0;font-weight:600">Admin</div>
+          </div>
+        </div>
+      </div>
+      <nav style="flex:1;overflow-y:auto;padding:8px">
+        <a class="nav-item active" onclick="showPage('dashboard')" href="#">
+          <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          Dashboard
+        </a>
+        <!-- Masters group: admin + planner -->
+        <div id="nav-masters">
+          <div class="nav-label" style="margin-top:12px">Masters</div>
+          <a class="nav-item" onclick="showPage('tankers')" href="#">
+            <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="1" y="8" width="22" height="10" rx="2"/><path d="M5 8V6a2 2 0 012-2h10a2 2 0 012 2v2"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>
+            Tankers
+          </a>
+          <a class="nav-item" onclick="showPage('bmcus')" href="#">
+            <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M3 21h18M3 7l9-4 9 4M4 7v14M20 7v14M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15h.01"/></svg>
+            BMCUs
+          </a>
+          <a class="nav-item" onclick="showPage('routes')" href="#">
+            <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+            Routes
+          </a>
+          <a class="nav-item" onclick="showPage('locations')" href="#">
+            <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
+            Locations
+          </a>
+          <!-- Admin only -->
+          <div id="nav-admin-only">
+            <a class="nav-item" onclick="showPage('users')" href="#">
+              <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+              Users
+            </a>
+            <a class="nav-item" onclick="showPage('email-config')" href="#">
+              <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              Email Config
+            </a>
+          </div>
+        </div>
+        <!-- Planning group: admin + planner -->
+        <div id="nav-planning">
+          <div class="nav-label" style="margin-top:12px">Planning</div>
+          <a class="nav-item" onclick="showPage('planning')" href="#">
+            <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            Trip Plans
+          </a>
+        </div>
+        <div class="nav-label" style="margin-top:12px">Execution</div>
+        <a class="nav-item" onclick="showPage('execution')" href="#">
+          <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polygon points="10,8 16,12 10,16"/></svg>
+          Active Trips
+        </a>
+        <a class="nav-item" onclick="showPage('closed')" href="#">
+          <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M20 7H4a2 2 0 00-2 2v6a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/><path d="M16 2v4M8 2v4M2 10h20"/></svg>
+          Closed Trips
+        </a>
+        <div class="nav-label" style="margin-top:12px">Reports</div>
+        <a class="nav-item" onclick="showPage('reports')" href="#">
+          <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+          TS Report
+        </a>
+      </nav>
+      <div style="padding:10px 12px;border-top:1px solid rgba(219,234,254,.6)">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px">
+            <div style="width:6px;height:6px;background:#1565c0;border-radius:1px"></div>
+            <div style="width:6px;height:6px;background:#1565c0;border-radius:1px"></div>
+            <div style="width:6px;height:6px;background:#1565c0;border-radius:1px"></div>
+            <div style="width:6px;height:6px;background:#1565c0;border-radius:1px"></div>
+          </div>
+          <span style="color:#1565c0;font-weight:800;font-size:13px">Shreeja</span>
+        </div>
+        <div style="color:#9ca3af;font-size:10px;margin-top:2px">Transport Management v1.0</div>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main style="flex:1;overflow:auto;padding:20px">
+
+      <!-- DASHBOARD -->
+      <div id="page-dashboard" class="page active">
+        <div style="margin-bottom:20px">
+          <div style="font-size:20px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.2)">Dashboard</div>
+          <div id="dash-welcome" style="color:rgba(255,255,255,.75);font-size:13px">Welcome, Administrator · 20 May 2026</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px">
+          <div class="glass card stat-card" onclick="showPage('planning')">
+            <div class="stat-icon" style="background:linear-gradient(135deg,#1565c0,#42a5f5)">📋</div>
+            <div><div style="font-size:26px;font-weight:800;color:#1565c0">47</div><div style="font-size:12px;color:#6b7280">Plans for Today</div></div>
+          </div>
+          <div class="glass card stat-card" onclick="showPage('execution')">
+            <div class="stat-icon" style="background:linear-gradient(135deg,#f59e0b,#fbbf24)">🚛</div>
+            <div><div style="font-size:26px;font-weight:800;color:#d97706">12</div><div style="font-size:12px;color:#6b7280">Active Trips</div></div>
+          </div>
+          <div class="glass card stat-card" onclick="showPage('execution')">
+            <div class="stat-icon" style="background:linear-gradient(135deg,#7c3aed,#a78bfa)">⏳</div>
+            <div><div style="font-size:26px;font-weight:800;color:#7c3aed">5</div><div style="font-size:12px;color:#6b7280">Pending Ack.</div></div>
+          </div>
+          <div class="glass card stat-card" onclick="showPage('closed')">
+            <div class="stat-icon" style="background:linear-gradient(135deg,#059669,#34d399)">✅</div>
+            <div><div style="font-size:26px;font-weight:800;color:#059669">30</div><div style="font-size:12px;color:#6b7280">Closed Today</div></div>
+          </div>
+        </div>
+        <!-- Today's Plans Table -->
+        <div class="glass card" style="margin-bottom:16px">
+          <div style="padding:14px 16px;border-bottom:1px solid rgba(219,234,254,.6);display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:700;color:#1f2937;font-size:14px">Today's Trip Plans — 20 May 2026</div>
+            <button class="btn btn-primary btn-sm" onclick="showPage('planning')">View All →</button>
+          </div>
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr>
+                <th class="th">Trip#</th><th class="th">Route</th><th class="th">Tanker</th><th class="th">Delivery Point</th><th class="th">Exp. Qty (L)</th><th class="th">Driver</th><th class="th">Status</th>
+              </tr></thead>
+              <tbody>
+                <tr><td class="td" style="font-weight:700;color:#1565c0">1</td><td class="td">Thambalapalli</td><td class="td" style="font-family:monospace;font-size:12px">AP03TF2538</td><td class="td">Balaji Dairy</td><td class="td">15,500</td><td class="td">A Munikrishna</td><td class="td"><span class="badge badge-green">Published</span></td></tr>
+                <tr><td class="td" style="font-weight:700;color:#1565c0">2</td><td class="td">Chinthaparthi</td><td class="td" style="font-family:monospace;font-size:12px">AP07TN0549</td><td class="td">Balaji Dairy</td><td class="td">19,582</td><td class="td">Gangaiah</td><td class="td"><span class="badge badge-green">Published</span></td></tr>
+                <tr><td class="td" style="font-weight:700;color:#1565c0">3</td><td class="td">Chilamathur</td><td class="td" style="font-family:monospace;font-size:12px">AP39TD1229</td><td class="td">Balaji Dairy</td><td class="td">20,758</td><td class="td">Jayachandra</td><td class="td"><span class="badge badge-green">Published</span></td></tr>
+                <tr><td class="td" style="font-weight:700;color:#1565c0">4</td><td class="td">K Talapula</td><td class="td" style="font-family:monospace;font-size:12px">AP04TW4458</td><td class="td">Balaji Dairy</td><td class="td">30,130</td><td class="td">Lakshmireddy</td><td class="td"><span class="badge badge-yellow">Draft</span></td></tr>
+                <tr><td class="td" style="font-weight:700;color:#1565c0">5</td><td class="td">Melacheruvu</td><td class="td" style="font-family:monospace;font-size:12px">AP07TF2421</td><td class="td">Balaji Dairy</td><td class="td">13,042</td><td class="td">—</td><td class="td"><span class="badge badge-yellow">Draft</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <!-- Pending Ack -->
+        <div class="glass card">
+          <div style="padding:14px 16px;border-bottom:1px solid rgba(253,186,116,.4);background:rgba(254,243,199,.4);border-radius:14px 14px 0 0">
+            <div style="font-weight:700;color:#92400e;font-size:14px">⚠ Pending Acknowledgements (5)</div>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr>
+              <th class="th">Tanker</th><th class="th">Route</th><th class="th">Exec. Date</th><th class="th">Qty (L)</th><th class="th">Action</th>
+            </tr></thead>
+            <tbody>
+              <tr><td class="td" style="font-family:monospace;font-weight:600">AP03TE9069</td><td class="td">Penumuru</td><td class="td">19-05-2026</td><td class="td">15,900</td><td class="td"><button class="btn btn-success btn-sm" onclick="showPage('ack')">Enter Acknowledgement</button></td></tr>
+              <tr><td class="td" style="font-family:monospace;font-weight:600">AP31TF6368</td><td class="td">GD Nellore</td><td class="td">19-05-2026</td><td class="td">18,372</td><td class="td"><button class="btn btn-success btn-sm" onclick="showPage('ack')">Enter Acknowledgement</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TANKER MASTER -->
+      <div id="page-tankers" class="page">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">
+          <div>
+            <div style="font-size:18px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.2)">Tanker Master</div>
+            <div style="color:rgba(255,255,255,.75);font-size:12px">Manage tanker fleet — numbers, compartments, capacity and per km rate</div>
+          </div>
+          <button class="btn btn-secondary" onclick="showModal('tanker-modal')">+ Add Tanker</button>
+        </div>
+        <div class="glass card">
+          <div style="padding:10px 12px;border-bottom:1px solid rgba(219,234,254,.5)">
+            <input class="input" style="max-width:240px" placeholder="Search tanker number…" />
+          </div>
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr>
+                <th class="th">#</th><th class="th">Tanker Number</th><th class="th">Compartments</th><th class="th">Capacity (L)</th><th class="th">Per KM Rate (₹)</th><th class="th">Status</th><th class="th">Actions</th>
+              </tr></thead>
+              <tbody id="tanker-rows">
+                <tr><td class="td" style="color:#9ca3af">1</td><td class="td" style="font-family:monospace;font-weight:700">AP03TF2538</td><td class="td">3 (FC, MC, BC)</td><td class="td">21,000 L</td><td class="td">₹ 48.00</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><button class="btn btn-secondary btn-sm">✏ Edit</button></td></tr>
+                <tr><td class="td" style="color:#9ca3af">2</td><td class="td" style="font-family:monospace;font-weight:700">AP07TN0549</td><td class="td">2 (FC, BC)</td><td class="td">20,000 L</td><td class="td">₹ 45.00</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><button class="btn btn-secondary btn-sm">✏ Edit</button></td></tr>
+                <tr><td class="td" style="color:#9ca3af">3</td><td class="td" style="font-family:monospace;font-weight:700">AP39TD1229</td><td class="td">2 (FC, BC)</td><td class="td">30,000 L</td><td class="td">₹ 52.00</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><button class="btn btn-secondary btn-sm">✏ Edit</button></td></tr>
+                <tr><td class="td" style="color:#9ca3af">4</td><td class="td" style="font-family:monospace;font-weight:700">AP04TW4458</td><td class="td">2 (FC, BC)</td><td class="td">21,000 L</td><td class="td">₹ 46.50</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><button class="btn btn-secondary btn-sm">✏ Edit</button></td></tr>
+                <tr><td class="td" style="color:#9ca3af">5</td><td class="td" style="font-family:monospace;font-weight:700">AP07TF2421</td><td class="td">2 (FC, BC)</td><td class="td">18,000 L</td><td class="td">₹ 43.00</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><button class="btn btn-secondary btn-sm">✏ Edit</button></td></tr>
+                <tr><td class="td" style="color:#9ca3af">6</td><td class="td" style="font-family:monospace;font-weight:700">TN863039</td><td class="td">3 (FC, MC, BC)</td><td class="td">20,000 L</td><td class="td">₹ 50.00</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><button class="btn btn-secondary btn-sm">✏ Edit</button></td></tr>
+                <tr><td class="td" style="color:#9ca3af">7</td><td class="td" style="font-family:monospace;font-weight:700">KA15B0198</td><td class="td">2 (FC, BC)</td><td class="td">15,000 L</td><td class="td">₹ 40.00</td><td class="td"><span class="badge badge-red">Inactive</span></td><td class="td"><button class="btn btn-secondary btn-sm">✏ Edit</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="padding:8px 12px;border-top:1px solid rgba(219,234,254,.5);font-size:11px;color:#6b7280">Total: 63 tankers · Active: 62</div>
+        </div>
+      </div>
+
+      <!-- BMCU MASTER -->
+      <div id="page-bmcus" class="page">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">
+          <div>
+            <div style="font-size:18px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.2)">BMCU Master</div>
+            <div style="color:rgba(255,255,255,.75);font-size:12px">Manage all 135 Bulk Milk Chilling Units</div>
+          </div>
+          <button class="btn btn-secondary">+ Add BMCU</button>
+        </div>
+        <div class="glass card">
+          <div style="padding:10px 12px;border-bottom:1px solid rgba(219,234,254,.5);display:flex;gap:8px">
+            <input class="input" style="max-width:220px" placeholder="Search code or name…" />
+            <select class="input" style="max-width:120px"><option>All States</option><option>AP</option><option>TN</option><option>KA</option><option>TG</option></select>
+            <span style="font-size:12px;color:#6b7280;align-self:center">135 BMCUs</span>
+          </div>
+          <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+            <table style="width:100%;border-collapse:collapse">
+              <thead style="position:sticky;top:0"><tr>
+                <th class="th">#</th><th class="th">Code</th><th class="th">BMCU Name</th><th class="th">District</th><th class="th">State</th><th class="th">Contact</th><th class="th">Status</th><th class="th">Actions</th>
+              </tr></thead>
+              <tbody>
+                <tr><td class="td" style="color:#9ca3af">1</td><td class="td" style="font-family:monospace;font-weight:700">3001</td><td class="td" style="font-weight:500">Penumuru</td><td class="td" style="color:#6b7280">Chittoor</td><td class="td"><span class="badge badge-blue">AP</span></td><td class="td">9876543210</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm">✏</button><button class="btn btn-danger btn-sm">🗑</button></div></td></tr>
+                <tr><td class="td" style="color:#9ca3af">2</td><td class="td" style="font-family:monospace;font-weight:700">3602</td><td class="td" style="font-weight:500">Tarigonda</td><td class="td" style="color:#6b7280">Chittoor</td><td class="td"><span class="badge badge-blue">AP</span></td><td class="td">—</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm">✏</button><button class="btn btn-danger btn-sm">🗑</button></div></td></tr>
+                <tr><td class="td" style="color:#9ca3af">3</td><td class="td" style="font-family:monospace;font-weight:700">3419</td><td class="td" style="font-weight:500">Punganur</td><td class="td" style="color:#6b7280">Chittoor</td><td class="td"><span class="badge badge-blue">AP</span></td><td class="td">9123456789</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm">✏</button><button class="btn btn-danger btn-sm">🗑</button></div></td></tr>
+                <tr><td class="td" style="color:#9ca3af">4</td><td class="td" style="font-family:monospace;font-weight:700">3624</td><td class="td" style="font-weight:500">Thambalapalli</td><td class="td" style="color:#6b7280">Chittoor</td><td class="td"><span class="badge badge-blue">AP</span></td><td class="td">—</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm">✏</button><button class="btn btn-danger btn-sm">🗑</button></div></td></tr>
+                <tr><td class="td" style="color:#9ca3af">5</td><td class="td" style="font-family:monospace;font-weight:700">3201</td><td class="td" style="font-weight:500">Melacheruvu</td><td class="td" style="color:#6b7280">Nellore</td><td class="td"><span class="badge badge-blue">AP</span></td><td class="td">—</td><td class="td"><span class="badge badge-green">Active</span></td><td class="td"><div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm">✏</button><button class="btn btn-danger btn-sm">🗑</button></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRIP PLANNING -->
+      <div id="page-planning" class="page">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+          <div>
+            <div style="font-size:18px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.2)">Trip Planning</div>
+            <div style="color:rgba(255,255,255,.75);font-size:12px">Plan tanker routes today for tomorrow's trips</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-secondary">⬆ Upload Excel</button>
+            <button class="btn btn-secondary">⬇ Template</button>
+            <button class="btn btn-success">✓ Publish 3 Plans</button>
+            <button class="btn btn-secondary" onclick="showPage('plan-form')">+ Add Trip Plan</button>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+          <div><label class="label" style="color:rgba(255,255,255,.8)">Plan for Date</label><input class="input" type="date" value="2026-05-21" style="width:170px" /></div>
+          <div style="color:rgba(255,255,255,.8);font-size:13px;padding-top:16px">47 trips · <strong>8,52,000 L</strong> exp. qty · <strong>₹4,12,000</strong> est. cost</div>
+        </div>
+        <div class="glass card">
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr>
+                <th class="th">Trip#</th><th class="th">Route</th><th class="th">Tanker</th><th class="th">Start Point</th><th class="th">Delivery</th><th class="th">Shifts</th><th class="th">Exp. Qty (L)</th><th class="th">Exp. KM</th><th class="th">Total Cost</th><th class="th">₹/L</th><th class="th">Driver</th><th class="th">Status</th><th class="th">Actions</th>
+              </tr></thead>
+              <tbody>
+                <tr><td class="td" style="font-weight:800;color:#1565c0">1</td><td class="td" style="font-weight:600">Thambalapalli</td><td class="td" style="font-family:monospace;font-size:11px">AP03TF2538</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td" style="font-size:11px">06E07M</td><td class="td">15,500</td><td class="td">305</td><td class="td">₹14,640</td><td class="td">0.945</td><td class="td" style="font-size:11px">A Munikrishna</td><td class="td"><span class="badge badge-green">Published</span></td><td class="td"><div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm">✏</button></div></td></tr>
+                <tr><td class="td" style="font-weight:800;color:#1565c0">2</td><td class="td" style="font-weight:600">Chinthaparthi</td><td class="td" style="font-family:monospace;font-size:11px">AP07TN0549</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td" style="font-size:11px">06E07M</td><td class="td">19,582</td><td class="td">281</td><td class="td">₹12,645</td><td class="td">0.646</td><td class="td" style="font-size:11px">Gangaiah</td><td class="td"><span class="badge badge-green">Published</span></td><td class="td"><div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm">✏</button></div></td></tr>
+                <tr><td class="td" style="font-weight:800;color:#1565c0">3</td><td class="td" style="font-weight:600">Chilamathur</td><td class="td" style="font-family:monospace;font-size:11px">AP39TD1229</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td" style="font-size:11px">06E07M</td><td class="td">20,758</td><td class="td">487</td><td class="td">₹25,324</td><td class="td">1.220</td><td class="td" style="font-size:11px">Jayachandra</td><td class="td"><span class="badge badge-green">Published</span></td><td class="td"><div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm">✏</button></div></td></tr>
+                <tr><td class="td" style="font-weight:800;color:#1565c0">4</td><td class="td" style="font-weight:600">K Talapula</td><td class="td" style="font-family:monospace;font-size:11px">AP04TW4458</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td" style="font-size:11px">06E07M</td><td class="td">30,130</td><td class="td">435</td><td class="td">₹20,227</td><td class="td">0.672</td><td class="td" style="font-size:11px">Lakshmireddy</td><td class="td"><span class="badge badge-yellow">Draft</span></td><td class="td"><div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm">✏</button><button class="btn btn-danger btn-sm">🗑</button></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRIP EXECUTION -->
+      <div id="page-execution" class="page">
+        <div style="margin-bottom:20px">
+          <div style="font-size:18px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.2)">Trip Execution</div>
+          <div style="color:rgba(255,255,255,.75);font-size:12px">Select a trip to start or continue data entry</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+          <div><label class="label" style="color:rgba(255,255,255,.8)">Execution Date</label><input class="input" type="date" value="2026-05-20" style="width:170px" /></div>
+          <div style="color:rgba(255,255,255,.75);font-size:12px;padding-top:16px">47 planned · 12 active · 5 pending ack</div>
+        </div>
+        <div class="glass card">
+          <div style="padding:8px 12px;background:rgba(219,234,254,.4);border-bottom:1px solid rgba(219,234,254,.5);font-size:11px;font-weight:700;color:#1565c0">Published Plans for 20-05-2026</div>
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr>
+                <th class="th">Trip#</th><th class="th">Route</th><th class="th">Tanker</th><th class="th">Delivery Point</th><th class="th">Exp. Qty (L)</th><th class="th">Driver</th><th class="th">Remarks</th><th class="th">Exec. Status</th><th class="th">Action</th>
+              </tr></thead>
+              <tbody>
+                <tr><td class="td" style="font-weight:800;color:#1565c0">1</td><td class="td" style="font-weight:600">Thambalapalli</td><td class="td" style="font-family:monospace;font-size:11px">AP03TF2538</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td">15,500</td><td class="td" style="font-size:11px">A Munikrishna</td><td class="td" style="font-size:11px;color:#6b7280">—</td><td class="td"><span class="badge badge-blue">In Progress</span></td><td class="td"><button class="btn btn-primary btn-sm" onclick="showPage('exec-form')">▶ Continue</button></td></tr>
+                <tr><td class="td" style="font-weight:800;color:#1565c0">2</td><td class="td" style="font-weight:600">Chinthaparthi</td><td class="td" style="font-family:monospace;font-size:11px">AP07TN0549</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td">19,582</td><td class="td" style="font-size:11px">Gangaiah</td><td class="td" style="font-size:11px;color:#6b7280">—</td><td class="td"><span class="badge badge-green">Saved</span></td><td class="td"><button class="btn btn-primary btn-sm" onclick="showPage('exec-form')">▶ Continue</button></td></tr>
+                <tr><td class="td" style="font-weight:800;color:#1565c0">3</td><td class="td" style="font-weight:600">Penumuru</td><td class="td" style="font-family:monospace;font-size:11px">AP03TE9069</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td">15,900</td><td class="td" style="font-size:11px">—</td><td class="td" style="font-size:11px;color:#6b7280">—</td><td class="td"><span class="badge badge-red">Pending Ack.</span></td><td class="td"><button class="btn btn-success btn-sm" onclick="showPage('ack')">✓ Acknowledge</button></td></tr>
+                <tr><td class="td" style="font-weight:800;color:#1565c0">4</td><td class="td" style="font-weight:600">Chilamathur</td><td class="td" style="font-family:monospace;font-size:11px">AP39TD1229</td><td class="td" style="font-size:11px">Balaji Dairy</td><td class="td">20,758</td><td class="td" style="font-size:11px">Jayachandra</td><td class="td" style="font-size:11px;color:#6b7280">—</td><td class="td"><span class="badge badge-gray">Not Started</span></td><td class="td"><button class="btn btn-primary btn-sm">▶ Start</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- EXECUTION FORM -->
+      <div id="page-exec-form" class="page">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          <button class="btn btn-secondary btn-sm" onclick="showPage('execution')">← Back</button>
+          <div>
+            <div style="font-size:17px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.2)">Trip Execution — Thambalapalli Route</div>
+            <div style="color:rgba(255,255,255,.75);font-size:12px">AP03TF2538 · 3 chambers (FC, MC, BC) · 21,000 L capacity · Trip #1</div>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button class="btn btn-secondary">💾 Save</button>
+            <button class="btn btn-success" onclick="showPage('ack')">📤 Submit for Acknowledgement</button>
+          </div>
+        </div>
+        <!-- Remarks banner -->
+        <div style="background:rgba(254,243,199,.6);border:1px solid rgba(251,191,36,.4);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#92400e">
+          ℹ <strong>Planner Remarks:</strong> Collect 06E milk from Thambalapalli first, then proceed to Mudivedu. Check quality at each stop.
+        </div>
+        <!-- Header -->
+        <div class="glass card" style="padding:14px;margin-bottom:14px">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+            <div><label class="label">Tanker Number</label><div class="input" style="background:rgba(243,244,246,.8);font-family:monospace">AP03TF2538</div></div>
+            <div><label class="label">Route Name</label><div class="input" style="background:rgba(243,244,246,.8)">Thambalapalli</div></div>
+            <div><label class="label">DC Number</label><input class="input" value="DC-2026-0547" /></div>
+            <div><label class="label">Actual KMs Travelled</label><input class="input" type="number" value="298" /></div>
+          </div>
+        </div>
+        <!-- BMCU rows -->
+        <div class="glass card" style="margin-bottom:14px;overflow:hidden">
+          <div style="padding:10px 14px;border-bottom:1px solid rgba(219,234,254,.5);display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:700;font-size:13px;color:#1f2937">Milk Lifting Details</div>
+            <div style="font-size:11px;color:#6b7280">3 chambers: FC, MC, BC</div>
+          </div>
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead><tr>
+                <th class="th">#</th><th class="th">BMCU</th><th class="th">Date</th><th class="th">Shift</th><th class="th">Qty Ltrs</th><th class="th">Qty Kgs</th><th class="th">Fat%</th><th class="th">SNF%</th><th class="th">Kg Fat</th><th class="th">Kg SNF</th><th class="th">Description</th><th class="th">Source BMCU</th><th class="th">Chamber</th><th class="th">DPS Ltrs</th><th class="th">DPS Kgs</th><th class="th">RMRD Qty</th><th class="th">Actions</th>
+              </tr></thead>
+              <tbody>
+                <tr>
+                  <td class="td" style="color:#9ca3af">1</td>
+                  <td class="td"><select class="input" style="font-size:11px;min-width:130px"><option>3624 - Thambalapalli</option></select></td>
+                  <td class="td"><input class="input" type="date" value="2026-05-19" style="font-size:11px;min-width:120px" /></td>
+                  <td class="td"><select class="input" style="font-size:11px;width:60px"><option>AM</option><option>PM</option></select></td>
+                  <td class="td"><input class="input" type="number" value="5106" style="font-size:11px;width:80px" /></td>
+                  <td class="td" style="color:#1565c0;font-weight:600">5251.6</td>
+                  <td class="td"><input class="input" type="number" value="4.2" style="font-size:11px;width:60px" /></td>
+                  <td class="td"><input class="input" type="number" value="8.5" style="font-size:11px;width:60px" /></td>
+                  <td class="td" style="color:#1565c0;font-weight:600">220.57</td>
+                  <td class="td" style="color:#1565c0;font-weight:600">446.39</td>
+                  <td class="td"><select class="input" style="font-size:11px;width:110px"><option>RMRD</option><option>Balance Milk</option><option>Internal Shifting</option></select></td>
+                  <td class="td" style="color:#9ca3af;font-size:11px">—</td>
+                  <td class="td"><select class="input" style="font-size:11px;width:60px"><option>FC</option><option>MC</option><option>BC</option></select></td>
+                  <td class="td"><input class="input" type="number" value="100" style="font-size:11px;width:70px" /></td>
+                  <td class="td" style="color:#6b7280">102.85</td>
+                  <td class="td"><input class="input" type="number" value="5006" style="font-size:11px;width:80px" /></td>
+                  <td class="td"><div style="display:flex;gap:3px"><button class="btn btn-danger btn-sm">🗑</button><button class="btn btn-secondary btn-sm">+</button></div></td>
+                </tr>
+                <tr>
+                  <td class="td" style="color:#9ca3af">2</td>
+                  <td class="td"><select class="input" style="font-size:11px;min-width:130px"><option>3625 - Reddykota</option></select></td>
+                  <td class="td"><input class="input" type="date" value="2026-05-19" style="font-size:11px;min-width:120px" /></td>
+                  <td class="td"><select class="input" style="font-size:11px;width:60px"><option>AM</option></select></td>
+                  <td class="td"><input class="input" type="number" value="769" style="font-size:11px;width:80px" /></td>
+                  <td class="td" style="color:#1565c0;font-weight:600">791.09</td>
+                  <td class="td"><input class="input" type="number" value="3.9" style="font-size:11px;width:60px" /></td>
+                  <td class="td"><input class="input" type="number" value="8.2" style="font-size:11px;width:60px" /></td>
+                  <td class="td" style="color:#1565c0;font-weight:600">30.85</td>
+                  <td class="td" style="color:#1565c0;font-weight:600">64.87</td>
+                  <td class="td"><select class="input" style="font-size:11px;width:110px"><option>RMRD</option></select></td>
+                  <td class="td" style="color:#9ca3af;font-size:11px">—</td>
+                  <td class="td"><select class="input" style="font-size:11px;width:60px"><option>MC</option></select></td>
+                  <td class="td"><input class="input" type="number" value="0" style="font-size:11px;width:70px" /></td>
+                  <td class="td" style="color:#6b7280">0</td>
+                  <td class="td"><input class="input" type="number" value="769" style="font-size:11px;width:80px" /></td>
+                  <td class="td"><div style="display:flex;gap:3px"><button class="btn btn-danger btn-sm">🗑</button><button class="btn btn-secondary btn-sm">+</button></div></td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr style="background:rgba(219,234,254,.5);font-weight:700">
+                  <td colspan="4" class="td" style="text-align:right;color:#6b7280;font-size:11px">TOTALS:</td>
+                  <td class="td" style="color:#1565c0">15,900</td>
+                  <td class="td" style="color:#1565c0">16,353</td>
+                  <td class="td">3.948</td><td class="td">8.289</td>
+                  <td class="td" style="color:#1565c0">547.57</td>
+                  <td class="td" style="color:#1565c0">1,108.6</td>
+                  <td colspan="7" class="td"></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <div style="padding:8px 12px;border-top:1px solid rgba(219,234,254,.5)">
+            <button class="btn btn-secondary btn-sm">+ Add BMCU Row</button>
+          </div>
+        </div>
+        <!-- Summary -->
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
+          <div class="glass card" style="padding:12px;text-align:center"><div style="font-size:18px;font-weight:800;color:#1565c0">15,900</div><div style="font-size:11px;color:#6b7280">Total Qty (L)</div></div>
+          <div class="glass card" style="padding:12px;text-align:center"><div style="font-size:18px;font-weight:800;color:#1565c0">16,353</div><div style="font-size:11px;color:#6b7280">Total Qty (Kg)</div></div>
+          <div class="glass card" style="padding:12px;text-align:center"><div style="font-size:18px;font-weight:800;color:#1565c0">3.948</div><div style="font-size:11px;color:#6b7280">Avg Fat %</div></div>
+          <div class="glass card" style="padding:12px;text-align:center"><div style="font-size:18px;font-weight:800;color:#1565c0">8.289</div><div style="font-size:11px;color:#6b7280">Avg SNF %</div></div>
+          <div class="glass card" style="padding:12px;text-align:center"><div style="font-size:18px;font-weight:800;color:#059669">75.71%</div><div style="font-size:11px;color:#6b7280">Utilization %</div></div>
+        </div>
+      </div>
+
+      <!-- ACKNOWLEDGEMENT -->
+      <div id="page-ack" class="page">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          <button class="btn btn-secondary btn-sm" onclick="showPage('execution')">← Back</button>
+          <div>
+            <div style="font-size:17px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.2)">Plant Acknowledgement</div>
+            <div style="color:rgba(255,255,255,.75);font-size:12px">AP03TE9069 · Penumuru Route · Trip #3</div>
+          </div>
+        </div>
+        <div class="glass card" style="padding:14px;margin-bottom:14px">
+          <div style="font-weight:700;font-size:13px;margin-bottom:10px;color:#374151">Trip Summary (As per Truck Sheet / RMRD)</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;font-size:13px">
+            <div style="background:rgba(243,244,246,.6);border-radius:8px;padding:10px"><div style="font-size:11px;color:#6b7280">Total Qty (L)</div><div style="font-weight:700;font-size:16px">15,900</div></div>
+            <div style="background:rgba(243,244,246,.6);border-radius:8px;padding:10px"><div style="font-size:11px;color:#6b7280">Total Qty (Kg)</div><div style="font-weight:700;font-size:16px">16,353</div></div>
+            <div style="background:rgba(219,234,254,.5);border-radius:8px;padding:10px"><div style="font-size:11px;color:#1565c0">DPS Total (L)</div><div style="font-weight:700;font-size:16px;color:#1565c0">150</div></div>
+            <div style="background:rgba(219,234,254,.5);border-radius:8px;padding:10px"><div style="font-size:11px;color:#1565c0">DPS Total (Kg)</div><div style="font-weight:700;font-size:16px;color:#1565c0">154.28</div></div>
+          </div>
+        </div>
+        <div class="glass card" style="overflow:hidden;margin-bottom:14px">
+          <div style="padding:12px 16px;border-bottom:1px solid rgba(219,234,254,.5);display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:700;font-size:13px">Acknowledgement by Chamber — As per Balaji Dairy</div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+              Ack Date: <input class="input" type="date" value="2026-05-20" style="width:150px" />
+            </div>
+          </div>
+          <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+            <div style="border:1px solid rgba(219,234,254,.6);border-radius:10px;padding:14px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+                <span style="font-weight:800;color:#1565c0;background:rgba(219,234,254,.7);padding:3px 10px;border-radius:6px;font-size:13px">FC Chamber</span>
+                <input class="input" placeholder="Temperature (e.g. 5.0/5.4)" style="flex:1;max-width:220px" value="5.0/5.4" />
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;font-size:12px">
+                <div><label class="label">Qty Litres</label><input class="input" value="8150" /></div>
+                <div><label class="label">Qty Kgs (auto)</label><div class="input" style="background:rgba(243,244,246,.8);font-family:monospace">8382.3</div></div>
+                <div><label class="label">Fat %</label><input class="input" value="3.6" /></div>
+                <div><label class="label">SNF %</label><input class="input" value="8.0" /></div>
+                <div><label class="label">Kg Fat (auto)</label><div class="input" style="background:rgba(243,244,246,.8);font-family:monospace">301.76</div></div>
+                <div><label class="label">Kg SNF (auto)</label><div class="input" style="background:rgba(243,244,246,.8);font-family:monospace">670.58</div></div>
+              </div>
+            </div>
+            <div style="border:1px solid rgba(219,234,254,.6);border-radius:10px;padding:14px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+                <span style="font-weight:800;color:#1565c0;background:rgba(219,234,254,.7);padding:3px 10px;border-radius:6px;font-size:13px">BC Chamber</span>
+                <input class="input" placeholder="Temperature" style="flex:1;max-width:220px" value="5.8" />
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;font-size:12px">
+                <div><label class="label">Qty Litres</label><input class="input" value="7650" /></div>
+                <div><label class="label">Qty Kgs (auto)</label><div class="input" style="background:rgba(243,244,246,.8);font-family:monospace">7868.0</div></div>
+                <div><label class="label">Fat %</label><input class="input" value="3.5" /></div>
+                <div><label class="label">SNF %</label><input class="input" value="7.9" /></div>
+                <div><label class="label">Kg Fat (auto)</label><div class="input" style="background:rgba(243,244,246,.8);font-family:monospace">275.38</div></div>
+                <div><label class="label">Kg SNF (auto)</label><div class="input" style="background:rgba(243,244,246,.8);font-family:monospace">621.57</div></div>
+              </div>
+            </div>
+          </div>
+          <div style="padding:12px 16px;background:rgba(209,250,229,.4);border-top:1px solid rgba(167,243,208,.4)">
+            <div style="display:flex;gap:20px;font-size:13px">
+              <span style="color:#6b7280">Total Ack Qty (L):</span> <strong>15,800</strong>
+              <span style="color:#6b7280">Kg Fat:</span> <strong>577.14</strong>
+              <span style="color:#6b7280">Kg SNF:</span> <strong>1,292.16</strong>
+            </div>
+          </div>
+          <div style="padding:12px 16px;border-top:1px solid rgba(219,234,254,.4)">
+            <div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:6px">Variations (Ack vs Truck Sheet)</div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;font-size:12px">
+              <div style="background:rgba(254,226,226,.5);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;color:#6b7280">Qty Ltrs</div><div style="font-weight:700;color:#dc2626">-100</div></div>
+              <div style="background:rgba(254,226,226,.5);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;color:#6b7280">Qty Kgs</div><div style="font-weight:700;color:#dc2626">-102.85</div></div>
+              <div style="background:rgba(209,250,229,.5);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;color:#6b7280">Kg Fat</div><div style="font-weight:700;color:#059669">+29.57</div></div>
+              <div style="background:rgba(209,250,229,.5);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;color:#6b7280">Kg SNF</div><div style="font-weight:700;color:#059669">+183.54</div></div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px">
+          <button class="btn btn-secondary" onclick="showPage('execution')">Cancel</button>
+          <button class="btn btn-success" onclick="alert('✅ Acknowledgement saved! Trip is now closed.')">✓ Save & Close Trip</button>
+        </div>
+      </div>
+
+      <!-- TS REPORT -->
+      <div id="page-reports" class="page">
+        <div style="margin-bottom:20px">
+          <div style="font-size:18px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.2)">Daily TS Report</div>
+          <div style="color:rgba(255,255,255,.75);font-size:12px">Daily Milk Procurement Total Solid Variation Report</div>
+        </div>
+        <div class="glass card" style="padding:16px;margin-bottom:16px">
+          <div style="display:grid;grid-template-columns:auto auto auto 1fr;gap:12px;align-items:end">
+            <div><label class="label">From Date</label><input class="input" type="date" value="2026-05-19" style="width:160px" /></div>
+            <div><label class="label">To Date</label><input class="input" type="date" value="2026-05-19" style="width:160px" /></div>
+            <button class="btn btn-primary" style="align-self:flex-end">📊 Generate Report</button>
+            <div></div>
+          </div>
+          <div style="border-top:1px solid rgba(219,234,254,.5);margin-top:16px;padding-top:16px">
+            <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px">Send Daily Report by Email</div>
+            <div style="display:flex;gap:10px;align-items:flex-end">
+              <div><label class="label">Report Date</label><input class="input" type="date" value="2026-05-19" style="width:160px" /></div>
+              <button class="btn btn-secondary">⬇ Download Excel</button>
+              <button class="btn btn-primary" onclick="alert('📧 Report sent to 3 recipients!')">📧 Send by Email</button>
+            </div>
+          </div>
+        </div>
+        <!-- Summary cards -->
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+          <div class="glass card" style="padding:12px"><div style="font-size:11px;color:#6b7280">Total Trips</div><div style="font-size:22px;font-weight:800;color:#1565c0">47</div></div>
+          <div class="glass card" style="padding:12px"><div style="font-size:11px;color:#6b7280">Total Truck Qty (L)</div><div style="font-size:22px;font-weight:800;color:#1565c0">8,52,340</div></div>
+          <div class="glass card" style="padding:12px"><div style="font-size:11px;color:#6b7280">Total Ack Qty (L)</div><div style="font-size:22px;font-weight:800;color:#059669">8,49,800</div></div>
+        </div>
+        <!-- Report table -->
+        <div class="glass card" style="overflow:hidden">
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:11px">
+              <thead>
+                <tr>
+                  <th class="th">S.No</th><th class="th">Started From</th><th class="th">Receiver</th><th class="th">Milk Lifting Date</th><th class="th">Ack Date</th><th class="th">Tanker No.</th><th class="th">Route</th><th class="th">Temp.</th>
+                  <th class="th" style="background:rgba(219,234,254,.6)">DPS Ltrs</th><th class="th" style="background:rgba(219,234,254,.6)">DPS Kgs</th>
+                  <th class="th" style="background:rgba(254,243,199,.6)">Truck Ltrs</th><th class="th" style="background:rgba(254,243,199,.6)">Truck Kgs</th><th class="th" style="background:rgba(254,243,199,.6)">Fat%</th><th class="th" style="background:rgba(254,243,199,.6)">SNF%</th><th class="th" style="background:rgba(254,243,199,.6)">Kg Fat</th><th class="th" style="background:rgba(254,243,199,.6)">Kg SNF</th>
+                  <th class="th" style="background:rgba(209,250,229,.6)">Ack Ltrs</th><th class="th" style="background:rgba(209,250,229,.6)">Ack Kgs</th><th class="th" style="background:rgba(209,250,229,.6)">Ack Fat%</th><th class="th" style="background:rgba(209,250,229,.6)">Ack SNF%</th><th class="th" style="background:rgba(209,250,229,.6)">Ack KgFat</th><th class="th" style="background:rgba(209,250,229,.6)">Ack KgSNF</th>
+                  <th class="th" style="background:rgba(254,226,226,.6)">Qty Var</th><th class="th" style="background:rgba(254,226,226,.6)">KgFat±</th><th class="th" style="background:rgba(254,226,226,.6)">KgSNF±</th><th class="th" style="background:rgba(254,226,226,.6)">TS±</th>
+                  <th class="th">Tanker Qty</th><th class="th">Util%</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td class="td">1</td><td class="td">Balaji Dairy</td><td class="td">MDFVPL</td><td class="td">19-05-2026</td><td class="td">20-05-2026</td><td class="td" style="font-family:monospace">AP07TF2421</td><td class="td">Deevanur</td><td class="td">5.0/5.4</td>
+                  <td class="td" style="background:rgba(219,234,254,.3)">17,694</td><td class="td" style="background:rgba(219,234,254,.3)">18,198.9</td>
+                  <td class="td" style="background:rgba(254,243,199,.3)">17,518</td><td class="td" style="background:rgba(254,243,199,.3)">18,017.4</td><td class="td" style="background:rgba(254,243,199,.3)">4.101</td><td class="td" style="background:rgba(254,243,199,.3)">8.033</td><td class="td" style="background:rgba(254,243,199,.3)">738.82</td><td class="td" style="background:rgba(254,243,199,.3)">1,447.3</td>
+                  <td class="td" style="background:rgba(209,250,229,.3)">17,623</td><td class="td" style="background:rgba(209,250,229,.3)">18,125</td><td class="td" style="background:rgba(209,250,229,.3)">4.056</td><td class="td" style="background:rgba(209,250,229,.3)">8.504</td><td class="td" style="background:rgba(209,250,229,.3)">735.27</td><td class="td" style="background:rgba(209,250,229,.3)">1,541.4</td>
+                  <td class="td" style="background:rgba(209,250,229,.3);color:#059669;font-weight:700">+107.6</td><td class="td" style="background:rgba(254,226,226,.3);color:#dc2626;font-weight:700">-3.55</td><td class="td" style="background:rgba(209,250,229,.3);color:#059669;font-weight:700">+94.1</td><td class="td" style="background:rgba(209,250,229,.3);color:#059669;font-weight:700">+90.6</td>
+                  <td class="td">18,000</td><td class="td">97.90%</td>
+                </tr>
+                <tr><td class="td">2</td><td class="td">Bathalapalli</td><td class="td">MDFVPL</td><td class="td">19-05-2026</td><td class="td">20-05-2026</td><td class="td" style="font-family:monospace">AP39TP2777</td><td class="td">MB Cross</td><td class="td">5.6/5.4</td>
+                  <td class="td" style="background:rgba(219,234,254,.3)">17,130</td><td class="td" style="background:rgba(219,234,254,.3)">17,618.4</td>
+                  <td class="td" style="background:rgba(254,243,199,.3)">17,131</td><td class="td" style="background:rgba(254,243,199,.3)">17,618.8</td><td class="td" style="background:rgba(254,243,199,.3)">3.900</td><td class="td" style="background:rgba(254,243,199,.3)">8.204</td><td class="td" style="background:rgba(254,243,199,.3)">687.09</td><td class="td" style="background:rgba(254,243,199,.3)">1,445.4</td>
+                  <td class="td" style="background:rgba(209,250,229,.3)">17,239</td><td class="td" style="background:rgba(209,250,229,.3)">17,730</td><td class="td" style="background:rgba(209,250,229,.3)">3.958</td><td class="td" style="background:rgba(209,250,229,.3)">8.108</td><td class="td" style="background:rgba(209,250,229,.3)">701.69</td><td class="td" style="background:rgba(209,250,229,.3)">1,437.5</td>
+                  <td class="td" style="background:rgba(209,250,229,.3);color:#059669;font-weight:700">+111.2</td><td class="td" style="background:rgba(209,250,229,.3);color:#059669;font-weight:700">+14.6</td><td class="td" style="background:rgba(254,226,226,.3);color:#dc2626;font-weight:700">-7.92</td><td class="td" style="background:rgba(209,250,229,.3);color:#059669;font-weight:700">+6.68</td>
+                  <td class="td">18,000</td><td class="td">95.77%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- OTHER PAGES PLACEHOLDER -->
+      <div id="page-routes" class="page">
+        <div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:16px">Route Master</div>
+        <div class="glass card" style="padding:40px;text-align:center;color:#6b7280">Route Master — Define routes with ordered BMCU sequences</div>
+      </div>
+      <div id="page-locations" class="page">
+        <div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:16px">Location Masters</div>
+        <div class="glass card" style="padding:40px;text-align:center;color:#6b7280">Starting Points · Testing Points · Delivery Points</div>
+      </div>
+      <div id="page-users" class="page">
+        <div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:16px">User Management</div>
+        <div class="glass card" style="padding:40px;text-align:center;color:#6b7280">Manage Admin · Planner · Executor accounts</div>
+      </div>
+      <div id="page-closed" class="page">
+        <div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:16px">Closed Trips</div>
+        <div class="glass card" style="padding:40px;text-align:center;color:#6b7280">Date & Tanker filtered view of completed trips with acknowledgements</div>
+      </div>
+      <div id="page-plan-form" class="page">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          <button class="btn btn-secondary btn-sm" onclick="showPage('planning')">← Back</button>
+          <div style="font-size:17px;font-weight:700;color:#fff">New Trip Plan</div>
+        </div>
+        <div class="glass card" style="padding:40px;text-align:center;color:#6b7280">Trip Plan form — Route selection, BMCU sequence, auto-cost calculation</div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- TANKER MODAL (Add Tanker) -->
+<div id="tanker-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeModal('tanker-modal')">
+  <div class="modal glass" style="border-radius:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid rgba(219,234,254,.5)">
+      <div style="font-weight:700;font-size:15px">Add New Tanker</div>
+      <button onclick="closeModal('tanker-modal')" style="background:none;border:none;cursor:pointer;font-size:18px;color:#6b7280;line-height:1">✕</button>
+    </div>
+    <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
+      <div><label class="label">Tanker Number *</label><input class="input" placeholder="e.g. AP03TE9069" style="text-transform:uppercase" /></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div><label class="label">No. of Compartments *</label><select class="input"><option value="2">2 Compartments (FC, BC)</option><option value="3">3 Compartments (FC, MC, BC)</option></select></div>
+        <div><label class="label">Capacity (Litres) *</label><input class="input" type="number" placeholder="e.g. 21000" /></div>
+      </div>
+      <div><label class="label">Per KM Rate (₹) *</label><input class="input" type="number" step="0.01" placeholder="e.g. 48.00" /></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid rgba(219,234,254,.5);background:rgba(248,250,252,.6);border-radius:0 0 16px 16px">
+      <button class="btn btn-secondary" onclick="closeModal('tanker-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="closeModal('tanker-modal');alert('✅ Tanker added successfully!')">✓ Add Tanker</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const allPages = ['dashboard','tankers','bmcus','routes','locations','users','planning','plan-form','execution','exec-form','ack','closed','reports'];
+  function showPage(name) {
+    allPages.forEach(p => {
+      const el = document.getElementById('page-'+p);
+      if (el) el.classList.toggle('active', p === name);
+    });
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    const map = { dashboard:'Dashboard', tankers:'Tankers', bmcus:'BMCUs', routes:'Routes', locations:'Locations', users:'Users', planning:'Trip Plans', execution:'Active Trips', closed:'Closed Trips', reports:'TS Report' };
+    document.querySelectorAll('.nav-item').forEach(el => {
+      if (el.textContent.trim() === map[name]) el.classList.add('active');
+    });
+  }
+  function showModal(id) { document.getElementById(id).style.display = 'flex'; }
+  function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+  const USERS = {
+    'admin':    { name: 'Administrator', role: 'admin',   label: 'Admin',   initial: 'A' },
+    'planner':  { name: 'Tanker Planner', role: 'planner', label: 'Planner', initial: 'P' },
+    'executor': { name: 'Trip Executor',  role: 'executor',label: 'Executor',initial: 'E' },
+  };
+  const PASSWORDS = { admin: 'Admin@1234', planner: 'Planner@1234', executor: 'Executor@1234' };
+  let currentUser = null;
+
+  function setLogin(u, p) {
+    document.getElementById('login-user').value = u;
+    document.getElementById('login-pass').value = p;
+  }
+
+  function applyRole(u) {
+    const isAdmin   = u.role === 'admin';
+    const isPlanner = u.role === 'admin' || u.role === 'planner';
+    // Header
+    document.getElementById('hdr-avatar').textContent = u.initial;
+    document.getElementById('hdr-name').textContent   = u.name;
+    document.getElementById('hdr-role').textContent   = u.label;
+    // Sidebar
+    document.getElementById('sb-avatar').textContent  = u.initial;
+    document.getElementById('sb-name').textContent    = u.name;
+    document.getElementById('sb-role').textContent    = u.label;
+    // Nav visibility
+    document.getElementById('nav-masters').style.display  = isPlanner ? '' : 'none';
+    document.getElementById('nav-planning').style.display = isPlanner ? '' : 'none';
+    document.getElementById('nav-admin-only').style.display = isAdmin ? '' : 'none';
+    // Dashboard welcome
+    document.getElementById('dash-welcome').textContent = 'Welcome, ' + u.name + ' · 20 May 2026';
+  }
+
+  function doLogin() {
+    const u = document.getElementById('login-user').value.trim().toLowerCase();
+    const p = document.getElementById('login-pass').value;
+    if (!u || !p) { alert('Please enter username and password'); return; }
+    if (!USERS[u] || PASSWORDS[u] !== p) { alert('Invalid credentials. Check demo credentials below.'); return; }
+    currentUser = USERS[u];
+    applyRole(currentUser);
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    showPage('dashboard');
+  }
+  function doLogout() {
+    currentUser = null;
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('login-screen').style.display = 'flex';
+  }
+  function toggleSidebar() {
+    const sb = document.getElementById('sidebar');
+    sb.style.display = sb.style.display === 'none' ? 'flex' : 'none';
+  }
+  // Enter key on login
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && document.getElementById('login-screen').style.display !== 'none') doLogin();
+  });
+</script>
+</body>
+</html>
