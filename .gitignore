@@ -1,0 +1,54 @@
+# ─── Node dependencies ────────────────────────────────────────────────────────
+node_modules/
+*/node_modules/
+
+# ─── Environment / Secrets — NEVER commit these ───────────────────────────────
+.env
+.env.local
+.env.production
+.env.staging
+backend/.env
+
+# ─── Build output ─────────────────────────────────────────────────────────────
+frontend/dist/
+frontend/.vite/
+frontend/build/
+
+# ─── OS generated ─────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ─── Editor / IDE ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── PM2 ──────────────────────────────────────────────────────────────────────
+.pm2/
+
+# ─── Database backups ─────────────────────────────────────────────────────────
+backups/
+*.sql.gz
+
+# ─── Test coverage ────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ─── Temp ─────────────────────────────────────────────────────────────────────
+tmp/
+temp/
+*.tmp
