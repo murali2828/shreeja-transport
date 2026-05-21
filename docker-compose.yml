@@ -1,0 +1,69 @@
+﻿version: '3.9'
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: shreeja-db
+    restart: always
+    environment:
+      POSTGRES_DB:       ${DB_NAME:-dairy_transport}
+      POSTGRES_USER:     ${DB_USER:-shreeja_db}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - shreeja-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-shreeja_db} -d ${DB_NAME:-dairy_transport}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: shreeja-backend
+    restart: always
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DB_HOST:  db
+      DB_PORT:  5432
+      PORT:     5000
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - shreeja-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: shreeja-frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - shreeja-net
+
+volumes:
+  pgdata:
+    name: shreeja-pgdata
+
+networks:
+  shreeja-net:
+    name: shreeja-network
+    driver: bridge
