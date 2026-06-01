@@ -218,7 +218,7 @@ router.post('/publish', authenticate, authorize('admin','planner'), async (req, 
 // GET /api/plans/template/download
 router.get('/template/download', authenticate, async (req, res) => {
   try {
-    const tankers = await query('SELECT tanker_number FROM tankers WHERE is_active=TRUE ORDER BY tanker_number');
+    const tankers = await query('SELECT tanker_number, capacity_litres FROM tankers WHERE is_active=TRUE ORDER BY tanker_number');
     const bmcus   = await query('SELECT bmcu_code, bmcu_name FROM bmcus WHERE is_active=TRUE ORDER BY bmcu_code');
     const routes  = await query('SELECT route_name FROM route_masters WHERE is_active=TRUE ORDER BY route_name');
 
