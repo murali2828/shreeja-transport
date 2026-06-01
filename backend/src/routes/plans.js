@@ -1,8 +1,9 @@
 // backend/src/routes/plans.js
-const express = require('express');
-const router  = express.Router();
-const multer  = require('multer');
-const XLSX    = require('xlsx');
+const express  = require('express');
+const router   = express.Router();
+const multer   = require('multer');
+const XLSX     = require('xlsx');
+const ExcelJS  = require('exceljs');
 const { pool, query } = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 
@@ -222,78 +223,90 @@ router.get('/template/download', authenticate, async (req, res) => {
     const bmcus   = await query('SELECT bmcu_code, bmcu_name FROM bmcus WHERE is_active=TRUE ORDER BY bmcu_code');
     const routes  = await query('SELECT route_name FROM route_masters WHERE is_active=TRUE ORDER BY route_name');
 
-    const wb = XLSX.utils.book_new();
-    const colHeaders = [
+    const wb = new ExcelJS.Workbook();
+
+    // ── Sheet 1: Trip Plans ──────────────────────────────────────────────────
+    const ws = wb.addWorksheet('Trip Plans');
+
+    const colWidths = [16,8,18,20,14,13,20,20,18,16,14,16,14];
+    ws.columns = [
       'plan_for_date','trip_no','tanker_number','route_name',
       'shifts_milk','expected_km','driver_name','loader_name','remarks',
       'bmcu_code','shift_code','expected_qty','description'
-    ];
+    ].map((key, i) => ({ key, width: colWidths[i] }));
 
-    // Build sheet data: title row, instruction row, header row, sample rows
-    const aoa = [
-      ['SHREEJA SECONDARY TRANSPORT — Trip Plan Upload Template'],
-      ['Multi-row format: One TRIP HEADER row per trip, then one row per BMCU below it. Columns A–I on BMCU rows must be blank. description = RMRD or Balance Milk. Delete rows 4–13 before uploading.'],
-      colHeaders,
-      // Trip 1 header + BMCUs (3001 has Balance Milk pre-existing)
+    // Row 1: merged title
+    ws.mergeCells('A1:M1');
+    const titleCell = ws.getCell('A1');
+    titleCell.value = 'SHREEJA SECONDARY TRANSPORT — Trip Plan Upload Template';
+    titleCell.font  = { bold: true, size: 13 };
+    titleCell.alignment = { horizontal: 'center' };
+
+    // Row 2: instruction
+    ws.mergeCells('A2:M2');
+    const instrCell = ws.getCell('A2');
+    instrCell.value = 'Multi-row format: One TRIP HEADER row per trip, then one row per BMCU. Columns A–I on BMCU rows must be blank. Use dropdown for description. Delete rows 4–13 before uploading.';
+    instrCell.font  = { italic: true, size: 9, color: { argb: 'FF595959' } };
+    instrCell.alignment = { wrapText: true };
+    ws.getRow(2).height = 28;
+
+    // Row 3: column headers
+    const headerRow = ws.addRow([
+      'plan_for_date','trip_no','tanker_number','route_name',
+      'shifts_milk','expected_km','driver_name','loader_name','remarks',
+      'bmcu_code','shift_code','expected_qty','description'
+    ]);
+    headerRow.eachCell(cell => {
+      cell.font      = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2E75B6' } };
+      cell.alignment = { horizontal: 'center' };
+    });
+
+    // Sample data rows (yellow)
+    const sampleRows = [
+      // Trip 1 — BMCU 3001 has Balance Milk pre-existing + RMRD
       ['25-05-2026',1,'AP03TF4985','MB Cross','18E19M',620,'Sample Driver','Sample Loader','Sample','3001','18E19M',2000,'Balance Milk'],
       ['','','','','','','','','','3001','18E19M',5820,'RMRD'],
       ['','','','','','','','','','3002','18E19M',3750,'RMRD'],
       ['','','','','','','','','','3003','18E19M',4150,'RMRD'],
-      // Trip 2 header + BMCUs
+      // Trip 2
       ['25-05-2026',2,'AP03TF2538','B Kothakota','17E18M',331,'Sample Driver 2','Sample Loader 2','','3004','17E18M',2806,'RMRD'],
       ['','','','','','','','','','3005','17E18M',3310,'RMRD'],
       ['','','','','','','','','','3006','18M18E',2821,'RMRD'],
     ];
-
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-
-    // Merge title across all 13 columns (row 1, A1:M1)
-    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 12 } }];
-
-    // Column widths
-    ws['!cols'] = [16,8,18,20,14,13,20,20,18,16,14,16,14].map(w => ({ wch: w }));
-
-    // Style title cell
-    if (ws['A1']) {
-      ws['A1'].s = {
-        font: { bold: true, sz: 13 },
-        alignment: { horizontal: 'center' }
-      };
-    }
-
-    // Style header row (row 3 = index 2)
-    colHeaders.forEach((_, ci) => {
-      const cellAddr = XLSX.utils.encode_cell({ r: 2, c: ci });
-      if (ws[cellAddr]) {
-        ws[cellAddr].s = {
-          font: { bold: true, color: { rgb: 'FFFFFF' } },
-          fill: { fgColor: { rgb: '2E75B6' } },
-          alignment: { horizontal: 'center' }
-        };
-      }
+    const yellowFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
+    sampleRows.forEach(data => {
+      const r = ws.addRow(data);
+      r.eachCell({ includeEmpty: true }, cell => { cell.fill = yellowFill; });
     });
 
-    // Style sample rows (rows 4–13 = index 3–11) yellow background
-    for (let ri = 3; ri <= 11; ri++) {
-      for (let ci = 0; ci < 13; ci++) {
-        const cellAddr = XLSX.utils.encode_cell({ r: ri, c: ci });
-        if (ws[cellAddr]) {
-          ws[cellAddr].s = { fill: { fgColor: { rgb: 'FFF2CC' } } };
-        }
-      }
-    }
+    // Dropdown on column M (description) for data rows 4–2000
+    ws.dataValidations.add('M4:M2000', {
+      type: 'list',
+      allowBlank: true,
+      formulae: ['"RMRD,Balance Milk"'],
+      showErrorMessage: true,
+      errorStyle: 'stop',
+      errorTitle: 'Invalid value',
+      error: 'Please select RMRD or Balance Milk from the dropdown.'
+    });
 
-    XLSX.utils.book_append_sheet(wb, ws, 'Trip Plans');
+    // ── Sheet 2: Tankers ─────────────────────────────────────────────────────
+    const wsTankers = wb.addWorksheet('Tankers');
+    wsTankers.addRow(['tanker_number','capacity_litres']).font = { bold: true };
+    tankers.rows.forEach(t => wsTankers.addRow([t.tanker_number, t.capacity_litres]));
 
-    // Reference sheets
-    const wsTankers = XLSX.utils.aoa_to_sheet([['tanker_number','capacity_litres'], ...tankers.rows.map(t => [t.tanker_number, t.capacity_litres])]);
-    const wsBmcus   = XLSX.utils.aoa_to_sheet([['bmcu_code','bmcu_name'], ...bmcus.rows.map(b => [b.bmcu_code, b.bmcu_name])]);
-    const wsRoutes  = XLSX.utils.aoa_to_sheet([['route_name'], ...routes.rows.map(r => [r.route_name])]);
-    XLSX.utils.book_append_sheet(wb, wsTankers, 'Tankers');
-    XLSX.utils.book_append_sheet(wb, wsBmcus,   'BMCUs');
-    XLSX.utils.book_append_sheet(wb, wsRoutes,  'Routes');
+    // ── Sheet 3: BMCUs ───────────────────────────────────────────────────────
+    const wsBmcus = wb.addWorksheet('BMCUs');
+    wsBmcus.addRow(['bmcu_code','bmcu_name']).font = { bold: true };
+    bmcus.rows.forEach(b => wsBmcus.addRow([b.bmcu_code, b.bmcu_name]));
 
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    // ── Sheet 4: Routes ──────────────────────────────────────────────────────
+    const wsRoutes = wb.addWorksheet('Routes');
+    wsRoutes.addRow(['route_name']).font = { bold: true };
+    routes.rows.forEach(r => wsRoutes.addRow([r.route_name]));
+
+    const buf = await wb.xlsx.writeBuffer();
     res.setHeader('Content-Disposition', 'attachment; filename=trip_plan_template.xlsx');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
