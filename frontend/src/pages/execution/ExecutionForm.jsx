@@ -130,7 +130,10 @@ export default function ExecutionForm() {
     if (exec) {
       setDcNumber(exec.dc_number || '');
       setActualKm(exec.actual_km || '');
-      setBmcuRows((exec.bmcus || []).map(b => ({ ...b })));
+      setBmcuRows((exec.bmcus || []).map(b => ({
+        ...b,
+        milk_date: b.milk_date ? b.milk_date.slice(0, 10) : ''
+      })));
     }
   }, [exec]);
 
