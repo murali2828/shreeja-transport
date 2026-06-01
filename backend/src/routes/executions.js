@@ -111,7 +111,7 @@ router.post('/', authenticate, async (req, res) => {
     );
     const execId = r.rows[0].id;
 
-    // Copy plan BMCUs as RMRD rows
+    // Copy plan BMCUs preserving description (RMRD or Balance Milk)
     const planBmcus = await client.query(
       'SELECT * FROM trip_plan_bmcus WHERE trip_plan_id=$1 ORDER BY seq_no', [trip_plan_id]
     );
@@ -119,8 +119,8 @@ router.post('/', authenticate, async (req, res) => {
       await client.query(
         `INSERT INTO trip_execution_bmcus
            (execution_id,seq_no,bmcu_id,milk_date,description)
-         VALUES ($1,$2,$3,$4,'RMRD')`,
-        [execId, bm.seq_no, bm.bmcu_id, execution_date]
+         VALUES ($1,$2,$3,$4,$5)`,
+        [execId, bm.seq_no, bm.bmcu_id, execution_date, bm.description||'RMRD']
       );
     }
 

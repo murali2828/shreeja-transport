@@ -113,8 +113,8 @@ router.post('/', authenticate, authorize('admin','planner'), async (req, res) =>
     if (bmcus?.length) {
       for (const bm of bmcus) {
         await client.query(
-          'INSERT INTO trip_plan_bmcus (trip_plan_id,seq_no,bmcu_id,shift_code,expected_qty) VALUES ($1,$2,$3,$4,$5)',
-          [planId, bm.seq_no, bm.bmcu_id, bm.shift_code||null, bm.expected_qty||0]
+          'INSERT INTO trip_plan_bmcus (trip_plan_id,seq_no,bmcu_id,shift_code,expected_qty,description) VALUES ($1,$2,$3,$4,$5,$6)',
+          [planId, bm.seq_no, bm.bmcu_id, bm.shift_code||null, bm.expected_qty||0, bm.description||'RMRD']
         );
       }
     }
@@ -181,8 +181,8 @@ router.put('/:id', authenticate, authorize('admin','planner'), async (req, res) 
       await client.query('DELETE FROM trip_plan_bmcus WHERE trip_plan_id=$1', [req.params.id]);
       for (const bm of bmcus) {
         await client.query(
-          'INSERT INTO trip_plan_bmcus (trip_plan_id,seq_no,bmcu_id,shift_code,expected_qty) VALUES ($1,$2,$3,$4,$5)',
-          [req.params.id, bm.seq_no, bm.bmcu_id, bm.shift_code||null, bm.expected_qty||0]
+          'INSERT INTO trip_plan_bmcus (trip_plan_id,seq_no,bmcu_id,shift_code,expected_qty,description) VALUES ($1,$2,$3,$4,$5,$6)',
+          [req.params.id, bm.seq_no, bm.bmcu_id, bm.shift_code||null, bm.expected_qty||0, bm.description||'RMRD']
         );
       }
     }
@@ -226,31 +226,32 @@ router.get('/template/download', authenticate, async (req, res) => {
     const colHeaders = [
       'plan_for_date','trip_no','tanker_number','route_name',
       'shifts_milk','expected_km','driver_name','loader_name','remarks',
-      'bmcu_code','shift_code','expected_qty'
+      'bmcu_code','shift_code','expected_qty','description'
     ];
 
     // Build sheet data: title row, instruction row, header row, sample rows
     const aoa = [
       ['SHREEJA SECONDARY TRANSPORT — Trip Plan Upload Template'],
-      ['Multi-row format: One TRIP HEADER row per trip, then one row per BMCU below it. Columns A–I on BMCU rows must be blank. Delete rows 4–12 before uploading.'],
+      ['Multi-row format: One TRIP HEADER row per trip, then one row per BMCU below it. Columns A–I on BMCU rows must be blank. description = RMRD or Balance Milk. Delete rows 4–13 before uploading.'],
       colHeaders,
-      // Trip 1 header + BMCUs
-      ['25-05-2026',1,'AP03TF4985','MB Cross','18E19M',620,'Sample Driver','Sample Loader','Sample','3001','18E19M',5820],
-      ['','','','','','','','','','3002','18E19M',3750],
-      ['','','','','','','','','','3003','18E19M',4150],
+      // Trip 1 header + BMCUs (3001 has Balance Milk pre-existing)
+      ['25-05-2026',1,'AP03TF4985','MB Cross','18E19M',620,'Sample Driver','Sample Loader','Sample','3001','18E19M',2000,'Balance Milk'],
+      ['','','','','','','','','','3001','18E19M',5820,'RMRD'],
+      ['','','','','','','','','','3002','18E19M',3750,'RMRD'],
+      ['','','','','','','','','','3003','18E19M',4150,'RMRD'],
       // Trip 2 header + BMCUs
-      ['25-05-2026',2,'AP03TF2538','B Kothakota','17E18M',331,'Sample Driver 2','Sample Loader 2','','3004','17E18M',2806],
-      ['','','','','','','','','','3005','17E18M',3310],
-      ['','','','','','','','','','3006','18M18E',2821],
+      ['25-05-2026',2,'AP03TF2538','B Kothakota','17E18M',331,'Sample Driver 2','Sample Loader 2','','3004','17E18M',2806,'RMRD'],
+      ['','','','','','','','','','3005','17E18M',3310,'RMRD'],
+      ['','','','','','','','','','3006','18M18E',2821,'RMRD'],
     ];
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-    // Merge title across all 12 columns (row 1, A1:L1)
-    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 11 } }];
+    // Merge title across all 13 columns (row 1, A1:M1)
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 12 } }];
 
     // Column widths
-    ws['!cols'] = [16,8,18,20,14,13,20,20,18,16,14,16].map(w => ({ wch: w }));
+    ws['!cols'] = [16,8,18,20,14,13,20,20,18,16,14,16,14].map(w => ({ wch: w }));
 
     // Style title cell
     if (ws['A1']) {
@@ -272,9 +273,9 @@ router.get('/template/download', authenticate, async (req, res) => {
       }
     });
 
-    // Style sample rows (rows 4–9 = index 3–8) yellow background
-    for (let ri = 3; ri <= 8; ri++) {
-      for (let ci = 0; ci < 12; ci++) {
+    // Style sample rows (rows 4–13 = index 3–11) yellow background
+    for (let ri = 3; ri <= 11; ri++) {
+      for (let ci = 0; ci < 13; ci++) {
         const cellAddr = XLSX.utils.encode_cell({ r: ri, c: ci });
         if (ws[cellAddr]) {
           ws[cellAddr].s = { fill: { fgColor: { rgb: 'FFF2CC' } } };
@@ -330,10 +331,12 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
       };
     }
     if (currentTrip && row['bmcu_code'] !== undefined && row['bmcu_code'] !== null && row['bmcu_code'] !== '') {
+      const desc = String(row['description'] || '').trim();
       currentTrip.bmcus.push({
         bmcu_code:    String(row['bmcu_code']).trim(),
         shift_code:   String(row['shift_code'] || '').trim() || null,
-        expected_qty: row['expected_qty'] ? parseFloat(row['expected_qty']) : null
+        expected_qty: row['expected_qty'] ? parseFloat(row['expected_qty']) : null,
+        description:  desc === 'Balance Milk' ? 'Balance Milk' : 'RMRD'
       });
     }
   }
@@ -387,8 +390,8 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
           const qty = bm.expected_qty || 0;
           totalExpQty += qty;
           await client.query(
-            'INSERT INTO trip_plan_bmcus (trip_plan_id,seq_no,bmcu_id,shift_code,expected_qty) VALUES ($1,$2,$3,$4,$5)',
-            [planId, seq++, br.rows[0].id, bm.shift_code||null, qty]
+            'INSERT INTO trip_plan_bmcus (trip_plan_id,seq_no,bmcu_id,shift_code,expected_qty,description) VALUES ($1,$2,$3,$4,$5,$6)',
+            [planId, seq++, br.rows[0].id, bm.shift_code||null, qty, bm.description||'RMRD']
           );
         }
         // Update expected qty and costs
