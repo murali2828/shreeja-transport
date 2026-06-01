@@ -223,24 +223,69 @@ router.get('/template/download', authenticate, async (req, res) => {
     const routes  = await query('SELECT route_name FROM route_masters WHERE is_active=TRUE ORDER BY route_name');
 
     const wb = XLSX.utils.book_new();
-    const headers = [
+    const colHeaders = [
       'plan_for_date','trip_no','tanker_number','route_name',
       'shifts_milk','expected_km','driver_name','loader_name','remarks',
-      'bmcu_code_1','shift_1','expected_qty_1',
-      'bmcu_code_2','shift_2','expected_qty_2',
-      'bmcu_code_3','shift_3','expected_qty_3',
-      'bmcu_code_4','shift_4','expected_qty_4',
-      'bmcu_code_5','shift_5','expected_qty_5',
-      'bmcu_code_6','shift_6','expected_qty_6',
-      'bmcu_code_7','shift_7','expected_qty_7',
-      'bmcu_code_8','shift_8','expected_qty_8',
+      'bmcu_code','shift_code','expected_qty'
     ];
-    const ws = XLSX.utils.aoa_to_sheet([headers]);
-    ws['!cols'] = headers.map((_, i) => ({ wch: i < 9 ? 16 : 12 }));
+
+    // Build sheet data: title row, instruction row, header row, sample rows
+    const aoa = [
+      ['SHREEJA SECONDARY TRANSPORT — Trip Plan Upload Template'],
+      ['Multi-row format: One TRIP HEADER row per trip, then one row per BMCU below it. Columns A–I on BMCU rows must be blank. Delete rows 4–12 before uploading.'],
+      colHeaders,
+      // Trip 1 header + BMCUs
+      ['25-05-2026',1,'AP03TF4985','MB Cross','18E19M',620,'Sample Driver','Sample Loader','Sample','3001','18E19M',5820],
+      ['','','','','','','','','','3002','18E19M',3750],
+      ['','','','','','','','','','3003','18E19M',4150],
+      // Trip 2 header + BMCUs
+      ['25-05-2026',2,'AP03TF2538','B Kothakota','17E18M',331,'Sample Driver 2','Sample Loader 2','','3004','17E18M',2806],
+      ['','','','','','','','','','3005','17E18M',3310],
+      ['','','','','','','','','','3006','18M18E',2821],
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+    // Merge title across all 12 columns (row 1, A1:L1)
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 11 } }];
+
+    // Column widths
+    ws['!cols'] = [16,8,18,20,14,13,20,20,18,16,14,16].map(w => ({ wch: w }));
+
+    // Style title cell
+    if (ws['A1']) {
+      ws['A1'].s = {
+        font: { bold: true, sz: 13 },
+        alignment: { horizontal: 'center' }
+      };
+    }
+
+    // Style header row (row 3 = index 2)
+    colHeaders.forEach((_, ci) => {
+      const cellAddr = XLSX.utils.encode_cell({ r: 2, c: ci });
+      if (ws[cellAddr]) {
+        ws[cellAddr].s = {
+          font: { bold: true, color: { rgb: 'FFFFFF' } },
+          fill: { fgColor: { rgb: '2E75B6' } },
+          alignment: { horizontal: 'center' }
+        };
+      }
+    });
+
+    // Style sample rows (rows 4–9 = index 3–8) yellow background
+    for (let ri = 3; ri <= 8; ri++) {
+      for (let ci = 0; ci < 12; ci++) {
+        const cellAddr = XLSX.utils.encode_cell({ r: ri, c: ci });
+        if (ws[cellAddr]) {
+          ws[cellAddr].s = { fill: { fgColor: { rgb: 'FFF2CC' } } };
+        }
+      }
+    }
+
     XLSX.utils.book_append_sheet(wb, ws, 'Trip Plans');
 
     // Reference sheets
-    const wsTankers = XLSX.utils.aoa_to_sheet([['tanker_number'], ...tankers.rows.map(t => [t.tanker_number])]);
+    const wsTankers = XLSX.utils.aoa_to_sheet([['tanker_number','capacity_litres'], ...tankers.rows.map(t => [t.tanker_number, t.capacity_litres])]);
     const wsBmcus   = XLSX.utils.aoa_to_sheet([['bmcu_code','bmcu_name'], ...bmcus.rows.map(b => [b.bmcu_code, b.bmcu_name])]);
     const wsRoutes  = XLSX.utils.aoa_to_sheet([['route_name'], ...routes.rows.map(r => [r.route_name])]);
     XLSX.utils.book_append_sheet(wb, wsTankers, 'Tankers');
@@ -263,30 +308,61 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
 
   const wb   = XLSX.read(req.file.buffer, { type: 'buffer' });
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+
+  // Parse multi-row format: group rows into trips
+  const trips = [];
+  let currentTrip = null;
+  for (const row of rows) {
+    const hasTripHeader = row['plan_for_date'] && row['trip_no'] !== undefined && row['trip_no'] !== null && row['trip_no'] !== '';
+    if (hasTripHeader) {
+      if (currentTrip) trips.push(currentTrip);
+      currentTrip = {
+        plan_for_date: row['plan_for_date'],
+        trip_no:       row['trip_no'],
+        tanker_number: String(row['tanker_number'] || '').trim(),
+        route_name:    String(row['route_name'] || '').trim(),
+        shifts_milk:   String(row['shifts_milk'] || '').trim(),
+        expected_km:   row['expected_km'] || null,
+        driver_name:   String(row['driver_name'] || '').trim() || null,
+        loader_name:   String(row['loader_name'] || '').trim() || null,
+        remarks:       String(row['remarks'] || '').trim() || null,
+        bmcus: []
+      };
+    }
+    if (currentTrip && row['bmcu_code'] !== undefined && row['bmcu_code'] !== null && row['bmcu_code'] !== '') {
+      currentTrip.bmcus.push({
+        bmcu_code:    String(row['bmcu_code']).trim(),
+        shift_code:   String(row['shift_code'] || '').trim() || null,
+        expected_qty: row['expected_qty'] ? parseFloat(row['expected_qty']) : null
+      });
+    }
+  }
+  if (currentTrip) trips.push(currentTrip);
+
   const client = await pool.connect();
   const errors = [], created = [];
 
   try {
     await client.query('BEGIN');
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
+    for (let i = 0; i < trips.length; i++) {
+      const trip = trips[i];
       const rowNum = i + 2;
       try {
         const tr = await client.query(
           'SELECT id,per_km_rate,capacity_litres FROM tankers WHERE tanker_number=$1 AND is_active=TRUE',
-          [row.tanker_number]
+          [trip.tanker_number]
         );
-        if (!tr.rows[0]) { errors.push(`Row ${rowNum}: tanker "${row.tanker_number}" not found`); continue; }
+        if (!tr.rows[0]) { errors.push(`Trip ${rowNum}: tanker "${trip.tanker_number}" not found`); continue; }
 
         let routeId = null;
-        if (row.route_name) {
+        if (trip.route_name) {
           const rr = await client.query(
-            'SELECT id FROM route_masters WHERE route_name ILIKE $1 AND is_active=TRUE', [row.route_name]
+            'SELECT id FROM route_masters WHERE route_name ILIKE $1 AND is_active=TRUE', [trip.route_name]
           );
           if (rr.rows[0]) routeId = rr.rows[0].id;
         }
 
-        const expKm  = parseFloat(row.expected_km) || 0;
+        const expKm  = parseFloat(trip.expected_km) || 0;
         const expQty = 0; // will sum from BMCUs below
         const totalCost = expKm * parseFloat(tr.rows[0].per_km_rate);
 
@@ -296,25 +372,23 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
               shifts_milk,expected_km,expected_total_qty,total_cost,per_liter_cost,
               driver_name,loader_name,remarks,created_by)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
-          [plan_date, plan_for_date, row.trip_no||null, routeId, tr.rows[0].id,
-           row.shifts_milk||null, expKm, expQty, totalCost, 0,
-           row.driver_name||null, row.loader_name||null, row.remarks||null, req.user.id]
+          [plan_date, plan_for_date, trip.trip_no||null, routeId, tr.rows[0].id,
+           trip.shifts_milk||null, expKm, expQty, totalCost, 0,
+           trip.driver_name||null, trip.loader_name||null, trip.remarks||null, req.user.id]
         );
         const planId = pr.rows[0].id;
 
         let seq = 1; let totalExpQty = 0;
-        for (let j = 1; j <= 8; j++) {
-          const code = row[`bmcu_code_${j}`];
-          if (!code) continue;
+        for (const bm of trip.bmcus) {
           const br = await client.query(
-            'SELECT id FROM bmcus WHERE bmcu_code=$1 AND is_active=TRUE', [code]
+            'SELECT id FROM bmcus WHERE bmcu_code=$1 AND is_active=TRUE', [bm.bmcu_code]
           );
-          if (!br.rows[0]) { errors.push(`Row ${rowNum}: BMCU "${code}" not found`); continue; }
-          const qty = parseFloat(row[`expected_qty_${j}`]) || 0;
+          if (!br.rows[0]) { errors.push(`Trip ${rowNum}: BMCU "${bm.bmcu_code}" not found`); continue; }
+          const qty = bm.expected_qty || 0;
           totalExpQty += qty;
           await client.query(
             'INSERT INTO trip_plan_bmcus (trip_plan_id,seq_no,bmcu_id,shift_code,expected_qty) VALUES ($1,$2,$3,$4,$5)',
-            [planId, seq++, br.rows[0].id, row[`shift_${j}`]||null, qty]
+            [planId, seq++, br.rows[0].id, bm.shift_code||null, qty]
           );
         }
         // Update expected qty and costs
@@ -326,7 +400,7 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
         );
         created.push(planId);
       } catch (rowErr) {
-        errors.push(`Row ${rowNum}: ${rowErr.message}`);
+        errors.push(`Trip ${rowNum}: ${rowErr.message}`);
       }
     }
     await client.query('COMMIT');
