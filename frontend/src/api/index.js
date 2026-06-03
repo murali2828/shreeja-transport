@@ -74,7 +74,13 @@ export const updatePlan    = (id, d) => api.put(`/plans/${id}`, d);
 export const deletePlan    = (id)    => api.delete(`/plans/${id}`);
 export const publishPlans  = (date)  => api.post('/plans/publish', { plan_for_date: date });
 export const uploadPlans   = (fd)    => api.post('/plans/upload', fd);
-export const downloadPlanTemplate = () => { window.open('/api/plans/template/download', '_blank'); };
+export const downloadPlanTemplate = () =>
+  api.get('/plans/template/download', { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'trip_plan_template.xlsx'; a.click();
+    URL.revokeObjectURL(url);
+  });
 
 // ── Executions ────────────────────────────────────────────────────────────────
 export const getExecutions      = (p)     => api.get('/executions', { params: p });
