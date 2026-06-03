@@ -11,13 +11,6 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenu,   setUserMenu]   = useState(false);
 
-  const topIcons = [
-    ['⋮⋮⋮','Apps'], ['📁','Files'], ['🖼','Photos'], ['⚡','Activity'],
-    ['✉️','Mail'], ['👥','Contacts'], ['📅','Calendar'],
-    ['✏️','Notes'], ['📊','Deck'], ['📢','Announce'],
-    ['✨','AI'], ['≡','Tasks'], ['✓','Approval'],
-  ];
-
   return (
     <div style={{ height:'100vh', display:'flex', flexDirection:'column', overflow:'hidden' }}>
 
@@ -28,20 +21,10 @@ export default function Layout() {
         </button>
 
         {/* Shreeja wordmark */}
-        <div className="flex items-center mr-4 select-none">
+        <div className="flex items-center mr-4 select-none flex-1">
           <span className="font-bold text-white text-[17px] italic tracking-tight" style={{fontFamily:"'Segoe UI',sans-serif"}}>
             Shreeja
           </span>
-        </div>
-
-        {/* Icon strip */}
-        <div className="hidden sm:flex items-center gap-0 flex-1">
-          {topIcons.map(([ic, tt]) => (
-            <button key={tt} title={tt}
-              className="w-8 h-8 flex items-center justify-center rounded text-sm text-white/65 hover:bg-white/15 hover:text-white transition-colors">
-              {ic}
-            </button>
-          ))}
         </div>
 
         {/* Right controls */}
