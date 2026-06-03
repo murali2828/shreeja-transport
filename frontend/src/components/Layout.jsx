@@ -68,7 +68,7 @@ export default function Layout() {
       </header>
 
       {/* ── Body ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden" style={{ paddingTop: '48px' }}>
 
         {/* Desktop sidebar */}
         <div className="hidden sm:flex flex-col sidebar">
