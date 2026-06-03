@@ -39,6 +39,7 @@ export default function Sidebar() {
   const { user } = useAuth();
   const isAdmin   = user?.role === 'admin';
   const isPlanner = user?.role === 'planner' || isAdmin;
+  const isViewer  = user?.role === 'viewer';
 
   return (
     <nav className="flex-1 overflow-y-auto py-3 space-y-3">
@@ -70,14 +71,18 @@ export default function Sidebar() {
         </NavSection>
       )}
 
-      <NavSection label="Execution">
-        <NavItem to="/execution"        icon={<Play size={15}/>}        label="Active Trips"/>
-        <NavItem to="/execution/closed" icon={<CheckSquare size={15}/>} label="Closed Trips"/>
-      </NavSection>
+      {(isPlanner || isViewer) && (
+        <NavSection label="Execution">
+          <NavItem to="/execution"        icon={<Play size={15}/>}        label="Active Trips"/>
+          <NavItem to="/execution/closed" icon={<CheckSquare size={15}/>} label="Closed Trips"/>
+        </NavSection>
+      )}
 
-      <NavSection label="Reports">
-        <NavItem to="/reports" icon={<BarChart2 size={15}/>} label="Daily TS Report"/>
-      </NavSection>
+      {(isPlanner || isViewer) && (
+        <NavSection label="Reports">
+          <NavItem to="/reports" icon={<BarChart2 size={15}/>} label="Daily TS Report"/>
+        </NavSection>
+      )}
 
       {/* User info at bottom */}
       <div className="mx-2 mt-4 px-3 py-2.5 rounded-xl" style={{ background:'rgba(255,255,255,0.1)', marginTop:'auto' }}>

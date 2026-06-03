@@ -11,8 +11,9 @@ const ROLE_COLORS = {
   admin:    'bg-red-100 text-red-700',
   planner:  'bg-blue-100 text-blue-700',
   executor: 'bg-green-100 text-green-700',
+  viewer:   'bg-purple-100 text-purple-700',
 };
-const ROLE_ICONS = { admin: Shield, planner: Settings, executor: User };
+const ROLE_ICONS = { admin: Shield, planner: Settings, executor: User, viewer: User };
 
 const EMPTY = { username: '', email: '', full_name: '', role: 'executor', password: '', is_active: true };
 
@@ -133,6 +134,7 @@ export default function UserManagement() {
                   <option value="executor">Executor</option>
                   <option value="planner">Planner</option>
                   <option value="admin">Admin</option>
+                  <option value="viewer">Viewer</option>
                 </select>
               </Field>
               {modal === 'add' && (

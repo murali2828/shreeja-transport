@@ -49,11 +49,15 @@ router.get('/users', authenticate, authorize('admin'), async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+const VALID_ROLES = ['admin', 'planner', 'executor', 'viewer'];
+
 // POST /api/auth/users
 router.post('/users', authenticate, authorize('admin'), async (req, res) => {
   const { username, password, full_name, role, email } = req.body;
   if (!username || !password || !full_name || !role)
     return res.status(400).json({ error: 'username, password, full_name, role required' });
+  if (!VALID_ROLES.includes(role))
+    return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
   try {
     const hash = await bcrypt.hash(password, 10);
     const r = await query(
@@ -70,6 +74,8 @@ router.post('/users', authenticate, authorize('admin'), async (req, res) => {
 // PUT /api/auth/users/:id
 router.put('/users/:id', authenticate, authorize('admin'), async (req, res) => {
   const { full_name, role, email, is_active, password } = req.body;
+  if (role && !VALID_ROLES.includes(role))
+    return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
   try {
     let passwordClause = '';
     const params = [full_name, role, email || null, is_active ?? true, req.params.id];
