@@ -117,7 +117,7 @@ router.put('/users/:id', authenticate, authorize('admin'), async (req, res) => {
       params[params.length - 1] = req.params.id;
     }
     const r = await query(
-      `UPDATE users SET full_name=$1, role=$2, email=$3, is_active=$4${passwordClause}, updated_at=NOW()
+      `UPDATE users SET full_name=$1, role=$2, email=$3, is_active=$4${passwordClause}
        WHERE id=$${params.length} RETURNING id, username, full_name, role, email, is_active`,
       params
     );
@@ -182,7 +182,7 @@ router.post('/reset-password', async (req, res) => {
     const row = r.rows[0];
 
     const hash = await bcrypt.hash(new_password, 10);
-    await query('UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2', [hash, row.uid]);
+    await query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, row.uid]);
     await query('UPDATE password_reset_tokens SET used=TRUE WHERE id=$1', [row.id]);
 
     res.json({ ok: true });
@@ -204,7 +204,7 @@ router.post('/change-password', authenticate, async (req, res) => {
     if (!match) return res.status(400).json({ error: 'Current password is incorrect' });
     const hash = await bcrypt.hash(new_password, 10);
     await query(
-      'UPDATE users SET password_hash=$1, must_change_password=FALSE, updated_at=NOW() WHERE id=$2',
+      'UPDATE users SET password_hash=$1, must_change_password=FALSE WHERE id=$2',
       [hash, req.user.id]
     );
     res.json({ ok: true });
