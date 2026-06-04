@@ -13,7 +13,7 @@ query(`
   CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id         SERIAL PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token      UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    token      TEXT NOT NULL UNIQUE,
     expires_at TIMESTAMPTZ NOT NULL,
     used       BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
