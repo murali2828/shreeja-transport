@@ -1,7 +1,7 @@
 // frontend/src/pages/masters/UserManagement.jsx
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Shield, User, Settings } from 'lucide-react';
+import { Shield, User, Settings, KeyRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getUsers, createUser, updateUser } from '../../api/index';
 import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
@@ -24,6 +24,11 @@ export default function UserManagement() {
   const [form, setForm]     = useState(EMPTY);
   const [showPw, setShowPw] = useState(false);
 
+  const [resetModal,  setResetModal]  = useState(null); // user object or null
+  const [resetPwd,    setResetPwd]    = useState('');
+  const [resetPwdCfm, setResetPwdCfm] = useState('');
+  const [showResetPw, setShowResetPw] = useState(false);
+
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['users'],
     queryFn:  () => getUsers().then(r => r.data),
@@ -35,6 +40,13 @@ export default function UserManagement() {
     setShowPw(false);
     setModal(row);
   };
+  const openReset = (row) => {
+    setResetPwd('');
+    setResetPwdCfm('');
+    setShowResetPw(false);
+    setResetModal(row);
+  };
+  const closeReset = () => setResetModal(null);
   const close = () => setModal(null);
   const set   = (k, v) => setForm(p => ({ ...p, [k]: v }));
 

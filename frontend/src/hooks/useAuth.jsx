@@ -19,6 +19,18 @@ export function AuthProvider({ children }) {
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(userData));
     setUser(userData);
+    if (userData.must_change_password) {
+      window.location.href = '/change-password';
+    }
+  };
+
+  const clearMustChangePassword = () => {
+    setUser(prev => {
+      if (!prev) return prev;
+      const updated = { ...prev, must_change_password: false };
+      localStorage.setItem('user', JSON.stringify(updated));
+      return updated;
+    });
   };
 
   const logoutUser = () => {
@@ -29,7 +41,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, loginUser, logoutUser }}>
+    <AuthContext.Provider value={{ user, loading, loginUser, logoutUser, clearMustChangePassword }}>
       {children}
     </AuthContext.Provider>
   );

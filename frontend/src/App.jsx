@@ -8,6 +8,7 @@ import Layout          from './components/Layout';
 import Login           from './pages/Login';
 import ForgotPassword  from './pages/auth/ForgotPassword';
 import ResetPassword   from './pages/auth/ResetPassword';
+import ChangePassword  from './pages/auth/ChangePassword';
 import Dashboard       from './pages/Dashboard';
 
 // Masters
@@ -38,10 +39,12 @@ const queryClient = new QueryClient({
 });
 
 // ─── Role-based Route Guard ───────────────────────────────────────────────────
-function ProtectedRoute({ children, roles }) {
+function ProtectedRoute({ children, roles, allowMustChange }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex items-center justify-center h-screen text-gray-400">Loading…</div>;
   if (!user)   return <Navigate to="/login" replace />;
+  // Force password change before accessing any other page
+  if (user.must_change_password && !allowMustChange) return <Navigate to="/change-password" replace />;
   if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
   return children;
 }
@@ -52,6 +55,9 @@ function AppRoutes() {
       <Route path="/login"           element={<Login/>}/>
       <Route path="/forgot-password" element={<ForgotPassword/>}/>
       <Route path="/reset-password"  element={<ResetPassword/>}/>
+      <Route path="/change-password" element={
+        <ProtectedRoute allowMustChange><ChangePassword/></ProtectedRoute>
+      }/>
 
       {/* All protected routes inside Layout */}
       <Route path="/" element={

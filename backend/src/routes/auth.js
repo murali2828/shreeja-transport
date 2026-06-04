@@ -8,6 +8,10 @@ const nodemailer = require('nodemailer');
 const { query }  = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 
+// Ensure must_change_password column exists
+query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE`)
+  .catch(err => console.error('Migration error (must_change_password):', err.message));
+
 // Ensure password_reset_tokens table exists
 query(`
   CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -48,12 +52,13 @@ router.post('/login', async (req, res) => {
     const user = r.rows[0];
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+    const mustChange = !!user.must_change_password;
     const token = jwt.sign(
-      { id: user.id, role: user.role, full_name: user.full_name },
+      { id: user.id, role: user.role, full_name: user.full_name, must_change_password: mustChange },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
-    res.json({ token, user: { id: user.id, username: user.username, full_name: user.full_name, role: user.role } });
+    res.json({ token, user: { id: user.id, username: user.username, full_name: user.full_name, role: user.role, must_change_password: mustChange } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -90,7 +95,7 @@ router.post('/users', authenticate, authorize('admin'), async (req, res) => {
   try {
     const hash = await bcrypt.hash(password, 10);
     const r = await query(
-      'INSERT INTO users (username, password_hash, full_name, role, email) VALUES ($1,$2,$3,$4,$5) RETURNING id, username, full_name, role, email',
+      'INSERT INTO users (username, password_hash, full_name, role, email, must_change_password) VALUES ($1,$2,$3,$4,$5,TRUE) RETURNING id, username, full_name, role, email, must_change_password',
       [username, hash, full_name, role, email || null]
     );
     res.status(201).json(r.rows[0]);
@@ -110,7 +115,7 @@ router.put('/users/:id', authenticate, authorize('admin'), async (req, res) => {
     const params = [full_name, role, email || null, is_active ?? true, req.params.id];
     if (password) {
       const hash = await bcrypt.hash(password, 10);
-      passwordClause = ', password_hash=$6';
+      passwordClause = ', password_hash=$6, must_change_password=TRUE';
       params.splice(4, 0, hash);
       params[params.length - 1] = req.params.id;
     }
@@ -144,6 +149,16 @@ router.post('/forgot-password', async (req, res) => {
 
     const resetLink = `https://tms.shreejamilk.com/reset-password?token=${token}`;
 
+    let emailCfgExists = false;
+    try {
+      const cfgCheck = await query('SELECT id FROM email_configs LIMIT 1');
+      emailCfgExists = cfgCheck.rows.length > 0;
+    } catch (_) { /* ignore */ }
+
+    if (!emailCfgExists) {
+      return res.status(503).json({ error: 'Email not configured. Please contact administrator to reset your password manually.' });
+    }
+
     try {
       const { transporter, from } = await getEmailTransporter();
       await transporter.sendMail({
@@ -156,7 +171,7 @@ router.post('/forgot-password', async (req, res) => {
                   <p>This link expires in <strong>1 hour</strong>. If you did not request this, ignore this email.</p>`,
       });
     } catch (mailErr) {
-      console.error('Password reset email error:', mailErr.message);
+      console.error('Password reset email error (nodemailer):', mailErr);
       return res.status(500).json({ error: 'Failed to send reset email. Contact administrator.' });
     }
 
@@ -183,6 +198,28 @@ router.post('/reset-password', async (req, res) => {
     await query('UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2', [hash, row.uid]);
     await query('UPDATE password_reset_tokens SET used=TRUE WHERE id=$1', [row.id]);
 
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/auth/change-password  (authenticated — for forced password change)
+router.post('/change-password', authenticate, async (req, res) => {
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password)
+    return res.status(400).json({ error: 'current_password and new_password required' });
+  if (new_password.length < 6)
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  try {
+    const r = await query('SELECT * FROM users WHERE id=$1', [req.user.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
+    const user = r.rows[0];
+    const match = await bcrypt.compare(current_password, user.password_hash);
+    if (!match) return res.status(400).json({ error: 'Current password is incorrect' });
+    const hash = await bcrypt.hash(new_password, 10);
+    await query(
+      'UPDATE users SET password_hash=$1, must_change_password=FALSE, updated_at=NOW() WHERE id=$2',
+      [hash, req.user.id]
+    );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
