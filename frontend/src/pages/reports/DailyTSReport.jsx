@@ -134,13 +134,13 @@ export default function DailyTSReport() {
                   <td className="table-td text-right bg-amber-50">{parseFloat(r.ts_kgs||0).toFixed(2)}</td>
                   <td className="table-td text-right bg-amber-50">{parseFloat(r.ts_fat||0).toFixed(3)}</td>
                   <td className="table-td text-right bg-amber-50">{parseFloat(r.ts_snf||0).toFixed(3)}</td>
-                  <td className="table-td text-right bg-amber-50">{parseFloat(r.ts_kg_fat||0).toFixed(4)}</td>
-                  <td className="table-td text-right bg-amber-50">{parseFloat(r.ts_kg_snf||0).toFixed(4)}</td>
+                  <td className="table-td text-right bg-amber-50">{parseFloat(r.ts_kg_fat||0).toFixed(2)}</td>
+                  <td className="table-td text-right bg-amber-50">{parseFloat(r.ts_kg_snf||0).toFixed(2)}</td>
                   {/* Ack */}
                   <td className="table-td text-right bg-green-50">{parseFloat(r.ack_litres||0).toFixed(0)}</td>
                   <td className="table-td text-right bg-green-50">{parseFloat(r.ack_kgs||0).toFixed(2)}</td>
-                  <td className="table-td text-right bg-green-50">{parseFloat(r.ack_kg_fat||0).toFixed(4)}</td>
-                  <td className="table-td text-right bg-green-50">{parseFloat(r.ack_kg_snf||0).toFixed(4)}</td>
+                  <td className="table-td text-right bg-green-50">{parseFloat(r.ack_kg_fat||0).toFixed(2)}</td>
+                  <td className="table-td text-right bg-green-50">{parseFloat(r.ack_kg_snf||0).toFixed(2)}</td>
                   {/* Var */}
                   <VarCell value={r.var_litres}/>
                   <VarCell value={r.var_kgs}/>
