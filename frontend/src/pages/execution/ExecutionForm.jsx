@@ -266,7 +266,7 @@ export default function ExecutionForm() {
           )}
         </div>
         <div className="overflow-x-scroll max-h-[55vh]">
-          <table className="w-full text-xs">
+          <table className="text-xs" style={{ minWidth: '1400px' }}>
             <thead className="sticky top-0 bg-gray-50 border-b">
               <tr>
                 {['#','Code','Name','Date','Shift','Qty L','Qty Kg','Fat%','SNF%','Kg Fat','Kg SNF',
