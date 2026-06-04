@@ -321,7 +321,7 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
     return res.status(400).json({ error: 'plan_date and plan_for_date required' });
 
   const wb   = XLSX.read(req.file.buffer, { type: 'buffer' });
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { range: 2, raw: false });
 
   // Parse multi-row format: group rows into trips
   const trips = [];
@@ -330,8 +330,14 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
     const hasTripHeader = row['plan_for_date'] && row['trip_no'] !== undefined && row['trip_no'] !== null && row['trip_no'] !== '';
     if (hasTripHeader) {
       if (currentTrip) trips.push(currentTrip);
+      // Normalise date: accepts DD-MM-YYYY, DD/MM/YYYY or YYYY-MM-DD
+      let pfd = String(row['plan_for_date']).trim();
+      if (/^\d{2}[-/]\d{2}[-/]\d{4}$/.test(pfd)) {
+        const [d, m, y] = pfd.split(/[-/]/);
+        pfd = `${y}-${m}-${d}`;
+      }
       currentTrip = {
-        plan_for_date: row['plan_for_date'],
+        plan_for_date: pfd,
         trip_no:       row['trip_no'],
         tanker_number: String(row['tanker_number'] || '').trim(),
         route_name:    String(row['route_name'] || '').trim(),
