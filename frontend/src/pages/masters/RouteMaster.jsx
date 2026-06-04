@@ -10,7 +10,7 @@ import {
 import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
 
 const EMPTY_ROUTE = {
-  route_name: '', start_point_id: '', testing_point_id: '',
+  route_name: '', route_no: '', start_point_id: '', testing_point_id: '',
   delivery_point_id: '', distance_km: '', is_active: true, bmcus: []
 };
 
@@ -133,6 +133,7 @@ export default function RouteMaster() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b">
             <tr>
+              <th className="table-th">Route No</th>
               <th className="table-th">Route Name</th>
               <th className="table-th">Start Point</th>
               <th className="table-th">Delivery Point</th>
@@ -147,6 +148,7 @@ export default function RouteMaster() {
             {!isLoading && routes.length === 0 && <EmptyState message="No routes yet."/>}
             {routes.map(r => (
               <tr key={r.id} className="hover:bg-gray-50 border-b border-gray-50">
+                <td className="table-td font-mono text-[#005ba3]">{r.route_no || '—'}</td>
                 <td className="table-td font-semibold">{r.route_name}</td>
                 <td className="table-td text-gray-600 text-xs">{r.start_point_name || '—'}</td>
                 <td className="table-td text-gray-600 text-xs">{r.delivery_point_name || '—'}</td>
@@ -174,10 +176,16 @@ export default function RouteMaster() {
               <button onClick={close} className="text-gray-400 hover:text-gray-600">✕</button>
             </div>
             <div className="overflow-y-auto flex-1 p-5 space-y-4">
-              <Field label="Route Name" required>
-                <input className="input w-full" value={form.route_name}
-                  onChange={e => set('route_name', e.target.value)}/>
-              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Route Name" required>
+                  <input className="input w-full" value={form.route_name}
+                    onChange={e => set('route_name', e.target.value)}/>
+                </Field>
+                <Field label="Route No">
+                  <input className="input w-full" placeholder="e.g. 001"
+                    value={form.route_no||''} onChange={e => set('route_no', e.target.value)}/>
+                </Field>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Starting Point">
                   <select className="input w-full" value={form.start_point_id||''}
