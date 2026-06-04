@@ -17,7 +17,7 @@ const DESCRIPTIONS = ['RMRD', 'Balance Milk', 'Internal Shifting'];
 const CHAMBERS     = ['FC', 'MC', 'BC'];
 const SHIFTS       = ['AM', 'PM'];
 
-function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete }) {
+function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter }) {
   const u = (field, val) => onUpdate(idx, field, val);
   const kgs    = calc.kgs(row.qty_litres);
   const kgFat  = calc.kgFat(kgs, row.fat_pct);
@@ -111,9 +111,14 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete }) {
           placeholder="RMRD"/>
       </td>
       <td className="table-td">
-        <button onClick={() => onDelete(idx)} className="btn-danger btn-sm p-1">
-          <Trash2 size={10}/>
-        </button>
+        <div className="flex gap-1">
+          <button onClick={() => onInsertAfter(idx)} className="btn-secondary btn-sm p-1" title="Add row below">
+            <Plus size={10}/>
+          </button>
+          <button onClick={() => onDelete(idx)} className="btn-danger btn-sm p-1">
+            <Trash2 size={10}/>
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -158,17 +163,33 @@ export default function ExecutionForm() {
   const deleteRow = (idx) =>
     setBmcuRows(prev => prev.map((r, i) => i === idx ? { ...r, is_deleted: true } : r));
 
+  const makeEmptyRow = (bm, seqNo) => ({
+    bmcu_id: bm.id, bmcu_code: bm.bmcu_code, bmcu_name: bm.bmcu_name,
+    seq_no: seqNo,
+    milk_date: exec?.execution_date?.slice(0,10) || '',
+    shift: '', qty_litres: '', qty_kgs: '', fat_pct: '', snf_pct: '',
+    kg_fat: '', kg_snf: '', description: 'RMRD', chamber: '',
+    dps_qty_litres: '', dps_fat_pct: '', dps_snf_pct: '', rmrd_qty: '', is_deleted: false
+  });
+
   const addRow = (bmcuId) => {
     const bm = bmcuList.find(b => b.id === parseInt(bmcuId));
     if (!bm) return;
-    setBmcuRows(prev => [...prev, {
-      bmcu_id: bm.id, bmcu_code: bm.bmcu_code, bmcu_name: bm.bmcu_name,
-      seq_no: prev.filter(r => !r.is_deleted).length + 1,
-      milk_date: exec?.execution_date?.slice(0,10) || '',
-      shift: '', qty_litres: '', qty_kgs: '', fat_pct: '', snf_pct: '',
-      kg_fat: '', kg_snf: '', description: 'RMRD', chamber: '',
-      dps_qty_litres: '', dps_fat_pct: '', dps_snf_pct: '', rmrd_qty: '', is_deleted: false
-    }]);
+    setBmcuRows(prev => {
+      const next = [...prev, makeEmptyRow(bm, prev.filter(r => !r.is_deleted).length + 1)];
+      return next;
+    });
+  };
+
+  const insertRowAfter = (idx) => {
+    const srcRow = bmcuRows[idx];
+    const bm = bmcuList.find(b => b.id === srcRow.bmcu_id);
+    if (!bm) return;
+    setBmcuRows(prev => {
+      const next = [...prev];
+      next.splice(idx + 1, 0, makeEmptyRow(bm, 0));
+      return next.map((r, i) => ({ ...r, seq_no: i + 1 }));
+    });
   };
 
   const saveMut = useMutation({
@@ -281,7 +302,8 @@ export default function ExecutionForm() {
                   <BmcuRow key={i} row={row} idx={i}
                     bmcuList={bmcuList}
                     onUpdate={updateRow}
-                    onDelete={isClosed ? () => {} : deleteRow}/>
+                    onDelete={isClosed ? () => {} : deleteRow}
+                    onInsertAfter={isClosed ? () => {} : insertRowAfter}/>
                 )
               )}
               {visibleRows.length === 0 && (
