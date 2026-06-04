@@ -94,7 +94,13 @@ export const saveAcknowledgements = (id, d) => api.post(`/executions/${id}/ackno
 export const getDailyTSReport   = (p)    => api.get('/reports/daily-ts', { params: p });
 export const getBmcuWiseReport  = (p)    => api.get('/reports/bmcu-wise', { params: p });
 export const sendDailyReport    = (date) => api.post('/reports/send-email', { report_date: date });
-export const downloadTSExcel    = (date) => { window.open(`/api/reports/daily-ts/excel?report_date=${date}`, '_blank'); };
+export const downloadTSExcel    = (date) =>
+  api.get(`/reports/daily-ts/excel?report_date=${date}`, { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `ts_report_${date}.xlsx`; a.click();
+    URL.revokeObjectURL(url);
+  });
 
 // ── Distance Master ───────────────────────────────────────────────────────────
 export const getDistances          = (p)     => api.get('/distances', { params: p });

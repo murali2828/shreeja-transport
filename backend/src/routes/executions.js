@@ -134,7 +134,7 @@ router.post('/', authenticate, async (req, res) => {
 
 // PUT /api/executions/:id  — save BMCU data, recalc totals
 router.put('/:id', authenticate, async (req, res) => {
-  const { dc_number, actual_km, bmcus } = req.body;
+  const { dc_number, actual_km, delivery_point_id, bmcus } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -204,6 +204,13 @@ router.put('/:id', authenticate, async (req, res) => {
     const t = totals.rows[0];
     const avgFat = t.total_kgs > 0 ? (t.total_kg_fat / t.total_kgs) * 100 : 0;
     const avgSnf = t.total_kgs > 0 ? (t.total_kg_snf / t.total_kgs) * 100 : 0;
+
+    if (delivery_point_id != null) {
+      await client.query(
+        'UPDATE trip_plans SET delivery_point_id=$1 WHERE id=$2',
+        [delivery_point_id, exec.rows[0].trip_plan_id]
+      );
+    }
 
     const r = await client.query(
       `UPDATE trip_executions SET

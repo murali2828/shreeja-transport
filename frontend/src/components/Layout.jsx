@@ -4,12 +4,13 @@ import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import { useAuth } from '../hooks/useAuth';
-import { Bell, Search, User, Menu, X } from 'lucide-react';
+import { Bell, Search, User, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export default function Layout() {
   const { user, logoutUser } = useAuth();
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [userMenu,   setUserMenu]   = useState(false);
+  const [mobileOpen,   setMobileOpen]   = useState(false);
+  const [userMenu,     setUserMenu]     = useState(false);
+  const [sidebarOpen,  setSidebarOpen]  = useState(true);
 
   return (
     <div style={{ height:'100vh', display:'flex', flexDirection:'column', overflow:'hidden' }}>
@@ -71,8 +72,17 @@ export default function Layout() {
       <div className="flex flex-1 overflow-hidden" style={{ paddingTop: '48px' }}>
 
         {/* Desktop sidebar */}
-        <div className="hidden sm:flex flex-col sidebar">
-          <Sidebar/>
+        <div className="hidden sm:flex flex-col sidebar overflow-hidden transition-all duration-200"
+          style={{ width: sidebarOpen ? 220 : 48, minWidth: sidebarOpen ? 220 : 48 }}>
+          <div style={{ overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <Sidebar collapsed={!sidebarOpen}/>
+          </div>
+          <button
+            onClick={() => setSidebarOpen(v => !v)}
+            className="flex items-center justify-center p-2 text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+            title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
+            {sidebarOpen ? <ChevronLeft size={16}/> : <ChevronRight size={16}/>}
+          </button>
         </div>
 
         {/* Mobile sidebar */}

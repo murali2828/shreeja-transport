@@ -228,31 +228,31 @@ router.get('/template/download', authenticate, async (req, res) => {
     // ── Sheet 1: Trip Plans ──────────────────────────────────────────────────
     const ws = wb.addWorksheet('Trip Plans');
 
-    const colWidths = [16,8,18,20,14,13,20,20,18,16,14,16,14];
+    const colWidths = [16,8,18,20,18,14,13,20,20,18,16,14,16,14];
     ws.columns = [
-      'plan_for_date','trip_no','tanker_number','route_name',
+      'plan_for_date','trip_no','tanker_number','route_name','delivery_point',
       'shifts_milk','expected_km','driver_name','loader_name','remarks',
       'bmcu_code','shift_code','expected_qty','description'
     ].map((key, i) => ({ key, width: colWidths[i] }));
 
     // Row 1: merged title
-    ws.mergeCells('A1:M1');
+    ws.mergeCells('A1:N1');
     const titleCell = ws.getCell('A1');
     titleCell.value = 'SHREEJA SECONDARY TRANSPORT — Trip Plan Upload Template';
     titleCell.font  = { bold: true, size: 13 };
     titleCell.alignment = { horizontal: 'center' };
 
     // Row 2: instruction
-    ws.mergeCells('A2:M2');
+    ws.mergeCells('A2:N2');
     const instrCell = ws.getCell('A2');
-    instrCell.value = 'Multi-row format: One TRIP HEADER row per trip, then one row per BMCU. Columns A–I on BMCU rows must be blank. Use dropdown for description. Delete rows 4–13 before uploading.';
+    instrCell.value = 'Multi-row format: One TRIP HEADER row per trip, then one row per BMCU. Columns A–J on BMCU rows must be blank. Use dropdown for description. Delete rows 4–13 before uploading.';
     instrCell.font  = { italic: true, size: 9, color: { argb: 'FF595959' } };
     instrCell.alignment = { wrapText: true };
     ws.getRow(2).height = 28;
 
     // Row 3: column headers
     const headerRow = ws.addRow([
-      'plan_for_date','trip_no','tanker_number','route_name',
+      'plan_for_date','trip_no','tanker_number','route_name','delivery_point',
       'shifts_milk','expected_km','driver_name','loader_name','remarks',
       'bmcu_code','shift_code','expected_qty','description'
     ]);
@@ -265,14 +265,14 @@ router.get('/template/download', authenticate, async (req, res) => {
     // Sample data rows (yellow)
     const sampleRows = [
       // Trip 1 — BMCU 3001 has Balance Milk pre-existing + RMRD
-      ['25-05-2026',1,'AP03TF4985','MB Cross','18E19M',620,'Sample Driver','Sample Loader','Sample','3001','18E19M',2000,'Balance Milk'],
-      ['','','','','','','','','','3001','18E19M',5820,'RMRD'],
-      ['','','','','','','','','','3002','18E19M',3750,'RMRD'],
-      ['','','','','','','','','','3003','18E19M',4150,'RMRD'],
+      ['25-05-2026',1,'AP03TF4985','MB Cross','Shreeja Milk Plant','18E19M',620,'Sample Driver','Sample Loader','Sample','3001','18E19M',2000,'Balance Milk'],
+      ['','','','','','','','','','','3001','18E19M',5820,'RMRD'],
+      ['','','','','','','','','','','3002','18E19M',3750,'RMRD'],
+      ['','','','','','','','','','','3003','18E19M',4150,'RMRD'],
       // Trip 2
-      ['25-05-2026',2,'AP03TF2538','B Kothakota','17E18M',331,'Sample Driver 2','Sample Loader 2','','3004','17E18M',2806,'RMRD'],
-      ['','','','','','','','','','3005','17E18M',3310,'RMRD'],
-      ['','','','','','','','','','3006','18M18E',2821,'RMRD'],
+      ['25-05-2026',2,'AP03TF2538','B Kothakota','Shreeja Milk Plant','17E18M',331,'Sample Driver 2','Sample Loader 2','','3004','17E18M',2806,'RMRD'],
+      ['','','','','','','','','','','3005','17E18M',3310,'RMRD'],
+      ['','','','','','','','','','','3006','18M18E',2821,'RMRD'],
     ];
     const yellowFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
     sampleRows.forEach(data => {
@@ -280,8 +280,8 @@ router.get('/template/download', authenticate, async (req, res) => {
       r.eachCell({ includeEmpty: true }, cell => { cell.fill = yellowFill; });
     });
 
-    // Dropdown on column M (description) for data rows 4–2000
-    ws.dataValidations.add('M4:M2000', {
+    // Dropdown on column N (description) for data rows 4–2000
+    ws.dataValidations.add('N4:N2000', {
       type: 'list',
       allowBlank: true,
       formulae: ['"RMRD,Balance Milk"'],
@@ -337,15 +337,16 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
         pfd = `${y}-${m}-${d}`;
       }
       currentTrip = {
-        plan_for_date: pfd,
-        trip_no:       row['trip_no'],
-        tanker_number: String(row['tanker_number'] || '').trim(),
-        route_name:    String(row['route_name'] || '').trim(),
-        shifts_milk:   String(row['shifts_milk'] || '').trim(),
-        expected_km:   row['expected_km'] || null,
-        driver_name:   String(row['driver_name'] || '').trim() || null,
-        loader_name:   String(row['loader_name'] || '').trim() || null,
-        remarks:       String(row['remarks'] || '').trim() || null,
+        plan_for_date:  pfd,
+        trip_no:        row['trip_no'],
+        tanker_number:  String(row['tanker_number'] || '').trim(),
+        route_name:     String(row['route_name'] || '').trim(),
+        delivery_point: String(row['delivery_point'] || '').trim() || null,
+        shifts_milk:    String(row['shifts_milk'] || '').trim(),
+        expected_km:    row['expected_km'] || null,
+        driver_name:    String(row['driver_name'] || '').trim() || null,
+        loader_name:    String(row['loader_name'] || '').trim() || null,
+        remarks:        String(row['remarks'] || '').trim() || null,
         bmcus: []
       };
     }
@@ -384,17 +385,25 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
           if (rr.rows[0]) routeId = rr.rows[0].id;
         }
 
+        let deliveryPointId = null;
+        if (trip.delivery_point) {
+          const dpr = await client.query(
+            'SELECT id FROM delivery_points WHERE name ILIKE $1', [trip.delivery_point]
+          );
+          if (dpr.rows[0]) deliveryPointId = dpr.rows[0].id;
+        }
+
         const expKm  = parseFloat(trip.expected_km) || 0;
         const expQty = 0; // will sum from BMCUs below
         const totalCost = expKm * parseFloat(tr.rows[0].per_km_rate);
 
         const pr = await client.query(
           `INSERT INTO trip_plans
-             (plan_date,plan_for_date,trip_no,route_id,tanker_id,
+             (plan_date,plan_for_date,trip_no,route_id,tanker_id,delivery_point_id,
               shifts_milk,expected_km,expected_total_qty,total_cost,per_liter_cost,
               driver_name,loader_name,remarks,created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
-          [plan_date, plan_for_date, trip.trip_no||null, routeId, tr.rows[0].id,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+          [plan_date, plan_for_date, trip.trip_no||null, routeId, tr.rows[0].id, deliveryPointId,
            trip.shifts_milk||null, expKm, expQty, totalCost, 0,
            trip.driver_name||null, trip.loader_name||null, trip.remarks||null, req.user.id]
         );

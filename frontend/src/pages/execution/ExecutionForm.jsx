@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ChevronLeft, Send, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getExecution, updateExecution, submitForAck, getBmcus } from '../../api/index';
+import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints } from '../../api/index';
 
 const KG = 1.0285;
 const calc = {
@@ -96,6 +96,16 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete }) {
           placeholder="DPS L"/>
       </td>
       <td className="table-td">
+        <input type="number" min="0" step="0.001" className="input py-0.5 px-1 text-xs w-16"
+          value={row.dps_fat_pct || ''} onChange={e => u('dps_fat_pct', e.target.value)}
+          placeholder="Fat%"/>
+      </td>
+      <td className="table-td">
+        <input type="number" min="0" step="0.001" className="input py-0.5 px-1 text-xs w-16"
+          value={row.dps_snf_pct || ''} onChange={e => u('dps_snf_pct', e.target.value)}
+          placeholder="SNF%"/>
+      </td>
+      <td className="table-td">
         <input type="number" min="0" step="0.01" className="input py-0.5 px-1 text-xs w-20"
           value={row.rmrd_qty || ''} onChange={e => u('rmrd_qty', e.target.value)}
           placeholder="RMRD"/>
@@ -114,9 +124,10 @@ export default function ExecutionForm() {
   const navigate = useNavigate();
   const qc       = useQueryClient();
 
-  const [dcNumber,  setDcNumber]  = useState('');
-  const [actualKm,  setActualKm]  = useState('');
-  const [bmcuRows,  setBmcuRows]  = useState([]);
+  const [dcNumber,         setDcNumber]         = useState('');
+  const [actualKm,         setActualKm]         = useState('');
+  const [deliveryPointId,  setDeliveryPointId]  = useState('');
+  const [bmcuRows,         setBmcuRows]         = useState([]);
 
   const { data: exec, isLoading } = useQuery({
     queryKey: ['execution', id],
@@ -125,11 +136,15 @@ export default function ExecutionForm() {
   const { data: bmcuList = [] } = useQuery({
     queryKey: ['bmcus'], queryFn: () => getBmcus().then(r => r.data)
   });
+  const { data: deliveryPoints = [] } = useQuery({
+    queryKey: ['delivery-points'], queryFn: () => getDeliveryPoints().then(r => r.data)
+  });
 
   useEffect(() => {
     if (exec) {
       setDcNumber(exec.dc_number || '');
       setActualKm(exec.actual_km || '');
+      setDeliveryPointId(exec.delivery_point_id || '');
       setBmcuRows((exec.bmcus || []).map(b => ({
         ...b,
         milk_date: b.milk_date ? b.milk_date.slice(0, 10) : ''
@@ -152,12 +167,12 @@ export default function ExecutionForm() {
       milk_date: exec?.execution_date?.slice(0,10) || '',
       shift: '', qty_litres: '', qty_kgs: '', fat_pct: '', snf_pct: '',
       kg_fat: '', kg_snf: '', description: 'RMRD', chamber: '',
-      dps_qty_litres: '', rmrd_qty: '', is_deleted: false
+      dps_qty_litres: '', dps_fat_pct: '', dps_snf_pct: '', rmrd_qty: '', is_deleted: false
     }]);
   };
 
   const saveMut = useMutation({
-    mutationFn: () => updateExecution(id, { dc_number: dcNumber, actual_km: actualKm, bmcus: bmcuRows }),
+    mutationFn: () => updateExecution(id, { dc_number: dcNumber, actual_km: actualKm, delivery_point_id: deliveryPointId || null, bmcus: bmcuRows }),
     onSuccess: () => { toast.success('Saved'); qc.invalidateQueries(['execution', id]); },
     onError: (e) => toast.error(e.response?.data?.error || 'Save failed'),
   });
@@ -216,6 +231,14 @@ export default function ExecutionForm() {
           <input type="number" className="input w-full py-1.5" value={actualKm}
             disabled={isClosed} onChange={e => setActualKm(e.target.value)}/>
         </div>
+        <div>
+          <label className="label text-xs">Delivery Point</label>
+          <select className="input w-full py-1.5" value={deliveryPointId}
+            disabled={isClosed} onChange={e => setDeliveryPointId(e.target.value)}>
+            <option value="">— Select —</option>
+            {deliveryPoints.map(dp => <option key={dp.id} value={dp.id}>{dp.name}</option>)}
+          </select>
+        </div>
         <div className="text-xs">
           <div className="text-gray-500">Total Litres (TS)</div>
           <div className="font-bold text-lg">{totalLitres.toLocaleString()}</div>
@@ -242,12 +265,12 @@ export default function ExecutionForm() {
             </select>
           )}
         </div>
-        <div className="overflow-x-auto max-h-[55vh]">
+        <div className="overflow-x-scroll max-h-[55vh]">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-gray-50 border-b">
               <tr>
                 {['#','Code','Name','Date','Shift','Qty L','Qty Kg','Fat%','SNF%','Kg Fat','Kg SNF',
-                  'Description','Chamber','DPS L','RMRD',''].map(h => (
+                  'Description','Chamber','DPS L','DPS Fat%','DPS SNF%','RMRD',''].map(h => (
                   <th key={h} className="table-th py-1.5 text-xs whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -262,7 +285,7 @@ export default function ExecutionForm() {
                 )
               )}
               {visibleRows.length === 0 && (
-                <tr><td colSpan={16} className="table-td text-center py-8 text-gray-400">No BMCU rows</td></tr>
+                <tr><td colSpan={18} className="table-td text-center py-8 text-gray-400">No BMCU rows</td></tr>
               )}
             </tbody>
           </table>
