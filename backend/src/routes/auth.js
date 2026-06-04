@@ -24,18 +24,15 @@ query(`
   )
 `).catch(err => console.error('Migration error (password_reset_tokens):', err.message));
 
-async function getEmailTransporter() {
-  const r = await query('SELECT * FROM email_configs LIMIT 1');
-  if (!r.rows.length) throw new Error('No email configuration found in database');
-  const cfg = r.rows[0];
+function getEmailTransporter() {
   return {
     transporter: nodemailer.createTransport({
-      host:   cfg.host,
-      port:   parseInt(cfg.port || '587'),
-      secure: parseInt(cfg.port) === 465,
-      auth:   { user: cfg.username, pass: cfg.password },
+      host:   process.env.SMTP_HOST,
+      port:   parseInt(process.env.SMTP_PORT || '587'),
+      secure: process.env.SMTP_SECURE === 'true',
+      auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     }),
-    from: cfg.from_name ? `"${cfg.from_name}" <${cfg.from_email}>` : cfg.from_email,
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
   };
 }
 
@@ -149,18 +146,8 @@ router.post('/forgot-password', async (req, res) => {
 
     const resetLink = `https://tms.shreejamilk.com/reset-password?token=${token}`;
 
-    let emailCfgExists = false;
     try {
-      const cfgCheck = await query('SELECT id FROM email_configs LIMIT 1');
-      emailCfgExists = cfgCheck.rows.length > 0;
-    } catch (_) { /* ignore */ }
-
-    if (!emailCfgExists) {
-      return res.status(503).json({ error: 'Email not configured. Please contact administrator to reset your password manually.' });
-    }
-
-    try {
-      const { transporter, from } = await getEmailTransporter();
+      const { transporter, from } = getEmailTransporter();
       await transporter.sendMail({
         from,
         to:      user.email,
