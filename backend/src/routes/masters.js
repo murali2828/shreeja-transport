@@ -7,20 +7,28 @@ const { authenticate, authorize } = require('../middleware/auth');
 // ─── Tankers ──────────────────────────────────────────────────────────────────
 router.get('/tankers', authenticate, async (req, res) => {
   try {
-    const r = await query('SELECT * FROM tankers WHERE is_active=TRUE ORDER BY tanker_number');
+    const r = await query(
+      `SELECT id, tanker_number, compartments, capacity_litres, per_km_rate,
+              vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p,
+              is_active, created_at, updated_at
+       FROM tankers WHERE is_active=TRUE ORDER BY tanker_number`
+    );
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.post('/tankers', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { tanker_number, compartments, capacity_litres, per_km_rate } = req.body;
-  if (!tanker_number || !compartments || !capacity_litres)
-    return res.status(400).json({ error: 'tanker_number, compartments, capacity_litres required' });
+  const { tanker_number, compartments, capacity_litres, per_km_rate,
+          vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p } = req.body;
+  if (!tanker_number || !capacity_litres)
+    return res.status(400).json({ error: 'tanker_number and capacity_litres required' });
   try {
     const r = await query(
-      `INSERT INTO tankers (tanker_number,compartments,capacity_litres,per_km_rate)
-       VALUES ($1,$2,$3,$4) RETURNING *`,
-      [tanker_number.trim().toUpperCase(), compartments, capacity_litres, per_km_rate || 0]
+      `INSERT INTO tankers (tanker_number,compartments,capacity_litres,per_km_rate,
+                            vendor_code,vendor_name,rate_per_km_bmcu,rate_per_km_p2p)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [tanker_number.trim().toUpperCase(), compartments||null, capacity_litres, per_km_rate||0,
+       vendor_code||null, vendor_name||null, rate_per_km_bmcu||null, rate_per_km_p2p||null]
     );
     res.status(201).json(r.rows[0]);
   } catch (err) {
@@ -30,13 +38,16 @@ router.post('/tankers', authenticate, authorize('admin','planner'), async (req, 
 });
 
 router.put('/tankers/:id', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { tanker_number, compartments, capacity_litres, per_km_rate, is_active } = req.body;
+  const { tanker_number, compartments, capacity_litres, per_km_rate, is_active,
+          vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p } = req.body;
   try {
     const r = await query(
       `UPDATE tankers SET tanker_number=$1,compartments=$2,capacity_litres=$3,
-        per_km_rate=$4,is_active=$5,updated_at=NOW() WHERE id=$6 RETURNING *`,
-      [tanker_number?.trim().toUpperCase(), compartments, capacity_litres,
-       per_km_rate || 0, is_active ?? true, req.params.id]
+        per_km_rate=$4,is_active=$5,vendor_code=$6,vendor_name=$7,
+        rate_per_km_bmcu=$8,rate_per_km_p2p=$9,updated_at=NOW() WHERE id=$10 RETURNING *`,
+      [tanker_number?.trim().toUpperCase(), compartments||null, capacity_litres,
+       per_km_rate||0, is_active ?? true, vendor_code||null, vendor_name||null,
+       rate_per_km_bmcu||null, rate_per_km_p2p||null, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(r.rows[0]);
@@ -54,20 +65,23 @@ router.delete('/tankers/:id', authenticate, authorize('admin'), async (req, res)
 router.get('/bmcus', authenticate, async (req, res) => {
   try {
     const r = await query(
-      'SELECT * FROM bmcus WHERE is_active=TRUE ORDER BY bmcu_code'
+      `SELECT id, bmcu_code, bmcu_name, address, district, state, contact,
+              latitude, longitude, is_active, created_at, updated_at
+       FROM bmcus WHERE is_active=TRUE ORDER BY bmcu_code`
     );
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.post('/bmcus', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { bmcu_code, bmcu_name, address, district, state, contact } = req.body;
+  const { bmcu_code, bmcu_name, address, district, state, contact, latitude, longitude } = req.body;
   if (!bmcu_code || !bmcu_name) return res.status(400).json({ error: 'bmcu_code and bmcu_name required' });
   try {
     const r = await query(
-      `INSERT INTO bmcus (bmcu_code,bmcu_name,address,district,state,contact)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [bmcu_code.trim(), bmcu_name.trim(), address||null, district||null, state||null, contact||null]
+      `INSERT INTO bmcus (bmcu_code,bmcu_name,address,district,state,contact,latitude,longitude)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [bmcu_code.trim(), bmcu_name.trim(), address||null, district||null, state||null,
+       contact||null, latitude||null, longitude||null]
     );
     res.status(201).json(r.rows[0]);
   } catch (err) {
@@ -77,13 +91,13 @@ router.post('/bmcus', authenticate, authorize('admin','planner'), async (req, re
 });
 
 router.put('/bmcus/:id', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { bmcu_name, address, district, state, contact, is_active } = req.body;
+  const { bmcu_name, address, district, state, contact, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
       `UPDATE bmcus SET bmcu_name=$1,address=$2,district=$3,state=$4,contact=$5,
-        is_active=$6,updated_at=NOW() WHERE id=$7 RETURNING *`,
+        is_active=$6,latitude=$7,longitude=$8,updated_at=NOW() WHERE id=$9 RETURNING *`,
       [bmcu_name, address||null, district||null, state||null, contact||null,
-       is_active ?? true, req.params.id]
+       is_active ?? true, latitude||null, longitude||null, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(r.rows[0]);
@@ -244,15 +258,15 @@ router.get('/routes/:id', authenticate, async (req, res) => {
 });
 
 router.post('/routes', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { route_name, start_point_id, testing_point_id, delivery_point_id, distance_km, bmcus } = req.body;
+  const { route_name, route_no, start_point_id, testing_point_id, delivery_point_id, distance_km, bmcus } = req.body;
   if (!route_name) return res.status(400).json({ error: 'route_name required' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const r = await client.query(
-      `INSERT INTO route_masters (route_name,start_point_id,testing_point_id,delivery_point_id,distance_km)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [route_name.trim(), start_point_id||null, testing_point_id||null, delivery_point_id||null, distance_km||null]
+      `INSERT INTO route_masters (route_name,route_no,start_point_id,testing_point_id,delivery_point_id,distance_km)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [route_name.trim(), route_no||null, start_point_id||null, testing_point_id||null, delivery_point_id||null, distance_km||null]
     );
     const routeId = r.rows[0].id;
     if (bmcus?.length) {
@@ -272,15 +286,15 @@ router.post('/routes', authenticate, authorize('admin','planner'), async (req, r
 });
 
 router.put('/routes/:id', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { route_name, start_point_id, testing_point_id, delivery_point_id, distance_km, is_active, bmcus } = req.body;
+  const { route_name, route_no, start_point_id, testing_point_id, delivery_point_id, distance_km, is_active, bmcus } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const r = await client.query(
-      `UPDATE route_masters SET route_name=$1,start_point_id=$2,testing_point_id=$3,
-        delivery_point_id=$4,distance_km=$5,is_active=$6,updated_at=NOW()
-       WHERE id=$7 RETURNING *`,
-      [route_name, start_point_id||null, testing_point_id||null, delivery_point_id||null,
+      `UPDATE route_masters SET route_name=$1,route_no=$2,start_point_id=$3,testing_point_id=$4,
+        delivery_point_id=$5,distance_km=$6,is_active=$7,updated_at=NOW()
+       WHERE id=$8 RETURNING *`,
+      [route_name, route_no||null, start_point_id||null, testing_point_id||null, delivery_point_id||null,
        distance_km||null, is_active ?? true, req.params.id]
     );
     if (!r.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }

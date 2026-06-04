@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { getTankers, createTanker, updateTanker, deleteTanker } from '../../api/index';
 import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
 
-const EMPTY = { tanker_number: '', compartments: 3, capacity_litres: '', per_km_rate: '', is_active: true };
+const EMPTY = { tanker_number: '', compartments: '', capacity_litres: '', per_km_rate: '', vendor_code: '', vendor_name: '', rate_per_km_bmcu: '', rate_per_km_p2p: '', is_active: true };
 
 export default function TankerMaster() {
   const qc = useQueryClient();
@@ -59,9 +59,11 @@ export default function TankerMaster() {
           <thead className="bg-gray-50 border-b">
             <tr>
               <th className="table-th">Tanker No</th>
+              <th className="table-th">Vendor</th>
               <th className="table-th text-center">Compartments</th>
               <th className="table-th text-right">Capacity (L)</th>
-              <th className="table-th text-right">₹/km</th>
+              <th className="table-th text-right">₹/km BMCU</th>
+              <th className="table-th text-right">₹/km P2P</th>
               <th className="table-th">Status</th>
               <th className="table-th w-24">Actions</th>
             </tr>
@@ -72,13 +74,17 @@ export default function TankerMaster() {
             {tankers.map(t => (
               <tr key={t.id} className="hover:bg-gray-50 border-b border-gray-50">
                 <td className="table-td font-mono font-semibold text-[#005ba3]">{t.tanker_number}</td>
+                <td className="table-td text-xs">
+                  {t.vendor_name ? <span title={t.vendor_code}>{t.vendor_name}</span> : <span className="text-gray-400">—</span>}
+                </td>
                 <td className="table-td text-center">
                   <span className="inline-block bg-gray-100 text-gray-700 text-xs px-2 py-0.5 rounded">
-                    {t.compartments}C
+                    {t.compartments || '—'}
                   </span>
                 </td>
                 <td className="table-td text-right font-medium">{parseInt(t.capacity_litres).toLocaleString()}</td>
-                <td className="table-td text-right">₹{parseFloat(t.per_km_rate).toFixed(2)}</td>
+                <td className="table-td text-right">{t.rate_per_km_bmcu ? `₹${parseFloat(t.rate_per_km_bmcu).toFixed(2)}` : '—'}</td>
+                <td className="table-td text-right">{t.rate_per_km_p2p ? `₹${parseFloat(t.rate_per_km_p2p).toFixed(2)}` : '—'}</td>
                 <td className="table-td"><ActiveBadge active={t.is_active}/></td>
                 <td className="table-td">
                   <div className="flex gap-1">
@@ -115,12 +121,9 @@ export default function TankerMaster() {
                 <input className="input w-full" placeholder="e.g. TN01AB1234"
                   value={form.tanker_number} onChange={e => set('tanker_number', e.target.value.toUpperCase())}/>
               </Field>
-              <Field label="Compartments" required>
-                <select className="input w-full" value={form.compartments}
-                  onChange={e => set('compartments', parseInt(e.target.value))}>
-                  <option value={2}>2 (FC + BC)</option>
-                  <option value={3}>3 (FC + MC + BC)</option>
-                </select>
+              <Field label="Compartments">
+                <input className="input w-full" placeholder="e.g. 2C, 3C"
+                  value={form.compartments} onChange={e => set('compartments', e.target.value)}/>
               </Field>
               <Field label="Capacity (Litres)" required>
                 <input type="number" min="1" className="input w-full" placeholder="e.g. 18000"
@@ -129,6 +132,22 @@ export default function TankerMaster() {
               <Field label="Rate per KM (₹)">
                 <input type="number" min="0" step="0.01" className="input w-full" placeholder="e.g. 45.00"
                   value={form.per_km_rate} onChange={e => set('per_km_rate', e.target.value)}/>
+              </Field>
+              <Field label="Vendor Code">
+                <input className="input w-full" placeholder="e.g. V001"
+                  value={form.vendor_code} onChange={e => set('vendor_code', e.target.value)}/>
+              </Field>
+              <Field label="Vendor Name">
+                <input className="input w-full" placeholder="Vendor / owner name"
+                  value={form.vendor_name} onChange={e => set('vendor_name', e.target.value)}/>
+              </Field>
+              <Field label="Rate/KM BMCU (₹)">
+                <input type="number" min="0" step="0.01" className="input w-full" placeholder="e.g. 42.00"
+                  value={form.rate_per_km_bmcu} onChange={e => set('rate_per_km_bmcu', e.target.value)}/>
+              </Field>
+              <Field label="Rate/KM P2P (₹)">
+                <input type="number" min="0" step="0.01" className="input w-full" placeholder="e.g. 38.00"
+                  value={form.rate_per_km_p2p} onChange={e => set('rate_per_km_p2p', e.target.value)}/>
               </Field>
             </div>
             {modal !== 'add' && (
