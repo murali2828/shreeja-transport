@@ -26,10 +26,14 @@
   }
 
   /* ── Scrollbar ─────────────────────────────────────────────────────── */
-  ::-webkit-scrollbar        { width: 5px; height: 5px; }
+  ::-webkit-scrollbar        { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track  { background: rgba(255,255,255,0.1); }
   ::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.35); border-radius: 8px; }
   ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.55); }
+  /* Visible scrollbar for light backgrounds (tables, cards) */
+  .overflow-x-scroll::-webkit-scrollbar-track  { background: #e5e7eb; }
+  .overflow-x-scroll::-webkit-scrollbar-thumb  { background: #93c5fd; border-radius: 8px; }
+  .overflow-x-scroll::-webkit-scrollbar-thumb:hover { background: #3b82f6; }
 }
 
 @layer components {
