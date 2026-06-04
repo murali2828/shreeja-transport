@@ -1,7 +1,7 @@
 // frontend/src/pages/masters/UserManagement.jsx
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Shield, User, Settings, KeyRound } from 'lucide-react';
+import { Shield, User, Settings, KeyRound, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getUsers, createUser, updateUser } from '../../api/index';
 import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
@@ -67,6 +67,20 @@ export default function UserManagement() {
     onError: (e) => toast.error(e.response?.data?.error || e.message),
   });
 
+  const resetMut = useMutation({
+    mutationFn: () => {
+      if (!resetPwd) throw new Error('Password is required');
+      if (resetPwd.length < 6) throw new Error('Password must be at least 6 characters');
+      if (resetPwd !== resetPwdCfm) throw new Error('Passwords do not match');
+      return updateUser(resetModal.id, { password: resetPwd });
+    },
+    onSuccess: () => {
+      toast.success(`Password reset for ${resetModal.full_name}`);
+      closeReset();
+    },
+    onError: (e) => toast.error(e.response?.data?.error || e.message),
+  });
+
   return (
     <div className="space-y-4 max-w-4xl">
       <PageHeader
@@ -115,7 +129,12 @@ export default function UserManagement() {
                   </td>
                   <td className="table-td"><ActiveBadge active={u.is_active}/></td>
                   <td className="table-td">
-                    <button onClick={() => openEdit(u)} className="btn-secondary btn-sm p-1.5">✏</button>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => openEdit(u)} className="btn-secondary btn-sm p-1.5" title="Edit user">✏</button>
+                      <button onClick={() => openReset(u)} className="btn-secondary btn-sm p-1.5" title="Reset password">
+                        <KeyRound size={13}/>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -193,6 +212,56 @@ export default function UserManagement() {
               <div><span className="font-medium text-blue-600">Planner:</span> Masters, Trip Planning, Reports</div>
               <div><span className="font-medium text-green-600">Executor:</span> Execution data entry, Reports</div>
             </div>
+          </div>
+        </Modal>
+      )}
+      {resetModal && (
+        <Modal
+          title={`Reset Password — ${resetModal.full_name}`}
+          onClose={closeReset}
+          footer={
+            <>
+              <button onClick={closeReset} className="btn-secondary">Cancel</button>
+              <button
+                onClick={() => resetMut.mutate()}
+                disabled={resetMut.isPending}
+                className="btn-primary flex items-center gap-2">
+                {resetMut.isPending
+                  ? <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"/>
+                  : <KeyRound size={14}/>}
+                {resetMut.isPending ? 'Saving…' : 'Reset Password'}
+              </button>
+            </>
+          }>
+          <div className="space-y-3">
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              The user will be required to change this password on next login.
+            </p>
+            <Field label="New Password" required>
+              <div className="relative">
+                <input
+                  type={showResetPw ? 'text' : 'password'}
+                  className="input w-full pr-16"
+                  value={resetPwd}
+                  onChange={e => setResetPwd(e.target.value)}
+                  placeholder="Min 6 characters"
+                  autoFocus
+                />
+                <button type="button" onClick={() => setShowResetPw(!showResetPw)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  {showResetPw ? <EyeOff size={14}/> : <Eye size={14}/>}
+                </button>
+              </div>
+            </Field>
+            <Field label="Confirm New Password" required>
+              <input
+                type="password"
+                className="input w-full"
+                value={resetPwdCfm}
+                onChange={e => setResetPwdCfm(e.target.value)}
+                placeholder="Repeat new password"
+              />
+            </Field>
           </div>
         </Modal>
       )}
