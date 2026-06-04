@@ -10,4 +10,4 @@ ALTER TABLE tankers ADD COLUMN IF NOT EXISTS vendor_code VARCHAR(50);
 ALTER TABLE tankers ADD COLUMN IF NOT EXISTS vendor_name VARCHAR(100);
 ALTER TABLE tankers ADD COLUMN IF NOT EXISTS rate_per_km_bmcu NUMERIC(8,2);
 ALTER TABLE tankers ADD COLUMN IF NOT EXISTS rate_per_km_p2p NUMERIC(8,2);
-ALTER TABLE tankers ALTER COLUMN compartments TYPE VARCHAR(20) USING compartments::VARCHAR;
+-- compartments already VARCHAR, no type change needed
