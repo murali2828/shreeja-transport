@@ -6,6 +6,8 @@ import { useAuth } from './hooks/useAuth';
 
 import Layout          from './components/Layout';
 import Login           from './pages/Login';
+import ForgotPassword  from './pages/auth/ForgotPassword';
+import ResetPassword   from './pages/auth/ResetPassword';
 import Dashboard       from './pages/Dashboard';
 
 // Masters
@@ -47,7 +49,9 @@ function ProtectedRoute({ children, roles }) {
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/login" element={<Login/>}/>
+      <Route path="/login"           element={<Login/>}/>
+      <Route path="/forgot-password" element={<ForgotPassword/>}/>
+      <Route path="/reset-password"  element={<ResetPassword/>}/>
 
       {/* All protected routes inside Layout */}
       <Route path="/" element={

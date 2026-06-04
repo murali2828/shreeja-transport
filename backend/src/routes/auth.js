@@ -1,10 +1,39 @@
 // backend/src/routes/auth.js
-const express  = require('express');
-const router   = express.Router();
-const bcrypt   = require('bcrypt');
-const jwt      = require('jsonwebtoken');
-const { query } = require('../config/db');
+const express    = require('express');
+const router     = express.Router();
+const bcrypt     = require('bcrypt');
+const jwt        = require('jsonwebtoken');
+const crypto     = require('crypto');
+const nodemailer = require('nodemailer');
+const { query }  = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
+
+// Ensure password_reset_tokens table exists
+query(`
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id         SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token      UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    used       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (password_reset_tokens):', err.message));
+
+async function getEmailTransporter() {
+  const r = await query('SELECT * FROM email_configs LIMIT 1');
+  if (!r.rows.length) throw new Error('No email configuration found in database');
+  const cfg = r.rows[0];
+  return {
+    transporter: nodemailer.createTransport({
+      host:   cfg.host,
+      port:   parseInt(cfg.port || '587'),
+      secure: parseInt(cfg.port) === 465,
+      auth:   { user: cfg.username, pass: cfg.password },
+    }),
+    from: cfg.from_name ? `"${cfg.from_name}" <${cfg.from_email}>` : cfg.from_email,
+  };
+}
 
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
@@ -92,6 +121,69 @@ router.put('/users/:id', authenticate, authorize('admin'), async (req, res) => {
     );
     if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
     res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/auth/forgot-password
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  try {
+    const r = await query('SELECT id, email FROM users WHERE email=$1 AND is_active=TRUE', [email]);
+    // Always respond OK to avoid email enumeration
+    if (!r.rows.length) return res.json({ ok: true });
+    const user = r.rows[0];
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await query(
+      'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1,$2,$3)',
+      [user.id, token, expiresAt]
+    );
+
+    const resetLink = `https://tms.shreejamilk.com/reset-password?token=${token}`;
+
+    try {
+      const { transporter, from } = await getEmailTransporter();
+      await transporter.sendMail({
+        from,
+        to:      user.email,
+        subject: 'Shreeja TMS — Password Reset',
+        text:    `You requested a password reset. Use the link below (valid for 1 hour):\n\n${resetLink}\n\nIf you did not request this, ignore this email.`,
+        html:    `<p>You requested a password reset for your Shreeja TMS account.</p>
+                  <p><a href="${resetLink}" style="color:#0078d4">Reset your password</a></p>
+                  <p>This link expires in <strong>1 hour</strong>. If you did not request this, ignore this email.</p>`,
+      });
+    } catch (mailErr) {
+      console.error('Password reset email error:', mailErr.message);
+      return res.status(500).json({ error: 'Failed to send reset email. Contact administrator.' });
+    }
+
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/auth/reset-password
+router.post('/reset-password', async (req, res) => {
+  const { token, new_password } = req.body;
+  if (!token || !new_password) return res.status(400).json({ error: 'token and new_password required' });
+  if (new_password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  try {
+    const r = await query(
+      `SELECT prt.*, u.id AS uid FROM password_reset_tokens prt
+       JOIN users u ON u.id = prt.user_id
+       WHERE prt.token=$1 AND prt.used=FALSE AND prt.expires_at > NOW()`,
+      [token]
+    );
+    if (!r.rows.length) return res.status(400).json({ error: 'Invalid or expired reset link' });
+    const row = r.rows[0];
+
+    const hash = await bcrypt.hash(new_password, 10);
+    await query('UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2', [hash, row.uid]);
+    await query('UPDATE password_reset_tokens SET used=TRUE WHERE id=$1', [row.id]);
+
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

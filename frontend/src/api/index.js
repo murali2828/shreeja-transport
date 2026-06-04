@@ -24,11 +24,13 @@ api.interceptors.response.use(
 );
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-export const login       = (d)     => api.post('/auth/login', d);
-export const getMe       = ()      => api.get('/auth/me');
-export const getUsers    = ()      => api.get('/auth/users');
-export const createUser  = (d)     => api.post('/auth/users', d);
-export const updateUser  = (id, d) => api.put(`/auth/users/${id}`, d);
+export const login          = (d)          => api.post('/auth/login', d);
+export const getMe          = ()           => api.get('/auth/me');
+export const getUsers       = ()           => api.get('/auth/users');
+export const createUser     = (d)          => api.post('/auth/users', d);
+export const updateUser     = (id, d)      => api.put(`/auth/users/${id}`, d);
+export const forgotPassword = (email)      => api.post('/auth/forgot-password', { email });
+export const resetPassword  = (token, new_password) => api.post('/auth/reset-password', { token, new_password });
 
 // ── Masters ───────────────────────────────────────────────────────────────────
 export const getTankers         = ()      => api.get('/masters/tankers');

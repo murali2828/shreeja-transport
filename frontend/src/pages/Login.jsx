@@ -1,7 +1,7 @@
 // frontend/src/pages/Login.jsx
 // Shreeja Platform Theme: sky-blue gradient background, frosted white card
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { Truck, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -103,6 +103,12 @@ export default function Login() {
             className="btn-primary w-full py-2.5 text-base mt-2">
             {mut.isPending ? 'Signing in…' : 'Sign In'}
           </button>
+
+          <div className="text-center mt-3">
+            <Link to="/forgot-password" className="text-sm text-[#0078d4] hover:underline">
+              Forgot password?
+            </Link>
+          </div>
         </form>
 
         <p className="text-center text-xs text-gray-400 mt-6">
