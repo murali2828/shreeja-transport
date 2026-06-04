@@ -99,7 +99,7 @@ async function importTankers(wb, client) {
     const compartments     = toStr(row['Compartment']);
     const rate_per_km_bmcu = toNum(row['Rate/KM-BMCU']);
     const rate_per_km_p2p  = toNum(row['Rate/KM point to point']);
-    if (!tanker_number) { skipped++; continue; }
+    if (!tanker_number || capacity_litres === null) { skipped++; continue; }
 
     const reg = tanker_number.trim().toUpperCase();
     const existing = await client.query('SELECT id FROM tankers WHERE tanker_number=$1', [reg]);
