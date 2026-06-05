@@ -18,6 +18,7 @@ import RouteMaster     from './pages/masters/RouteMaster';
 import LocationMasters from './pages/masters/LocationMasters';
 import UserManagement  from './pages/masters/UserManagement';
 import EmailConfig     from './pages/masters/EmailConfig';
+import PlanEmailConfig from './pages/masters/PlanEmailConfig';
 import DistanceMaster  from './pages/masters/DistanceMaster';
 
 // Planning
@@ -86,6 +87,9 @@ function AppRoutes() {
         }/>
         <Route path="masters/email-config" element={
           <ProtectedRoute roles={['admin']}><EmailConfig/></ProtectedRoute>
+        }/>
+        <Route path="masters/plan-emails" element={
+          <ProtectedRoute roles={['admin']}><PlanEmailConfig/></ProtectedRoute>
         }/>
 
         {/* Planning — admin + planner */}

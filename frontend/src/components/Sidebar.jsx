@@ -63,6 +63,7 @@ export default function Sidebar({ collapsed = false }) {
             <>
               {ni('/masters/users',        <Users size={15}/>, 'Users')}
               {ni('/masters/email-config', <Mail size={15}/>,  'Email Config')}
+              {ni('/masters/plan-emails',  <Mail size={15}/>,  'Plan Email List')}
             </>
           )}
         </NavSection>
