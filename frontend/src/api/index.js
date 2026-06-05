@@ -76,6 +76,10 @@ export const createPlan    = (d)     => api.post('/plans', d);
 export const updatePlan    = (id, d) => api.put(`/plans/${id}`, d);
 export const deletePlan    = (id)    => api.delete(`/plans/${id}`);
 export const publishPlans  = (date)  => api.post('/plans/publish', { plan_for_date: date });
+export const getPlanEmailConfigs   = ()      => api.get('/plans/email-config');
+export const createPlanEmailConfig = (d)     => api.post('/plans/email-config', d);
+export const updatePlanEmailConfig = (id, d) => api.put(`/plans/email-config/${id}`, d);
+export const deletePlanEmailConfig = (id)    => api.delete(`/plans/email-config/${id}`);
 export const uploadPlans   = (fd)    => api.post('/plans/upload', fd);
 export const downloadPlanTemplate = () =>
   api.get('/plans/template/download', { responseType: 'blob' }).then(r => {

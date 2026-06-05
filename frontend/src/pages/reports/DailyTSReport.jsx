@@ -9,7 +9,7 @@ function VarCell({ value }) {
   const v = parseFloat(value);
   if (isNaN(v)) return <td className="table-td text-right">—</td>;
   return (
-    <td className={`table-td text-right font-medium ${v > 0.5 ? 'text-red-600' : v < -0.5 ? 'text-amber-600' : 'text-green-600'}`}>
+    <td className={`table-td text-right font-medium ${v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : 'text-gray-400'}`}>
       {v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2)}
     </td>
   );
@@ -65,7 +65,7 @@ export default function DailyTSReport() {
           {[
             { label:'Total Trips',    value: rows.length },
             { label:'DPS Litres',     value: tot('dps_litres').toFixed(0) },
-            { label:'TS Litres',      value: tot('ts_litres').toFixed(0) },
+            { label:'Milk Litres',     value: tot('ts_litres').toFixed(0) },
             { label:'Ack Litres',     value: tot('ack_litres').toFixed(0) },
           ].map(s => (
             <div key={s.label} className="card p-3">
@@ -77,7 +77,7 @@ export default function DailyTSReport() {
       )}
 
       <div className="card overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-scroll" style={{ scrollbarColor: '#93c5fd #e5e7eb' }}>
           <table className="w-full text-xs">
             <thead className="bg-gray-50 border-b sticky top-0">
               <tr>
@@ -91,17 +91,19 @@ export default function DailyTSReport() {
                 <th className="table-th text-right bg-blue-50">DPS L</th>
                 <th className="table-th text-right bg-blue-50">DPS Kg</th>
                 {/* TS */}
-                <th className="table-th text-right bg-amber-50">TS L</th>
-                <th className="table-th text-right bg-amber-50">TS Kg</th>
+                <th className="table-th text-right bg-amber-50">Milk L</th>
+                <th className="table-th text-right bg-amber-50">Milk KG</th>
                 <th className="table-th text-right bg-amber-50">Fat%</th>
                 <th className="table-th text-right bg-amber-50">SNF%</th>
                 <th className="table-th text-right bg-amber-50">Kg Fat</th>
                 <th className="table-th text-right bg-amber-50">Kg SNF</th>
+                <th className="table-th text-right bg-amber-50">Total TS</th>
                 {/* Ack */}
                 <th className="table-th text-right bg-green-50">Ack L</th>
                 <th className="table-th text-right bg-green-50">Ack Kg</th>
                 <th className="table-th text-right bg-green-50">Ack KgF</th>
                 <th className="table-th text-right bg-green-50">Ack KgS</th>
+                <th className="table-th text-right bg-green-50">Total ACK TS</th>
                 {/* Var */}
                 <th className="table-th text-right bg-red-50">Var L</th>
                 <th className="table-th text-right bg-red-50">Var Kg</th>
@@ -111,10 +113,10 @@ export default function DailyTSReport() {
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={22} className="table-td text-center py-10 text-gray-400">Loading…</td></tr>
+                <tr><td colSpan={24} className="table-td text-center py-10 text-gray-400">Loading…</td></tr>
               )}
               {!isLoading && rows.length === 0 && (
-                <tr><td colSpan={22} className="table-td text-center py-10 text-gray-400">
+                <tr><td colSpan={24} className="table-td text-center py-10 text-gray-400">
                   No closed trips in this range. Click Load Report after selecting dates.
                 </td></tr>
               )}
@@ -136,11 +138,13 @@ export default function DailyTSReport() {
                   <td className="table-td text-right bg-amber-50">{parseFloat(r.ts_snf||0).toFixed(3)}</td>
                   <td className="table-td text-right bg-amber-50">{parseFloat(r.ts_kg_fat||0).toFixed(2)}</td>
                   <td className="table-td text-right bg-amber-50">{parseFloat(r.ts_kg_snf||0).toFixed(2)}</td>
+                  <td className="table-td text-right bg-amber-50 font-medium">{(parseFloat(r.ts_kg_fat||0) + parseFloat(r.ts_kg_snf||0)).toFixed(2)}</td>
                   {/* Ack */}
                   <td className="table-td text-right bg-green-50">{parseFloat(r.ack_litres||0).toFixed(0)}</td>
                   <td className="table-td text-right bg-green-50">{parseFloat(r.ack_kgs||0).toFixed(2)}</td>
                   <td className="table-td text-right bg-green-50">{parseFloat(r.ack_kg_fat||0).toFixed(2)}</td>
                   <td className="table-td text-right bg-green-50">{parseFloat(r.ack_kg_snf||0).toFixed(2)}</td>
+                  <td className="table-td text-right bg-green-50 font-medium">{(parseFloat(r.ack_kg_fat||0) + parseFloat(r.ack_kg_snf||0)).toFixed(2)}</td>
                   {/* Var */}
                   <VarCell value={r.var_litres}/>
                   <VarCell value={r.var_kgs}/>

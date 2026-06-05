@@ -1,11 +1,21 @@
 // backend/src/routes/plans.js
-const express  = require('express');
-const router   = express.Router();
-const multer   = require('multer');
-const XLSX     = require('xlsx');
-const ExcelJS  = require('exceljs');
+const express      = require('express');
+const router       = express.Router();
+const multer       = require('multer');
+const XLSX         = require('xlsx');
+const ExcelJS      = require('exceljs');
+const nodemailer   = require('nodemailer');
 const { pool, query } = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
+
+function createTransport() {
+  return nodemailer.createTransport({
+    host:   process.env.SMTP_HOST,
+    port:   parseInt(process.env.SMTP_PORT || '587'),
+    secure: process.env.SMTP_SECURE === 'true',
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+  });
+}
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -212,7 +222,102 @@ router.post('/publish', authenticate, authorize('admin','planner'), async (req, 
       "UPDATE trip_plans SET status='published',updated_at=NOW() WHERE plan_for_date=$1 AND status='draft' RETURNING id",
       [plan_for_date]
     );
+
+    // Send email to plan email config recipients
+    try {
+      const recipients = await query("SELECT email, name FROM plan_email_configs WHERE is_active=TRUE");
+      if (recipients.rows.length > 0) {
+        const plans = await query(`
+          SELECT tp.trip_no, t.tanker_number, rm.route_name, tp.shifts_milk, tp.expected_total_qty
+          FROM trip_plans tp
+          LEFT JOIN tankers t       ON t.id = tp.tanker_id
+          LEFT JOIN route_masters rm ON rm.id = tp.route_id
+          WHERE tp.plan_for_date = $1 AND tp.status = 'published'
+          ORDER BY tp.trip_no`, [plan_for_date]);
+
+        const rows = plans.rows.map(p =>
+          `<tr>
+            <td style="padding:6px 12px;border:1px solid #e5e7eb;">${p.trip_no || '—'}</td>
+            <td style="padding:6px 12px;border:1px solid #e5e7eb;">${p.tanker_number || '—'}</td>
+            <td style="padding:6px 12px;border:1px solid #e5e7eb;">${p.route_name || '—'}</td>
+            <td style="padding:6px 12px;border:1px solid #e5e7eb;">${p.shifts_milk || '—'}</td>
+            <td style="padding:6px 12px;border:1px solid #e5e7eb;text-align:right;">${parseFloat(p.expected_total_qty||0).toLocaleString()}</td>
+          </tr>`
+        ).join('');
+
+        const html = `
+          <h2 style="font-family:sans-serif;color:#0078d4;">Shreeja TMS — Trip Plans for ${plan_for_date}</h2>
+          <table style="border-collapse:collapse;font-family:sans-serif;font-size:14px;">
+            <thead>
+              <tr style="background:#f3f4f6;">
+                <th style="padding:6px 12px;border:1px solid #e5e7eb;text-align:left;">Trip No</th>
+                <th style="padding:6px 12px;border:1px solid #e5e7eb;text-align:left;">Tanker</th>
+                <th style="padding:6px 12px;border:1px solid #e5e7eb;text-align:left;">Route</th>
+                <th style="padding:6px 12px;border:1px solid #e5e7eb;text-align:left;">Shifts Milk</th>
+                <th style="padding:6px 12px;border:1px solid #e5e7eb;text-align:right;">Expected Qty (L)</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+
+        const transporter = createTransport();
+        await transporter.sendMail({
+          from:    process.env.SMTP_FROM || process.env.SMTP_USER,
+          to:      recipients.rows.map(r => r.email).join(', '),
+          subject: `Shreeja TMS — Trip Plans for ${plan_for_date}`,
+          html,
+        });
+      }
+    } catch (mailErr) {
+      console.error('Plan publish email error:', mailErr.message);
+      // Don't fail the publish response due to email error
+    }
+
     res.json({ published: r.rows.length, ids: r.rows.map(r => r.id) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Plan Email Config CRUD ────────────────────────────────────────────────────
+
+// GET /api/plans/email-config
+router.get('/email-config', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const r = await query('SELECT * FROM plan_email_configs ORDER BY created_at');
+    res.json(r.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/plans/email-config
+router.post('/email-config', authenticate, authorize('admin'), async (req, res) => {
+  const { email, name } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  try {
+    const r = await query(
+      'INSERT INTO plan_email_configs (email, name) VALUES ($1, $2) RETURNING *',
+      [email, name || null]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/plans/email-config/:id
+router.put('/email-config/:id', authenticate, authorize('admin'), async (req, res) => {
+  const { email, name, is_active } = req.body;
+  try {
+    const r = await query(
+      'UPDATE plan_email_configs SET email=$1, name=$2, is_active=$3 WHERE id=$4 RETURNING *',
+      [email, name || null, is_active !== undefined ? is_active : true, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/plans/email-config/:id
+router.delete('/email-config/:id', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    await query('DELETE FROM plan_email_configs WHERE id=$1', [req.params.id]);
+    res.json({ deleted: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
