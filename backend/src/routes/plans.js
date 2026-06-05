@@ -432,7 +432,7 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
   const trips = [];
   let currentTrip = null;
   for (const row of rows) {
-    const hasTripHeader = row['trip_no'] !== undefined && row['trip_no'] !== null && row['trip_no'] !== '' && row['tanker_number'];
+    const hasTripHeader = row['plan_for_date'] && row['trip_no'] !== undefined && row['trip_no'] !== null && row['trip_no'] !== '' && row['tanker_number'];
     if (hasTripHeader) {
       if (currentTrip) trips.push(currentTrip);
       // Normalise date: accepts DD-MM-YYYY, DD/MM/YYYY or YYYY-MM-DD
