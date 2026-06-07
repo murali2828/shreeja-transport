@@ -290,7 +290,7 @@ export default function ExecutionForm() {
           <table className="text-xs" style={{ minWidth: '1400px' }}>
             <thead className="sticky top-0 bg-gray-50 border-b">
               <tr>
-                {['#','Code','Name','Date','Shift','Qty L','Qty Kg','Fat%','SNF%','Kg Fat','Kg SNF',
+                {['#','Code','Name','Date','Shift','Dispatch Qty L','Dispatch Qty Kg','Dispatch Fat%','Dispatch SNF%','Kg Fat','Kg SNF',
                   'Description','Chamber','DPS L','DPS Fat%','DPS SNF%','RMRD',''].map(h => (
                   <th key={h} className="table-th py-1.5 text-xs whitespace-nowrap">{h}</th>
                 ))}
