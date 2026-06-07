@@ -38,7 +38,7 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
     if (field === 'dps_qty_litres') onUpdate(idx, 'dps_qty_kgs', calc.kgs(val));
   };
 
-  const TOTAL_COLS = 17;
+  const TOTAL_COLS = 16;
 
   return (
     <>
@@ -101,11 +101,6 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
           <input type="number" min="0" step="0.001" className="input py-0.5 px-1 text-xs w-16" disabled={isClosed}
             value={row.dps_snf_pct || ''} onChange={e => u('dps_snf_pct', e.target.value)}
             placeholder="SNF%"/>
-        </td>
-        <td className="table-td">
-          <input type="number" min="0" step="0.01" className="input py-0.5 px-1 text-xs w-20" disabled={isClosed}
-            value={row.rmrd_qty || ''} onChange={e => u('rmrd_qty', e.target.value)}
-            placeholder="RMRD"/>
         </td>
         <td className="table-td">
           <div className="flex gap-1">
@@ -250,7 +245,7 @@ export default function ExecutionForm() {
     milk_date: exec?.execution_date?.slice(0,10) || '',
     shift: '', qty_litres: '', qty_kgs: '', fat_pct: '', snf_pct: '',
     kg_fat: '', kg_snf: '', description: 'RMRD', chamber: '',
-    dps_qty_litres: '', dps_fat_pct: '', dps_snf_pct: '', rmrd_qty: '', is_deleted: false
+    dps_qty_litres: '', dps_fat_pct: '', dps_snf_pct: '', is_deleted: false
   });
 
   const addRow = (bmcuId) => {
@@ -394,7 +389,7 @@ export default function ExecutionForm() {
             <thead className="sticky top-0 bg-gray-50 border-b">
               <tr>
                 {['#','Code','Name','Date','Dispatch Qty L','Dispatch Qty Kg','Dispatch Fat%','Dispatch SNF%','Kg Fat','Kg SNF',
-                  'Description','Chamber','DPS L','DPS Fat%','DPS SNF%','RMRD',''].map(h => (
+                  'Description','Chamber','DPS L','DPS Fat%','DPS SNF%',''].map(h => (
                   <th key={h} className="table-th py-1.5 text-xs whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -416,7 +411,7 @@ export default function ExecutionForm() {
                 )
               )}
               {visibleRows.length === 0 && (
-                <tr><td colSpan={17} className="table-td text-center py-8 text-gray-400">No BMCU rows</td></tr>
+                <tr><td colSpan={16} className="table-td text-center py-8 text-gray-400">No BMCU rows</td></tr>
               )}
             </tbody>
           </table>

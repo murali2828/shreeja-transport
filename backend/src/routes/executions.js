@@ -168,13 +168,13 @@ router.put('/:id', authenticate, async (req, res) => {
             `UPDATE trip_execution_bmcus SET
                milk_date=$1,shift=$2,qty_litres=$3,qty_kgs=$4,fat_pct=$5,snf_pct=$6,
                kg_fat=$7,kg_snf=$8,description=$9,source_bmcu_id=$10,chamber=$11,
-               dps_qty_litres=$12,dps_qty_kgs=$13,rmrd_qty=$14,is_deleted=FALSE
-             WHERE id=$15 AND execution_id=$16`,
+               dps_qty_litres=$12,dps_qty_kgs=$13,is_deleted=FALSE
+             WHERE id=$14 AND execution_id=$15`,
             [bm.milk_date||null, bm.shift||null,
              bm.qty_litres||null, kgs||null, bm.fat_pct||null, bm.snf_pct||null,
              kgFat||null, kgSnf||null, bm.description||'RMRD',
              bm.source_bmcu_id||null, bm.chamber||null,
-             bm.dps_qty_litres||0, dpsKgs||0, bm.rmrd_qty||0,
+             bm.dps_qty_litres||0, dpsKgs||0,
              bm.id, req.params.id]
           );
         } else {
@@ -183,13 +183,13 @@ router.put('/:id', authenticate, async (req, res) => {
             `INSERT INTO trip_execution_bmcus
                (execution_id,seq_no,bmcu_id,milk_date,shift,qty_litres,qty_kgs,
                 fat_pct,snf_pct,kg_fat,kg_snf,description,source_bmcu_id,chamber,
-                dps_qty_litres,dps_qty_kgs,rmrd_qty)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+                dps_qty_litres,dps_qty_kgs)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
             [req.params.id, bm.seq_no, bm.bmcu_id, bm.milk_date||null, bm.shift||null,
              bm.qty_litres||null, kgs||null, bm.fat_pct||null, bm.snf_pct||null,
              kgFat||null, kgSnf||null, bm.description||'RMRD',
              bm.source_bmcu_id||null, bm.chamber||null,
-             bm.dps_qty_litres||0, dpsKgs||0, bm.rmrd_qty||0]
+             bm.dps_qty_litres||0, dpsKgs||0]
           );
         }
       }
