@@ -75,7 +75,12 @@ router.get('/:id', authenticate, async (req, res) => {
       [req.params.id]
     );
 
-    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows });
+    const shiftRows = await query(
+      'SELECT * FROM trip_execution_bmcu_shifts WHERE execution_id=$1 ORDER BY bmcu_seq_no, id',
+      [req.params.id]
+    );
+
+    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -134,7 +139,7 @@ router.post('/', authenticate, async (req, res) => {
 
 // PUT /api/executions/:id  — save BMCU data, recalc totals
 router.put('/:id', authenticate, async (req, res) => {
-  const { dc_number, actual_km, delivery_point_id, bmcus } = req.body;
+  const { dc_number, actual_km, delivery_point_id, bmcus, shift_rows } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -187,6 +192,22 @@ router.put('/:id', authenticate, async (req, res) => {
              bm.dps_qty_litres||0, dpsKgs||0, bm.rmrd_qty||0]
           );
         }
+      }
+    }
+
+    // Save shift rows
+    if (shift_rows !== undefined) {
+      await client.query(
+        'DELETE FROM trip_execution_bmcu_shifts WHERE execution_id=$1', [req.params.id]
+      );
+      for (const sr of (shift_rows || [])) {
+        await client.query(
+          `INSERT INTO trip_execution_bmcu_shifts
+             (execution_id, bmcu_seq_no, milk_date, shift, rmrd_qty, rmrd_fat_pct, rmrd_snf_pct)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [req.params.id, sr.bmcu_seq_no, sr.milk_date||null, sr.shift||null,
+           sr.rmrd_qty||null, sr.rmrd_fat_pct||null, sr.rmrd_snf_pct||null]
+        );
       }
     }
 
