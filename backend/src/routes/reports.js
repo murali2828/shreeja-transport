@@ -69,13 +69,36 @@ router.get('/daily-ts', authenticate, async (req, res) => {
       [from_date, to_date]
     );
 
-    // Compute variations: ack - ts
+    // Fetch shift-level RMRD rows for all executions in range
+    const execIds = r.rows.map(row => row.id);
+    let shiftMap = {};
+    if (execIds.length) {
+      const sr = await query(`
+        SELECT tebs.execution_id, tebs.bmcu_seq_no, tebs.milk_date, tebs.shift,
+               tebs.rmrd_qty, tebs.rmrd_fat_pct, tebs.rmrd_snf_pct,
+               b.bmcu_code, b.bmcu_name
+        FROM trip_execution_bmcu_shifts tebs
+        JOIN trip_execution_bmcus teb
+          ON teb.execution_id = tebs.execution_id AND teb.seq_no = tebs.bmcu_seq_no AND teb.is_deleted=FALSE
+        JOIN bmcus b ON b.id = teb.bmcu_id
+        WHERE tebs.execution_id = ANY($1)
+        ORDER BY tebs.execution_id, tebs.bmcu_seq_no, tebs.id`,
+        [execIds]
+      );
+      for (const s of sr.rows) {
+        if (!shiftMap[s.execution_id]) shiftMap[s.execution_id] = [];
+        shiftMap[s.execution_id].push(s);
+      }
+    }
+
+    // Compute variations and attach shift rows
     const rows = r.rows.map(row => ({
       ...row,
       var_litres: parseFloat(row.ack_litres) - parseFloat(row.ts_litres),
       var_kgs:    parseFloat(row.ack_kgs)    - parseFloat(row.ts_kgs),
       var_kg_fat: parseFloat(row.ack_kg_fat) - parseFloat(row.ts_kg_fat),
       var_kg_snf: parseFloat(row.ack_kg_snf) - parseFloat(row.ts_kg_snf),
+      shift_rows: shiftMap[row.id] || [],
     }));
     res.json(rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -149,7 +172,31 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
       ORDER BY tp.trip_no`, [report_date]
     );
 
+    // Fetch shift detail rows for Excel sheet 2
+    const execIds = r.rows.map(row => row.id);
+    let shiftRows = [];
+    if (execIds.length) {
+      const sr = await query(`
+        SELECT te.execution_date, tp.trip_no, t.tanker_number,
+               tebs.bmcu_seq_no, b.bmcu_code, b.bmcu_name,
+               tebs.milk_date, tebs.shift, tebs.rmrd_qty, tebs.rmrd_fat_pct, tebs.rmrd_snf_pct
+        FROM trip_execution_bmcu_shifts tebs
+        JOIN trip_executions te ON te.id = tebs.execution_id
+        JOIN trip_plans tp ON tp.id = te.trip_plan_id
+        LEFT JOIN tankers t ON t.id = tp.tanker_id
+        JOIN trip_execution_bmcus teb
+          ON teb.execution_id = tebs.execution_id AND teb.seq_no = tebs.bmcu_seq_no AND teb.is_deleted=FALSE
+        JOIN bmcus b ON b.id = teb.bmcu_id
+        WHERE tebs.execution_id = ANY($1)
+        ORDER BY te.execution_date, tp.trip_no, tebs.bmcu_seq_no, tebs.id`,
+        [execIds]
+      );
+      shiftRows = sr.rows;
+    }
+
     const wb = XLSX.utils.book_new();
+
+    // Sheet 1: TS Summary
     const headers = [
       'Date','Trip','Tanker','Route','Start Point','Delivery Point','Shift','DC No','Actual KM',
       'DPS Litres','DPS Kgs',
@@ -172,10 +219,26 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
         vLit.toFixed(2), vKgs.toFixed(4), vFat.toFixed(4), vSnf.toFixed(4)
       ];
     });
-
     const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
     ws['!cols'] = headers.map((_, i) => ({ wch: i < 9 ? 16 : 12 }));
     XLSX.utils.book_append_sheet(wb, ws, `TS Report ${report_date}`);
+
+    // Sheet 2: RMRD Shift Detail
+    const shiftHeaders = [
+      'Date','Trip','Tanker','BMCU Code','BMCU Name','Milk Date','Shift',
+      'RMRD Qty (L)','RMRD Fat%','RMRD SNF%'
+    ];
+    const shiftDataRows = shiftRows.map(s => [
+      s.execution_date?.toISOString?.().slice(0,10) || s.execution_date,
+      s.trip_no, s.tanker_number,
+      s.bmcu_code, s.bmcu_name,
+      s.milk_date?.toISOString?.().slice(0,10) || s.milk_date,
+      s.shift,
+      s.rmrd_qty, s.rmrd_fat_pct, s.rmrd_snf_pct
+    ]);
+    const ws2 = XLSX.utils.aoa_to_sheet([shiftHeaders, ...shiftDataRows]);
+    ws2['!cols'] = shiftHeaders.map((_, i) => ({ wch: i < 5 ? 18 : 12 }));
+    XLSX.utils.book_append_sheet(wb, ws2, 'RMRD Shift Detail');
 
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Disposition', `attachment; filename=ts_report_${report_date}.xlsx`);
