@@ -40,9 +40,9 @@ function ChamberDropdown({ value, onChange, disabled }) {
       <button type="button" disabled={disabled}
         onClick={() => !disabled && setOpen(o => !o)}
         className="input py-0.5 px-2 text-xs w-full text-left flex items-center justify-between gap-1"
-        style={{ minWidth: 80 }}>
-        <span className={selected.length ? 'text-gray-800' : 'text-gray-400'}>{label}</span>
-        <span className="text-gray-400">▾</span>
+        style={{ minWidth: 90, whiteSpace: 'nowrap', overflow: 'hidden' }}>
+        <span className={`truncate ${selected.length ? 'text-gray-800' : 'text-gray-400'}`}>{label}</span>
+        <span className="text-gray-400 flex-shrink-0">▾</span>
       </button>
       {open && (
         <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
