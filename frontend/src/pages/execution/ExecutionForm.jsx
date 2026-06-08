@@ -1,5 +1,5 @@
 // frontend/src/pages/execution/ExecutionForm.jsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle } from 'lucide-react';
@@ -17,6 +17,49 @@ const calc = {
 const DESCRIPTIONS = ['RMRD', 'Balance Milk', 'Internal Shifting'];
 const CHAMBERS     = ['FC', 'MC', 'BC'];
 const SHIFTS       = ['AM', 'PM'];
+
+function ChamberDropdown({ value, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const selected = (value || '').split(',').filter(Boolean);
+  const label = selected.length === 0 ? '— Select —' : selected.join(', ');
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const toggle = (c) => {
+    const next = selected.includes(c) ? selected.filter(x => x !== c) : [...selected, c];
+    onChange(next.join(','));
+  };
+
+  return (
+    <div ref={ref} className="relative" style={{ minWidth: 80 }}>
+      <button type="button" disabled={disabled}
+        onClick={() => !disabled && setOpen(o => !o)}
+        className="input py-0.5 px-2 text-xs w-full text-left flex items-center justify-between gap-1"
+        style={{ minWidth: 80 }}>
+        <span className={selected.length ? 'text-gray-800' : 'text-gray-400'}>{label}</span>
+        <span className="text-gray-400">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+          style={{ minWidth: 80 }}>
+          {CHAMBERS.map(c => (
+            <label key={c}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-blue-50 select-none">
+              <input type="checkbox" checked={selected.includes(c)} onChange={() => toggle(c)}
+                className="accent-blue-600"/>
+              {c}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClosed,
                    shiftRowsForBmcu, onAddShiftRow, onUpdateShiftRow, onDeleteShiftRow, execDate }) {
@@ -82,19 +125,7 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
           </td>
         )}
         <td className="table-td">
-          <select
-            multiple
-            disabled={isClosed}
-            size={3}
-            className="text-xs border rounded px-1 py-0.5 w-16"
-            style={{ borderColor: 'rgba(0,120,212,0.22)', outline: 'none' }}
-            value={(row.chamber || '').split(',').filter(Boolean)}
-            onChange={e => {
-              const selected = Array.from(e.target.selectedOptions).map(o => o.value);
-              u('chamber', selected.join(','));
-            }}>
-            {CHAMBERS.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <ChamberDropdown value={row.chamber} onChange={val => u('chamber', val)} disabled={isClosed}/>
         </td>
         <td className="table-td">
           <input type="number" min="0" step="0.01" className="input py-0.5 px-1 text-xs w-20" disabled={isClosed}
