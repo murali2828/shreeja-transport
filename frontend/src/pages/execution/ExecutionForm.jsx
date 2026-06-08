@@ -2,9 +2,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, ChevronLeft, Send, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints } from '../../api/index';
+import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, cancelExecution } from '../../api/index';
+import { useAuth } from '../../hooks/useAuth';
 
 const KG = 1.0285;
 const calc = {
@@ -198,6 +199,10 @@ export default function ExecutionForm() {
   const { id }   = useParams();
   const navigate = useNavigate();
   const qc       = useQueryClient();
+  const { user } = useAuth();
+  const isAdmin  = user?.role === 'admin';
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason,    setCancelReason]    = useState('');
 
   const [dcNumber,         setDcNumber]         = useState('');
   const [actualKm,         setActualKm]         = useState('');
@@ -305,6 +310,15 @@ export default function ExecutionForm() {
     onError: (e) => toast.error(e.response?.data?.error || 'Submit failed'),
   });
 
+  const cancelMut = useMutation({
+    mutationFn: () => cancelExecution(id, cancelReason),
+    onSuccess: () => {
+      toast.success('Trip cancelled');
+      navigate('/execution');
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'Cancel failed'),
+  });
+
   if (isLoading) return <div className="text-gray-400 p-8">Loading…</div>;
   if (!exec) return <div className="text-red-500 p-8">Execution not found</div>;
 
@@ -329,7 +343,13 @@ export default function ExecutionForm() {
             {exec.execution_date?.slice(0,10)} · {exec.delivery_point_name} · {exec.shifts_milk}
           </p>
         </div>
-        <span className={`ml-auto text-xs px-2.5 py-1 rounded-full font-medium
+        {isAdmin && !isClosed && (
+          <button onClick={() => setShowCancelModal(true)}
+            className="ml-auto btn-danger flex items-center gap-1.5 text-xs">
+            <XCircle size={13}/> Cancel Trip
+          </button>
+        )}
+        <span className={`${isAdmin && !isClosed ? '' : 'ml-auto'} text-xs px-2.5 py-1 rounded-full font-medium
           ${ exec.status==='in_progress' ? 'bg-blue-100 text-blue-700' :
              exec.status==='saved'       ? 'bg-amber-100 text-amber-700' :
              exec.status==='pending_ack' ? 'bg-purple-100 text-purple-700' :
@@ -443,6 +463,36 @@ export default function ExecutionForm() {
           <button onClick={() => navigate(`/execution/${id}/acknowledge`)} className="btn-primary flex items-center gap-2">
             <Send size={14}/> Enter Acknowledgement
           </button>
+        </div>
+      )}
+
+      {/* Admin cancel modal */}
+      {showCancelModal && (
+        <div className="modal-overlay" onClick={() => setShowCancelModal(false)}>
+          <div className="modal-box max-w-sm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>Cancel Trip #{exec.trip_no}</span>
+              <button onClick={() => setShowCancelModal(false)} className="text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+            <div className="modal-body space-y-3">
+              <p className="text-sm text-gray-600">
+                This will cancel the trip execution and the associated plan. This action cannot be undone from the UI.
+              </p>
+              <div>
+                <label className="label">Reason (optional)</label>
+                <input className="input" placeholder="e.g. Duplicate entry, Wrong tanker..."
+                  value={cancelReason} onChange={e => setCancelReason(e.target.value)}/>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setShowCancelModal(false)} className="btn-secondary">Back</button>
+              <button onClick={() => cancelMut.mutate()} disabled={cancelMut.isPending}
+                className="btn-danger flex items-center gap-1.5">
+                {cancelMut.isPending ? <RefreshCw size={13} className="animate-spin"/> : <XCircle size={13}/>}
+                Confirm Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

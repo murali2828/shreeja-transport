@@ -96,6 +96,7 @@ export const createExecution    = (d)     => api.post('/executions', d);
 export const updateExecution    = (id, d) => api.put(`/executions/${id}`, d);
 export const submitForAck       = (id)    => api.post(`/executions/${id}/submit-ack`);
 export const saveAcknowledgements = (id, d) => api.post(`/executions/${id}/acknowledgements`, d);
+export const cancelExecution      = (id, reason) => api.post(`/executions/${id}/cancel`, { reason });
 
 // ── Reports ───────────────────────────────────────────────────────────────────
 export const getDailyTSReport   = (p)    => api.get('/reports/daily-ts', { params: p });

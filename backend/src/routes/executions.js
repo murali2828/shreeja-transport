@@ -255,6 +255,31 @@ router.put('/:id', authenticate, async (req, res) => {
   } finally { client.release(); }
 });
 
+// POST /api/executions/:id/cancel  — admin only, any status except closed
+router.post('/:id/cancel', authenticate, async (req, res) => {
+  if (req.user.role !== 'admin')
+    return res.status(403).json({ error: 'Admin only' });
+  const { reason } = req.body;
+  try {
+    const exec = await query(
+      "SELECT * FROM trip_executions WHERE id=$1 AND status != 'closed'", [req.params.id]
+    );
+    if (!exec.rows.length)
+      return res.status(404).json({ error: 'Execution not found or already closed' });
+
+    await query(
+      "UPDATE trip_executions SET status='cancelled', cancel_reason=$1, updated_at=NOW() WHERE id=$2",
+      [reason || null, req.params.id]
+    );
+    // Also cancel the associated trip plan
+    await query(
+      "UPDATE trip_plans SET status='cancelled' WHERE id=$1",
+      [exec.rows[0].trip_plan_id]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // POST /api/executions/:id/submit-ack  — saved → pending_ack
 router.post('/:id/submit-ack', authenticate, async (req, res) => {
   try {

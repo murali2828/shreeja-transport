@@ -2,14 +2,19 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, Eye, RefreshCw } from 'lucide-react';
+import { Play, Eye, RefreshCw, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getPlans, getExecutions, createExecution } from '../../api/index';
+import { getPlans, getExecutions, createExecution, cancelExecution } from '../../api/index';
+import { useAuth } from '../../hooks/useAuth';
 
 export default function ExecutionList() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [date, setDate] = useState(new Date().toISOString().slice(0,10));
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelTarget, setCancelTarget] = useState(null); // { execId, planId, tripNo }
 
   const { data: plans = [], isLoading: loadingPlans } = useQuery({
     queryKey: ['plans', date, 'published'],
@@ -31,14 +36,33 @@ export default function ExecutionList() {
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to start'),
   });
 
+  const cancelMut = useMutation({
+    mutationFn: ({ execId, reason }) => cancelExecution(execId, reason),
+    onSuccess: () => {
+      toast.success('Trip cancelled');
+      setCancelTarget(null);
+      setCancelReason('');
+      qc.invalidateQueries(['executions']);
+      qc.invalidateQueries(['plans']);
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'Cancel failed'),
+  });
+
   const statusBadge = (s) => ({
     in_progress: 'bg-blue-100 text-blue-700',
     saved:       'bg-amber-100 text-amber-700',
     pending_ack: 'bg-purple-100 text-purple-700',
     closed:      'bg-green-100 text-green-700',
+    cancelled:   'bg-red-100 text-red-600',
   })[s] || 'bg-gray-100 text-gray-500';
 
   const execMap = Object.fromEntries(execs.map(e => [e.trip_plan_id, e]));
+
+  // Filter out cancelled plans from the list
+  const visiblePlans = plans.filter(p => {
+    const exec = execMap[p.id];
+    return !exec || exec.status !== 'cancelled';
+  });
 
   return (
     <div className="space-y-4 max-w-5xl">
@@ -61,19 +85,19 @@ export default function ExecutionList() {
                 <th className="table-th text-right">Exp Qty (L)</th>
                 <th className="table-th text-right">KM</th>
                 <th className="table-th">Execution Status</th>
-                <th className="table-th w-24">Action</th>
+                <th className="table-th">Action</th>
               </tr>
             </thead>
             <tbody>
               {loadingPlans && (
                 <tr><td colSpan={9} className="table-td text-center py-10 text-gray-400">Loading…</td></tr>
               )}
-              {!loadingPlans && plans.length === 0 && (
+              {!loadingPlans && visiblePlans.length === 0 && (
                 <tr><td colSpan={9} className="table-td text-center py-10 text-gray-400">
                   No published plans for {date}
                 </td></tr>
               )}
-              {plans.map(p => {
+              {visiblePlans.map(p => {
                 const exec = execMap[p.id];
                 return (
                   <tr key={p.id} className="hover:bg-gray-50 border-b border-gray-50">
@@ -94,19 +118,29 @@ export default function ExecutionList() {
                       )}
                     </td>
                     <td className="table-td">
-                      {exec ? (
-                        <button onClick={() => navigate(`/execution/${exec.id}`)}
-                          className="btn-secondary btn-sm flex items-center gap-1">
-                          <Eye size={12}/> View
-                        </button>
-                      ) : (
-                        <button onClick={() => startMut.mutate(p.id)}
-                          disabled={startMut.isPending}
-                          className="btn-primary btn-sm flex items-center gap-1">
-                          {startMut.isPending ? <RefreshCw size={12} className="animate-spin"/> : <Play size={12}/>}
-                          Start
-                        </button>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {exec ? (
+                          <button onClick={() => navigate(`/execution/${exec.id}`)}
+                            className="btn-secondary btn-sm flex items-center gap-1">
+                            <Eye size={12}/> View
+                          </button>
+                        ) : (
+                          <button onClick={() => startMut.mutate(p.id)}
+                            disabled={startMut.isPending}
+                            className="btn-primary btn-sm flex items-center gap-1">
+                            {startMut.isPending ? <RefreshCw size={12} className="animate-spin"/> : <Play size={12}/>}
+                            Start
+                          </button>
+                        )}
+                        {isAdmin && exec && exec.status !== 'closed' && (
+                          <button
+                            onClick={() => setCancelTarget({ execId: exec.id, planId: p.id, tripNo: p.trip_no })}
+                            className="btn-danger btn-sm flex items-center gap-1"
+                            title="Cancel trip">
+                            <XCircle size={12}/> Cancel
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -115,6 +149,38 @@ export default function ExecutionList() {
           </table>
         </div>
       </div>
+
+      {/* Cancel confirmation modal */}
+      {cancelTarget && (
+        <div className="modal-overlay" onClick={() => setCancelTarget(null)}>
+          <div className="modal-box max-w-sm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>Cancel Trip #{cancelTarget.tripNo}</span>
+              <button onClick={() => setCancelTarget(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+            <div className="modal-body space-y-3">
+              <p className="text-sm text-gray-600">
+                This will cancel the trip execution and the plan. This action cannot be undone from the UI.
+              </p>
+              <div>
+                <label className="label">Reason (optional)</label>
+                <input className="input" placeholder="e.g. Duplicate entry, Wrong tanker..."
+                  value={cancelReason} onChange={e => setCancelReason(e.target.value)}/>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setCancelTarget(null)} className="btn-secondary">Back</button>
+              <button
+                onClick={() => cancelMut.mutate({ execId: cancelTarget.execId, reason: cancelReason })}
+                disabled={cancelMut.isPending}
+                className="btn-danger flex items-center gap-1.5">
+                {cancelMut.isPending ? <RefreshCw size={13} className="animate-spin"/> : <XCircle size={13}/>}
+                Confirm Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
