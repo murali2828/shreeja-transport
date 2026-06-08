@@ -82,11 +82,24 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
           </td>
         )}
         <td className="table-td">
-          <select className="input py-0.5 px-1 text-xs w-16" disabled={isClosed}
-            value={row.chamber || ''} onChange={e => u('chamber', e.target.value)}>
-            <option value="">—</option>
-            {CHAMBERS.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <div className="flex gap-1.5">
+            {CHAMBERS.map(c => {
+              const selected = (row.chamber || '').split(',').filter(Boolean).includes(c);
+              return (
+                <label key={c} className={`flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded text-xs font-semibold border transition-colors
+                  ${selected ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-white border-gray-300 text-gray-400'}
+                  ${isClosed ? 'cursor-not-allowed opacity-60' : 'hover:border-blue-300'}`}>
+                  <input type="checkbox" className="hidden" disabled={isClosed} checked={selected}
+                    onChange={() => {
+                      const current = (row.chamber || '').split(',').filter(Boolean);
+                      const updated = selected ? current.filter(x => x !== c) : [...current, c];
+                      u('chamber', updated.join(','));
+                    }}/>
+                  {c}
+                </label>
+              );
+            })}
+          </div>
         </td>
         <td className="table-td">
           <input type="number" min="0" step="0.01" className="input py-0.5 px-1 text-xs w-20" disabled={isClosed}
