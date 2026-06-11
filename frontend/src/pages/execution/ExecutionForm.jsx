@@ -61,6 +61,55 @@ function ChamberDropdown({ value, onChange, disabled }) {
   );
 }
 
+function BmcuSearchDropdown({ bmcuList, onSelect }) {
+  const [query, setQuery] = useState('');
+  const [open,  setOpen]  = useState(false);
+  const ref = useRef(null);
+
+  const filtered = query.trim()
+    ? bmcuList.filter(b =>
+        b.bmcu_code.toLowerCase().includes(query.toLowerCase()) ||
+        b.bmcu_name.toLowerCase().includes(query.toLowerCase())
+      ).slice(0, 20)
+    : bmcuList.slice(0, 20);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative" style={{ minWidth: 160 }}>
+      <input
+        autoFocus
+        type="text"
+        className="input py-0.5 px-2 text-xs w-full"
+        placeholder="Search code or name…"
+        value={query}
+        onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+      />
+      {open && (
+        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-y-auto"
+          style={{ maxHeight: 200, minWidth: 220 }}>
+          {filtered.length === 0 && (
+            <div className="px-3 py-2 text-xs text-gray-400">No results</div>
+          )}
+          {filtered.map(b => (
+            <div key={b.id}
+              className="px-3 py-1.5 text-xs cursor-pointer hover:bg-blue-50 flex gap-2"
+              onMouseDown={() => { onSelect(b); setOpen(false); }}>
+              <span className="font-mono font-semibold text-[#0078d4]">{b.bmcu_code}</span>
+              <span className="text-gray-600 truncate">{b.bmcu_name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClosed,
                    shiftRowsForBmcu, onAddShiftRow, onUpdateShiftRow, onDeleteShiftRow, execDate }) {
   const u = (field, val) => onUpdate(idx, field, val);
@@ -88,8 +137,20 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
     <>
       <tr className="hover:bg-gray-50 border-b border-gray-50 text-xs">
         <td className="table-td font-bold text-[#0078d4] text-center">{row.seq_no}</td>
-        <td className="table-td font-mono whitespace-nowrap">{row.bmcu_code}</td>
-        <td className="table-td text-xs max-w-24 truncate">{row.bmcu_name}</td>
+        {!row.bmcu_id ? (
+          <td className="table-td" colSpan={2}>
+            <BmcuSearchDropdown bmcuList={bmcuList} onSelect={bm => {
+              onUpdate(idx, 'bmcu_id',   bm.id);
+              onUpdate(idx, 'bmcu_code', bm.bmcu_code);
+              onUpdate(idx, 'bmcu_name', bm.bmcu_name);
+            }}/>
+          </td>
+        ) : (
+          <>
+            <td className="table-td font-mono whitespace-nowrap">{row.bmcu_code}</td>
+            <td className="table-td text-xs max-w-24 truncate">{row.bmcu_name}</td>
+          </>
+        )}
         <td className="table-td">
           <input type="date" className="input py-0.5 px-1 text-xs w-28" disabled={isClosed}
             value={row.milk_date || ''} onChange={e => u('milk_date', e.target.value)}/>
@@ -284,7 +345,9 @@ export default function ExecutionForm() {
     setBmcuRows(prev => prev.map((r, i) => i === idx ? { ...r, is_deleted: true } : r));
 
   const makeEmptyRow = (bm, seqNo) => ({
-    bmcu_id: bm.id, bmcu_code: bm.bmcu_code, bmcu_name: bm.bmcu_name,
+    bmcu_id: bm ? bm.id : null,
+    bmcu_code: bm ? bm.bmcu_code : '',
+    bmcu_name: bm ? bm.bmcu_name : '',
     seq_no: seqNo,
     milk_date: exec?.execution_date?.slice(0,10) || '',
     shift: '', qty_litres: '', qty_kgs: '', fat_pct: '', snf_pct: '',
@@ -302,12 +365,9 @@ export default function ExecutionForm() {
   };
 
   const insertRowAfter = (idx) => {
-    const srcRow = bmcuRows[idx];
-    const bm = bmcuList.find(b => b.id === srcRow.bmcu_id);
-    if (!bm) return;
     setBmcuRows(prev => {
       const next = [...prev];
-      next.splice(idx + 1, 0, makeEmptyRow(bm, 0));
+      next.splice(idx + 1, 0, makeEmptyRow(null, 0));
       return next.map((r, i) => ({ ...r, seq_no: i + 1 }));
     });
   };
@@ -333,7 +393,7 @@ export default function ExecutionForm() {
   const saveMut = useMutation({
     mutationFn: () => updateExecution(id, {
       dc_number: dcNumber, actual_km: actualKm, delivery_point_id: deliveryPointId || null,
-      bmcus: bmcuRows,
+      bmcus: bmcuRows.filter(r => r.bmcu_id), // skip rows where BMCU not yet selected
       shift_rows: shiftRows.map(({ _key, ...r }) => r)
     }),
     onSuccess: () => { toast.success('Saved'); qc.invalidateQueries(['execution', id]); },
