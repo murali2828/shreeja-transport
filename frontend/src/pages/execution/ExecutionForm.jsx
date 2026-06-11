@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle } from 'lucide-react';
+import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle, GripVertical } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, cancelExecution } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
@@ -111,7 +111,8 @@ function BmcuSearchDropdown({ bmcuList, onSelect }) {
 }
 
 function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClosed,
-                   shiftRowsForBmcu, onAddShiftRow, onUpdateShiftRow, onDeleteShiftRow, execDate }) {
+                   shiftRowsForBmcu, onAddShiftRow, onUpdateShiftRow, onDeleteShiftRow, execDate,
+                   onDragStart, onDragOver, onDrop, isDragOver }) {
   const u = (field, val) => onUpdate(idx, field, val);
   const kgs    = calc.kgs(row.qty_litres);
   const kgFat  = calc.kgFat(kgs, row.fat_pct);
@@ -131,12 +132,25 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
     if (field === 'dps_qty_litres') onUpdate(idx, 'dps_qty_kgs', calc.kgs(val));
   };
 
-  const TOTAL_COLS = 16;
+  const TOTAL_COLS = 17;
 
   return (
     <>
-      <tr className="hover:bg-gray-50 border-b border-gray-50 text-xs">
-        <td className="table-td font-bold text-[#0078d4] text-center">{row.seq_no}</td>
+      <tr
+        draggable={!isClosed}
+        onDragStart={onDragStart}
+        onDragOver={e => { e.preventDefault(); onDragOver(); }}
+        onDrop={onDrop}
+        className={`border-b border-gray-50 text-xs transition-colors
+          ${isDragOver ? 'bg-blue-50 border-t-2 border-t-blue-400' : 'hover:bg-gray-50'}`}>
+        <td className="table-td text-center" style={{ width: 28 }}>
+          {!isClosed && (
+            <span className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 inline-flex">
+              <GripVertical size={14}/>
+            </span>
+          )}
+          {isClosed && <span className="text-xs text-gray-400">{row.seq_no}</span>}
+        </td>
         {!row.bmcu_id ? (
           <td className="table-td" colSpan={2}>
             <BmcuSearchDropdown bmcuList={bmcuList} onSelect={bm => {
@@ -309,6 +323,8 @@ export default function ExecutionForm() {
   const [deliveryPointId,  setDeliveryPointId]  = useState('');
   const [bmcuRows,         setBmcuRows]         = useState([]);
   const [shiftRows,        setShiftRows]        = useState([]);
+  const [dragIdx,          setDragIdx]          = useState(null);
+  const [dragOverIdx,      setDragOverIdx]      = useState(null);
 
   const { data: exec, isLoading } = useQuery({
     queryKey: ['execution', id],
@@ -369,6 +385,24 @@ export default function ExecutionForm() {
       const next = [...prev];
       next.splice(idx + 1, 0, makeEmptyRow(null, 0));
       return next.map((r, i) => ({ ...r, seq_no: i + 1 }));
+    });
+  };
+
+  const reorderRows = (fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
+    setBmcuRows(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next.map((r, i) => ({ ...r, seq_no: i + 1 }));
+    });
+    // remap shift rows to follow their BMCU
+    setShiftRows(prev => {
+      const visibleBefore = bmcuRows.filter(r => !r.is_deleted);
+      const movedSeq = visibleBefore[fromIdx]?.seq_no;
+      const targetSeq = visibleBefore[toIdx]?.seq_no;
+      if (!movedSeq || !targetSeq) return prev;
+      return prev; // seq_no remapping handled by save
     });
   };
 
@@ -507,9 +541,9 @@ export default function ExecutionForm() {
           <table className="text-xs" style={{ minWidth: '1400px' }}>
             <thead className="sticky top-0 bg-gray-50 border-b">
               <tr>
-                {['#','Code','Name','Date','Dispatch Qty L','Dispatch Qty Kg','Dispatch Fat%','Dispatch SNF%','Kg Fat','Kg SNF',
-                  'Description','Chamber','DPS L','DPS Fat%','DPS SNF%',''].map(h => (
-                  <th key={h} className="table-th py-1.5 text-xs whitespace-nowrap">{h}</th>
+                {['','#','Code','Name','Date','Dispatch Qty L','Dispatch Qty Kg','Dispatch Fat%','Dispatch SNF%','Kg Fat','Kg SNF',
+                  'Description','Chamber','DPS L','DPS Fat%','DPS SNF%',''].map((h,i) => (
+                  <th key={i} className="table-th py-1.5 text-xs whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -526,11 +560,15 @@ export default function ExecutionForm() {
                     onAddShiftRow={addShiftRow}
                     onUpdateShiftRow={updateShiftRow}
                     onDeleteShiftRow={deleteShiftRow}
-                    execDate={exec?.execution_date?.slice(0,10) || ''}/>
+                    execDate={exec?.execution_date?.slice(0,10) || ''}
+                    onDragStart={() => setDragIdx(i)}
+                    onDragOver={() => setDragOverIdx(i)}
+                    onDrop={() => { reorderRows(dragIdx, i); setDragIdx(null); setDragOverIdx(null); }}
+                    isDragOver={dragOverIdx === i && dragIdx !== i}/>
                 )
               )}
               {visibleRows.length === 0 && (
-                <tr><td colSpan={16} className="table-td text-center py-8 text-gray-400">No BMCU rows</td></tr>
+                <tr><td colSpan={17} className="table-td text-center py-8 text-gray-400">No BMCU rows</td></tr>
               )}
             </tbody>
           </table>
