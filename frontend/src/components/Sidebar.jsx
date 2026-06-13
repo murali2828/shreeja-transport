@@ -103,6 +103,18 @@ export default function Sidebar({ collapsed = false }) {
           </div>
         </div>
       )}
+
+      {/* Credit footer */}
+      {!collapsed && (
+        <div className="text-center px-3 pt-2 pb-1">
+          <p className="text-xs leading-tight" style={{ color:'rgba(255,255,255,0.45)' }}>
+            Developed &amp; maintained by
+          </p>
+          <p className="text-xs font-semibold" style={{ color:'rgba(255,255,255,0.7)' }}>
+            Shreeja IT Team
+          </p>
+        </div>
+      )}
     </nav>
   );
 }

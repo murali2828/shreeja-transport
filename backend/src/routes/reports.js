@@ -296,7 +296,9 @@ router.post('/send-email', authenticate, async (req, res) => {
       to:      toList,
       subject: `TS Report — ${report_date}`,
       text:    `Please find attached the TS Variation Report for ${report_date}.`,
-      html:    `<p>Dear Team,</p><p>Please find attached the TS Variation Report for <strong>${report_date}</strong>.</p><p>Trips closed: ${r.rows.length}</p>`,
+      html:    `<p>Dear Team,</p><p>Please find attached the TS Variation Report for <strong>${report_date}</strong>.</p><p>Trips closed: ${r.rows.length}</p>
+                <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/>
+                <p style="font-family:sans-serif;font-size:12px;color:#9ca3af;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <strong style="color:#6b7280;">Shreeja IT Team</strong>.</p>`,
       attachments: [{
         filename:    `ts_report_${report_date}.xlsx`,
         content:     buf,

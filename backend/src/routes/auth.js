@@ -155,7 +155,9 @@ router.post('/forgot-password', async (req, res) => {
         text:    `You requested a password reset. Use the link below (valid for 1 hour):\n\n${resetLink}\n\nIf you did not request this, ignore this email.`,
         html:    `<p>You requested a password reset for your Shreeja TMS account.</p>
                   <p><a href="${resetLink}" style="color:#0078d4">Reset your password</a></p>
-                  <p>This link expires in <strong>1 hour</strong>. If you did not request this, ignore this email.</p>`,
+                  <p>This link expires in <strong>1 hour</strong>. If you did not request this, ignore this email.</p>
+                  <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/>
+                  <p style="font-family:sans-serif;font-size:12px;color:#9ca3af;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <strong style="color:#6b7280;">Shreeja IT Team</strong>.</p>`,
       });
     } catch (mailErr) {
       console.error('Password reset email error (nodemailer):', mailErr);

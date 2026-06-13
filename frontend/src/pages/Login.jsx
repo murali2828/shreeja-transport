@@ -114,6 +114,9 @@ export default function Login() {
         <p className="text-center text-xs text-gray-400 mt-6">
           Shreeja Secondary Transport Management System
         </p>
+        <p className="text-center text-xs text-gray-400 mt-1">
+          Developed &amp; maintained by <span className="font-semibold text-gray-500">Shreeja IT Team</span>
+        </p>
       </div>
     </div>
   );

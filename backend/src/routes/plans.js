@@ -258,7 +258,9 @@ router.post('/publish', authenticate, authorize('admin','planner'), async (req, 
               </tr>
             </thead>
             <tbody>${rows}</tbody>
-          </table>`;
+          </table>
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/>
+          <p style="font-family:sans-serif;font-size:12px;color:#9ca3af;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <strong style="color:#6b7280;">Shreeja IT Team</strong>.</p>`;
 
         const transporter = createTransport();
         await transporter.sendMail({
