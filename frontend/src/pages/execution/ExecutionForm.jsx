@@ -149,8 +149,8 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
               <GripVertical size={14}/>
             </span>
           )}
-          {isClosed && <span className="text-xs text-gray-400">{row.seq_no}</span>}
         </td>
+        <td className="table-td font-bold text-[#0078d4] text-center">{row.seq_no}</td>
         {!row.bmcu_id ? (
           <td className="table-td" colSpan={2}>
             <BmcuSearchDropdown bmcuList={bmcuList} onSelect={bm => {
