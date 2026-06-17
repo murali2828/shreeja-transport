@@ -376,30 +376,29 @@ router.get('/template/download', authenticate, async (req, res) => {
     delivPts.rows.forEach(r => wsDelivPts.addRow([r.name]));
 
     // ── Sheet 1: Trip Plans ──────────────────────────────────────────────────
-    // Column order matches user's preferred template:
-    // plan_for_date | trip_no | tanker_number | route_name | starting_point | delivery_point |
-    // expected_km | shifts_milk | driver_name | loader_name | remarks |
-    // bmcu_code | shift_code | expected_qty | description
+    // Column order: A=plan_for_date B=trip_no C=tanker_number D=route_name E=starting_point
+    //               F=delivery_point G=bmcu_code H=shift_code I=expected_qty J=description
+    //               K=expected_km L=driver_name M=loader_name N=remarks
     const ws = wb.addWorksheet('Trip Plans');
 
-    const colWidths = [14,8,18,20,20,20,11,12,18,18,18,14,12,13,18];
+    const colWidths = [14,8,18,20,20,20,14,12,13,18,11,18,18,18];
     ws.columns = [
       'plan_for_date','trip_no','tanker_number','route_name','starting_point','delivery_point',
-      'expected_km','shifts_milk','driver_name','loader_name','remarks',
-      'bmcu_code','shift_code','expected_qty','description'
+      'bmcu_code','shift_code','expected_qty','description',
+      'expected_km','driver_name','loader_name','remarks'
     ].map((key, i) => ({ key, width: colWidths[i] }));
 
     // Row 1: merged title
-    ws.mergeCells('A1:O1');
+    ws.mergeCells('A1:N1');
     const titleCell = ws.getCell('A1');
     titleCell.value = 'SHREEJA SECONDARY TRANSPORT — Trip Plan Upload Template';
     titleCell.font  = { bold: true, size: 13 };
     titleCell.alignment = { horizontal: 'center' };
 
     // Row 2: instruction
-    ws.mergeCells('A2:O2');
+    ws.mergeCells('A2:N2');
     const instrCell = ws.getCell('A2');
-    instrCell.value = 'Multi-row format: One TRIP HEADER row per trip (cols A–K), then one BMCU row per plant (cols L–O only). Select from dropdowns. Delete sample rows 4–12 before uploading.';
+    instrCell.value = 'Multi-row format: One TRIP HEADER row per trip (cols A–F, K–N), then one BMCU row per plant (cols G–J only). Select from dropdowns. Delete sample rows 4–10 before uploading.';
     instrCell.font  = { italic: true, size: 9, color: { argb: 'FF595959' } };
     instrCell.alignment = { wrapText: true };
     ws.getRow(2).height = 28;
@@ -407,8 +406,8 @@ router.get('/template/download', authenticate, async (req, res) => {
     // Row 3: column headers
     const headerRow = ws.addRow([
       'plan_for_date','trip_no','tanker_number','route_name','starting_point','delivery_point',
-      'expected_km','shifts_milk','driver_name','loader_name','remarks',
-      'bmcu_code','shift_code','expected_qty','description'
+      'bmcu_code','shift_code','expected_qty','description',
+      'expected_km','driver_name','loader_name','remarks'
     ]);
     headerRow.eachCell(cell => {
       cell.font      = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -417,14 +416,16 @@ router.get('/template/download', authenticate, async (req, res) => {
     });
 
     // Sample data rows (yellow)
+    // Columns: plan_for_date, trip_no, tanker_number, route_name, starting_point, delivery_point,
+    //          bmcu_code, shift_code, expected_qty, description, expected_km, driver_name, loader_name, remarks
     const sampleRows = [
-      ['25-05-2026',1,'AP03TF4985','MB Cross','Balaji Dairy','Balaji Dairy Plant',620,'18E19M','Sample Driver','Sample Loader','Sample trip','3001','18E19M',2000,'Balance Milk'],
-      ['','','','','','','','','','','','3001','18E19M',5820,'RMRD'],
-      ['','','','','','','','','','','','3002','18E19M',3750,'RMRD'],
-      ['','','','','','','','','','','','3003','18E19M',4150,'RMRD'],
-      ['25-05-2026',2,'AP03TF2538','B Kothakota','Balaji Dairy','Balaji Dairy Plant',331,'17E18M','Sample Driver 2','Sample Loader 2','','3004','17E18M',2806,'RMRD'],
-      ['','','','','','','','','','','','3005','17E18M',3310,'RMRD'],
-      ['','','','','','','','','','','','3006','18M18E',2821,'RMRD'],
+      ['25-05-2026',1,'AP03TF4985','MB Cross','Balaji Dairy','Balaji Dairy Plant','3001','18E19M',2000,'Balance Milk',620,'Sample Driver','Sample Loader','Sample trip'],
+      ['','','','','','','3001','18E19M',5820,'RMRD','','','',''],
+      ['','','','','','','3002','18E19M',3750,'RMRD','','','',''],
+      ['','','','','','','3003','18E19M',4150,'RMRD','','','',''],
+      ['25-05-2026',2,'AP03TF2538','B Kothakota','Balaji Dairy','Balaji Dairy Plant','3004','17E18M',2806,'RMRD',331,'Sample Driver 2','Sample Loader 2',''],
+      ['','','','','','','3005','17E18M',3310,'RMRD','','','',''],
+      ['','','','','','','3006','18M18E',2821,'RMRD','','','',''],
     ];
     const yellowFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
     sampleRows.forEach(data => {
@@ -477,9 +478,9 @@ router.get('/template/download', authenticate, async (req, res) => {
       });
     }
 
-    // Column L: bmcu_code
+    // Column G: bmcu_code
     if (bmcuCount > 0) {
-      ws.dataValidations.add('L4:L2000', {
+      ws.dataValidations.add('G4:G2000', {
         type: 'list', allowBlank: true,
         formulae: [`BMCUs!$A$2:$A$${bmcuCount + 1}`],
         showErrorMessage: true, errorStyle: 'warning',
@@ -487,8 +488,8 @@ router.get('/template/download', authenticate, async (req, res) => {
       });
     }
 
-    // Column O: description
-    ws.dataValidations.add('O4:O2000', {
+    // Column J: description
+    ws.dataValidations.add('J4:J2000', {
       type: 'list', allowBlank: true,
       formulae: ['"RMRD,Balance Milk,Internal Shifting"'],
       showErrorMessage: true, errorStyle: 'stop',
