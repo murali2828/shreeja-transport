@@ -384,7 +384,7 @@ router.get('/template/download', authenticate, async (req, res) => {
     const colWidths = [14,8,18,20,20,20,14,12,13,18,11,18,18,18];
     ws.columns = [
       'plan_for_date','trip_no','tanker_number','route_name','starting_point','delivery_point',
-      'bmcu_code','shift_code','expected_qty','description',
+      'bmcu_code','shifts_milk','expected_qty','description',
       'expected_km','driver_name','loader_name','remarks'
     ].map((key, i) => ({ key, width: colWidths[i] }));
 
@@ -406,7 +406,7 @@ router.get('/template/download', authenticate, async (req, res) => {
     // Row 3: column headers
     const headerRow = ws.addRow([
       'plan_for_date','trip_no','tanker_number','route_name','starting_point','delivery_point',
-      'bmcu_code','shift_code','expected_qty','description',
+      'bmcu_code','shifts_milk','expected_qty','description',
       'expected_km','driver_name','loader_name','remarks'
     ]);
     headerRow.eachCell(cell => {
@@ -546,7 +546,7 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
       const VALID_DESCS = ['RMRD', 'Balance Milk', 'Internal Shifting'];
       currentTrip.bmcus.push({
         bmcu_code:    String(row['bmcu_code']).trim(),
-        shift_code:   String(row['shift_code'] || '').trim() || null,
+        shift_code:   String(row['shifts_milk'] || row['shift_code'] || '').trim() || null,
         expected_qty: row['expected_qty'] ? parseFloat(row['expected_qty']) : null,
         description:  VALID_DESCS.includes(desc) ? desc : 'RMRD'
       });
