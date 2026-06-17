@@ -45,11 +45,11 @@ export default function TripPlanForm() {
         plan_date: existing.plan_date?.slice(0,10) || today,
         plan_for_date: existing.plan_for_date?.slice(0,10) || today,
         trip_no: existing.trip_no || '',
-        route_id: existing.route_id || '',
-        tanker_id: existing.tanker_id || '',
-        start_point_id: existing.start_point_id || '',
-        testing_point_id: existing.testing_point_id || '',
-        delivery_point_id: existing.delivery_point_id || '',
+        route_id: String(existing.route_id || ''),
+        tanker_id: String(existing.tanker_id || ''),
+        start_point_id: String(existing.start_point_id || ''),
+        testing_point_id: String(existing.testing_point_id || ''),
+        delivery_point_id: String(existing.delivery_point_id || ''),
         shifts_milk: existing.shifts_milk || '',
         expected_km: existing.expected_km || '',
         expected_total_qty: existing.expected_total_qty || '',
@@ -58,7 +58,8 @@ export default function TripPlanForm() {
         remarks: existing.remarks || '',
         bmcus: (existing.bmcus || []).map(b => ({
           seq_no: b.seq_no, bmcu_id: b.bmcu_id, bmcu_code: b.bmcu_code,
-          bmcu_name: b.bmcu_name, shift_code: b.shift_code || '', expected_qty: b.expected_qty || ''
+          bmcu_name: b.bmcu_name, shift_code: b.shift_code || '', expected_qty: b.expected_qty || '',
+          description: b.description || 'RMRD'
         }))
       });
     }
@@ -103,7 +104,7 @@ export default function TripPlanForm() {
           bmcus: data.bmcus.map(b => ({
             seq_no: b.seq_no, bmcu_id: b.bmcu_id,
             bmcu_code: b.bmcu_code, bmcu_name: b.bmcu_name,
-            shift_code: '', expected_qty: ''
+            shift_code: '', expected_qty: '', description: 'RMRD'
           }))
         }));
       }
@@ -118,7 +119,7 @@ export default function TripPlanForm() {
       bmcus: [...p.bmcus, {
         seq_no: p.bmcus.length + 1, bmcu_id: bm.id,
         bmcu_code: bm.bmcu_code, bmcu_name: bm.bmcu_name,
-        shift_code: '', expected_qty: ''
+        shift_code: '', expected_qty: '', description: 'RMRD'
       }]
     }));
   };
@@ -141,7 +142,8 @@ export default function TripPlanForm() {
         expected_utilization_pct: utilPct,
         bmcus: form.bmcus.map(b => ({
           seq_no: b.seq_no, bmcu_id: b.bmcu_id,
-          shift_code: b.shift_code || null, expected_qty: parseFloat(b.expected_qty) || 0
+          shift_code: b.shift_code || null, expected_qty: parseFloat(b.expected_qty) || 0,
+          description: b.description || 'RMRD'
         }))
       };
       return isEdit ? updatePlan(id, payload) : createPlan(payload);
@@ -311,12 +313,13 @@ export default function TripPlanForm() {
                   <th className="table-th">BMCU Name</th>
                   <th className="table-th w-28">Shift Code</th>
                   <th className="table-th w-32">Exp Qty (L)</th>
+                  <th className="table-th w-36">Description</th>
                   <th className="table-th w-10"></th>
                 </tr>
               </thead>
               <tbody>
                 {form.bmcus.length === 0 ? (
-                  <tr><td colSpan={6} className="table-td text-center text-gray-400 py-6">
+                  <tr><td colSpan={7} className="table-td text-center text-gray-400 py-6">
                     Select a route or add BMCUs manually
                   </td></tr>
                 ) : form.bmcus.map((b, i) => (
@@ -331,6 +334,14 @@ export default function TripPlanForm() {
                     <td className="table-td">
                       <input type="number" min="0" className="input py-1 text-xs" value={b.expected_qty}
                         onChange={e => updateBmcu(i, 'expected_qty', e.target.value)}/>
+                    </td>
+                    <td className="table-td">
+                      <select className="input py-1 text-xs" value={b.description || 'RMRD'}
+                        onChange={e => updateBmcu(i, 'description', e.target.value)}>
+                        <option value="RMRD">RMRD</option>
+                        <option value="Balance Milk">Balance Milk</option>
+                        <option value="Internal Shifting">Internal Shifting</option>
+                      </select>
                     </td>
                     <td className="table-td">
                       <button onClick={() => removeBmcu(i)} className="btn-danger btn-sm p-1">

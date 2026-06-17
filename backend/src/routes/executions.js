@@ -50,13 +50,14 @@ router.get('/:id', authenticate, async (req, res) => {
         tp.start_point_id, tp.delivery_point_id, tp.testing_point_id,
         t.tanker_number, t.capacity_litres, t.compartments, t.per_km_rate,
         sp.name AS start_point_name, dp.name AS delivery_point_name,
-        tpt.name AS testing_point_name
+        tpt.name AS testing_point_name, rm.route_name
       FROM trip_executions te
-      JOIN trip_plans tp           ON tp.id=te.trip_plan_id
-      LEFT JOIN tankers t          ON t.id=tp.tanker_id
-      LEFT JOIN starting_points sp ON sp.id=tp.start_point_id
-      LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
-      LEFT JOIN testing_points tpt ON tpt.id=tp.testing_point_id
+      JOIN trip_plans tp            ON tp.id=te.trip_plan_id
+      LEFT JOIN tankers t           ON t.id=tp.tanker_id
+      LEFT JOIN starting_points sp  ON sp.id=tp.start_point_id
+      LEFT JOIN delivery_points dp  ON dp.id=tp.delivery_point_id
+      LEFT JOIN testing_points tpt  ON tpt.id=tp.testing_point_id
+      LEFT JOIN route_masters rm    ON rm.id=tp.route_id
       WHERE te.id=$1`, [req.params.id]
     );
     if (!exec.rows.length) return res.status(404).json({ error: 'Not found' });

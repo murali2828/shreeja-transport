@@ -74,7 +74,7 @@ export const getPlans      = (p)     => api.get('/plans', { params: p });
 export const getPlan       = (id)    => api.get(`/plans/${id}`);
 export const createPlan    = (d)     => api.post('/plans', d);
 export const updatePlan    = (id, d) => api.put(`/plans/${id}`, d);
-export const deletePlan    = (id)    => api.delete(`/plans/${id}`);
+export const deletePlan    = (id, force = false) => api.delete(`/plans/${id}${force ? '?force=true' : ''}`);
 export const publishPlans  = (date)  => api.post('/plans/publish', { plan_for_date: date });
 export const getPlanEmailConfigs   = ()      => api.get('/plans/email-config');
 export const createPlanEmailConfig = (d)     => api.post('/plans/email-config', d);

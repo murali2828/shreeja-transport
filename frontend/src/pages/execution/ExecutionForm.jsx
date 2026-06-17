@@ -474,6 +474,7 @@ export default function ExecutionForm() {
           </h2>
           <p className="text-xs text-gray-500">
             {exec.execution_date?.slice(0,10)} · {exec.delivery_point_name} · {exec.shifts_milk}
+            {exec.route_name && <> · <span className="text-[#0078d4]">{exec.route_name}</span></>}
           </p>
         </div>
         {isAdmin && !isClosed && (

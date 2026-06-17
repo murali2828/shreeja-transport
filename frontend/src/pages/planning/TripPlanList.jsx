@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Download, Upload, Send, Trash2, Edit2, Zap, RefreshCw } from 'lucide-react';
+import { Plus, Download, Upload, Send, Trash2, Edit2, Zap, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getPlans, deletePlan, publishPlans, uploadPlans, downloadPlanTemplate } from '../../api/index';
 
@@ -11,16 +11,39 @@ export default function TripPlanList() {
   const qc = useQueryClient();
   const [dateFilter, setDateFilter] = useState(new Date().toISOString().slice(0,10));
   const [statusFilter, setStatusFilter] = useState('');
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null); // { plan, force }
+  const [deleteReason, setDeleteReason] = useState('');
 
   const { data: plans = [], isLoading } = useQuery({
     queryKey: ['plans', dateFilter, statusFilter],
     queryFn:  () => getPlans({ plan_for_date: dateFilter || undefined, status: statusFilter || undefined }).then(r => r.data)
   });
 
+  const { data: deletedPlans = [] } = useQuery({
+    queryKey: ['plans-deleted', dateFilter],
+    enabled: showDeleted,
+    queryFn: () => getPlans({ plan_for_date: dateFilter || undefined, status: 'deleted' }).then(r => r.data)
+  });
+
   const deleteMut = useMutation({
-    mutationFn: deletePlan,
-    onSuccess: () => { toast.success('Plan cancelled'); qc.invalidateQueries(['plans']); },
-    onError: (e) => toast.error(e.response?.data?.error || 'Delete failed'),
+    mutationFn: ({ id, force }) => deletePlan(id, force),
+    onSuccess: () => {
+      toast.success('Plan moved to deleted');
+      setDeleteTarget(null);
+      setDeleteReason('');
+      qc.invalidateQueries(['plans']);
+      qc.invalidateQueries(['plans-deleted']);
+    },
+    onError: (e) => {
+      const data = e.response?.data;
+      if (data?.hasExecution) {
+        // Backend warned us — ask user to confirm force delete
+        setDeleteTarget(prev => ({ ...prev, force: true, executions: data.executions }));
+      } else {
+        toast.error(data?.error || 'Delete failed');
+      }
+    }
   });
 
   const publishMut = useMutation({
@@ -48,24 +71,110 @@ export default function TripPlanList() {
     e.target.value = '';
   };
 
+  const handleDeleteClick = (p) => {
+    if (p.status === 'published') {
+      setDeleteTarget({ plan: p, force: false });
+    } else {
+      if (confirm(`Cancel plan #${p.trip_no}?`)) deleteMut.mutate({ id: p.id, force: false });
+    }
+  };
+
+  const handleEditClick = (p) => {
+    if (p.status === 'published') {
+      if (!confirm(`Plan #${p.trip_no} is already published. Editing it may affect active executions. Continue?`)) return;
+    }
+    navigate(`/planning/${p.id}/edit`);
+  };
+
   const hasDrafts = plans.some(p => p.status === 'draft');
-  const totalQty  = plans.reduce((s, p) => s + parseFloat(p.expected_total_qty || 0), 0);
-  const totalCost = plans.reduce((s, p) => s + parseFloat(p.total_cost || 0), 0);
+  const activePlans = plans.filter(p => p.status !== 'deleted');
+  const totalQty  = activePlans.reduce((s, p) => s + parseFloat(p.expected_total_qty || 0), 0);
+  const totalCost = activePlans.reduce((s, p) => s + parseFloat(p.total_cost || 0), 0);
 
   const statusBadge = (s) => ({
     draft:     'bg-amber-100 text-amber-700',
     published: 'bg-green-100 text-green-700',
     cancelled: 'bg-red-100 text-red-600',
+    deleted:   'bg-gray-200 text-gray-500',
   })[s] || 'bg-gray-100 text-gray-500';
+
+  const PlanTable = ({ rows, dimmed = false }) => (
+    <table className={`w-full text-sm ${dimmed ? 'opacity-60' : ''}`}>
+      <thead className="bg-gray-50 border-b">
+        <tr>
+          <th className="table-th w-10">Trip</th>
+          <th className="table-th">Tanker</th>
+          <th className="table-th">Route</th>
+          <th className="table-th">Delivery Point</th>
+          <th className="table-th">Shift</th>
+          <th className="table-th">Driver</th>
+          <th className="table-th text-right">Qty (L)</th>
+          <th className="table-th text-right">KM</th>
+          <th className="table-th text-right">Cost</th>
+          <th className="table-th text-right">₹/L</th>
+          <th className="table-th text-center">Util%</th>
+          <th className="table-th">Status</th>
+          {!dimmed && <th className="table-th w-20">Actions</th>}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 && (
+          <tr><td colSpan={dimmed ? 12 : 13} className="table-td text-center py-6 text-gray-400">
+            No plans found.
+          </td></tr>
+        )}
+        {rows.map(p => (
+          <tr key={p.id} className="hover:bg-gray-50 border-b border-gray-50">
+            <td className="table-td font-bold text-[#0078d4]">#{p.trip_no}</td>
+            <td className="table-td font-mono text-xs">{p.tanker_number}</td>
+            <td className="table-td text-gray-600 text-xs">{p.route_name || '—'}</td>
+            <td className="table-td text-xs">{p.delivery_point_name || '—'}</td>
+            <td className="table-td">{p.shifts_milk || '—'}</td>
+            <td className="table-td text-xs">{p.driver_name || '—'}</td>
+            <td className="table-td text-right">{parseFloat(p.expected_total_qty||0).toLocaleString()}</td>
+            <td className="table-td text-right">{p.expected_km || '—'}</td>
+            <td className="table-td text-right text-green-700 font-medium">
+              ₹{parseFloat(p.total_cost||0).toLocaleString('en-IN',{maximumFractionDigits:0})}
+            </td>
+            <td className="table-td text-right text-xs">{parseFloat(p.per_liter_cost||0).toFixed(4)}</td>
+            <td className="table-td text-center text-xs">
+              <span className={`font-medium ${parseFloat(p.expected_utilization_pct||0)>=80?'text-green-600':parseFloat(p.expected_utilization_pct||0)>=60?'text-amber-600':'text-red-500'}`}>
+                {parseFloat(p.expected_utilization_pct||0).toFixed(0)}%
+              </span>
+            </td>
+            <td className="table-td">
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge(p.status)}`}>
+                {p.status}
+              </span>
+            </td>
+            {!dimmed && (
+              <td className="table-td">
+                <div className="flex gap-1">
+                  <button onClick={() => handleEditClick(p)}
+                    className="btn-secondary btn-sm p-1" title="Edit">
+                    <Edit2 size={12}/>
+                  </button>
+                  <button onClick={() => handleDeleteClick(p)}
+                    className="btn-danger btn-sm p-1" title="Delete">
+                    <Trash2 size={12}/>
+                  </button>
+                </div>
+              </td>
+            )}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 
   return (
     <div className="space-y-4 max-w-6xl">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <span>Trip Plans</span>
-          {plans.length > 0 && (
+          {activePlans.length > 0 && (
             <span className="text-xs bg-[#e6f3fb] text-[#005ba3] px-2 py-0.5 rounded-full font-medium">
-              {plans.length}
+              {activePlans.length}
             </span>
           )}
         </h2>
@@ -110,7 +219,7 @@ export default function TripPlanList() {
             <option value="published">Published</option>
           </select>
         </div>
-        {plans.length > 0 && (
+        {activePlans.length > 0 && (
           <div className="ml-auto text-xs text-gray-500 text-right">
             <div>Total Qty: <strong className="text-[#005ba3]">{totalQty.toLocaleString()} L</strong></div>
             <div>Total Cost: <strong className="text-green-700">₹{totalCost.toLocaleString('en-IN',{maximumFractionDigits:0})}</strong></div>
@@ -118,82 +227,75 @@ export default function TripPlanList() {
         )}
       </div>
 
-      {/* Table */}
+      {/* Active plans table */}
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="table-th w-10">Trip</th>
-                <th className="table-th">Tanker</th>
-                <th className="table-th">Route</th>
-                <th className="table-th">Delivery Point</th>
-                <th className="table-th">Shift</th>
-                <th className="table-th">Driver</th>
-                <th className="table-th text-right">Qty (L)</th>
-                <th className="table-th text-right">KM</th>
-                <th className="table-th text-right">Cost</th>
-                <th className="table-th text-right">₹/L</th>
-                <th className="table-th text-center">Util%</th>
-                <th className="table-th">Status</th>
-                <th className="table-th w-20">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading && (
-                <tr><td colSpan={13} className="table-td text-center py-10 text-gray-400">Loading…</td></tr>
-              )}
-              {!isLoading && plans.length === 0 && (
-                <tr><td colSpan={13} className="table-td text-center py-10 text-gray-400">
-                  No plans for this date. Create a plan or use the Route Optimizer.
-                </td></tr>
-              )}
-              {plans.map(p => (
-                <tr key={p.id} className="hover:bg-gray-50 border-b border-gray-50">
-                  <td className="table-td font-bold text-[#0078d4]">#{p.trip_no}</td>
-                  <td className="table-td font-mono text-xs">{p.tanker_number}</td>
-                  <td className="table-td text-gray-600 text-xs">{p.route_name || '—'}</td>
-                  <td className="table-td text-xs">{p.delivery_point_name || '—'}</td>
-                  <td className="table-td">{p.shifts_milk || '—'}</td>
-                  <td className="table-td text-xs">{p.driver_name || '—'}</td>
-                  <td className="table-td text-right">{parseFloat(p.expected_total_qty||0).toLocaleString()}</td>
-                  <td className="table-td text-right">{p.expected_km || '—'}</td>
-                  <td className="table-td text-right text-green-700 font-medium">
-                    ₹{parseFloat(p.total_cost||0).toLocaleString('en-IN',{maximumFractionDigits:0})}
-                  </td>
-                  <td className="table-td text-right text-xs">{parseFloat(p.per_liter_cost||0).toFixed(4)}</td>
-                  <td className="table-td text-center text-xs">
-                    <span className={`font-medium ${parseFloat(p.expected_utilization_pct||0)>=80?'text-green-600':parseFloat(p.expected_utilization_pct||0)>=60?'text-amber-600':'text-red-500'}`}>
-                      {parseFloat(p.expected_utilization_pct||0).toFixed(0)}%
-                    </span>
-                  </td>
-                  <td className="table-td">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge(p.status)}`}>
-                      {p.status}
-                    </span>
-                  </td>
-                  <td className="table-td">
-                    <div className="flex gap-1">
-                      {p.status === 'draft' && (
-                        <>
-                          <button onClick={() => navigate(`/planning/${p.id}/edit`)}
-                            className="btn-secondary btn-sm p-1" title="Edit">
-                            <Edit2 size={12}/>
-                          </button>
-                          <button onClick={() => { if (confirm('Cancel this plan?')) deleteMut.mutate(p.id); }}
-                            className="btn-danger btn-sm p-1" title="Cancel">
-                            <Trash2 size={12}/>
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {isLoading ? (
+            <div className="text-center py-10 text-gray-400 text-sm">Loading…</div>
+          ) : (
+            <PlanTable rows={activePlans} />
+          )}
         </div>
       </div>
+
+      {/* Deleted plans section */}
+      <div className="card overflow-hidden">
+        <button
+          onClick={() => setShowDeleted(!showDeleted)}
+          className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium text-gray-500 hover:bg-gray-50 transition-colors">
+          {showDeleted ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+          Deleted Plans (reference only — excluded from all reports)
+          {deletedPlans.length > 0 && (
+            <span className="ml-1 text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+              {deletedPlans.length}
+            </span>
+          )}
+        </button>
+        {showDeleted && (
+          <div className="overflow-x-auto border-t">
+            <PlanTable rows={deletedPlans} dimmed={true} />
+          </div>
+        )}
+      </div>
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md">
+            <h3 className="text-base font-semibold mb-3 text-red-600">
+              Delete Plan #{deleteTarget.plan.trip_no}?
+            </h3>
+
+            {deleteTarget.plan.status === 'published' && !deleteTarget.force && (
+              <p className="text-sm text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mb-3">
+                This plan is <strong>published</strong>. Deleting it will move it to the Deleted Plans section and exclude it from all reports and calculations.
+              </p>
+            )}
+
+            {deleteTarget.force && (
+              <p className="text-sm text-red-700 bg-red-50 rounded-lg px-3 py-2 mb-3">
+                This plan has <strong>active execution data</strong> ({deleteTarget.executions?.length} execution(s)). Deleting it will still keep execution records but the plan will be excluded from all reports and KM calculations. This action cannot be undone.
+              </p>
+            )}
+
+            <p className="text-sm text-gray-600 mb-4">
+              The plan will be moved to "Deleted Plans" (reference only) and will not appear in reports, KM calculations, trip counts, or cost summaries.
+            </p>
+
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => { setDeleteTarget(null); setDeleteReason(''); }}
+                className="btn-secondary">Cancel</button>
+              <button
+                onClick={() => deleteMut.mutate({ id: deleteTarget.plan.id, force: deleteTarget.force })}
+                disabled={deleteMut.isPending}
+                className="btn-danger flex items-center gap-1.5">
+                {deleteMut.isPending ? <RefreshCw size={13} className="animate-spin"/> : <Trash2 size={13}/>}
+                {deleteTarget.force ? 'Delete Anyway' : 'Delete Plan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
