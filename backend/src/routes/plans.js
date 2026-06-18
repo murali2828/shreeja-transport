@@ -403,10 +403,10 @@ router.get('/template/download', authenticate, async (req, res) => {
     instrCell.alignment = { wrapText: true };
     ws.getRow(2).height = 28;
 
-    // Row 3: column headers
+    // Row 3: column headers — MUST match ws.columns keys exactly (parser uses these as row keys)
     const headerRow = ws.addRow([
       'plan_for_date','trip_no','tanker_number','route_name','starting_point','delivery_point',
-      'bmcu_name ▼ (select)','bmcu_code (auto)','shifts_milk','expected_qty','description',
+      'bmcu_name','bmcu_code','shifts_milk','expected_qty','description',
       'expected_km','driver_name','loader_name','remarks'
     ]);
     headerRow.eachCell(cell => {

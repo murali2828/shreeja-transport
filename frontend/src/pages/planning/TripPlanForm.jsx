@@ -2,8 +2,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Plus, ChevronLeft } from 'lucide-react';
+import { Trash2, ChevronLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
+import SearchableSelect from '../../components/SearchableSelect';
 import {
   getTankers, getBmcus, getRoutes, getStartingPoints, getTestingPoints, getDeliveryPoints,
   getPlan, createPlan, updatePlan
@@ -194,23 +195,24 @@ export default function TripPlanForm() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="label">Tanker *</label>
-            <select className="input w-full" value={form.tanker_id}
-              onChange={e => set('tanker_id', e.target.value)}>
-              <option value="">Select tanker…</option>
-              {tankers.map(t => (
-                <option key={t.id} value={t.id}>
-                  {t.tanker_number} — {t.capacity_litres.toLocaleString()}L @ ₹{t.per_km_rate}/km
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              value={form.tanker_id}
+              onChange={v => set('tanker_id', v)}
+              placeholder="Select tanker…"
+              options={tankers.map(t => ({
+                value: String(t.id),
+                label: `${t.tanker_number} — ${t.capacity_litres.toLocaleString()}L @ ₹${t.per_km_rate}/km`
+              }))}
+            />
           </div>
           <div>
             <label className="label">Route (optional)</label>
-            <select className="input w-full" value={form.route_id}
-              onChange={e => handleRouteChange(e.target.value)}>
-              <option value="">Select route…</option>
-              {routes.map(r => <option key={r.id} value={r.id}>{r.route_name}</option>)}
-            </select>
+            <SearchableSelect
+              value={form.route_id}
+              onChange={v => handleRouteChange(v)}
+              placeholder="Select route…"
+              options={routes.map(r => ({ value: String(r.id), label: r.route_name }))}
+            />
           </div>
         </div>
 
@@ -218,27 +220,30 @@ export default function TripPlanForm() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
             <label className="label">Starting Point</label>
-            <select className="input w-full" value={form.start_point_id}
-              onChange={e => set('start_point_id', e.target.value)}>
-              <option value="">Select…</option>
-              {startPts.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            <SearchableSelect
+              value={form.start_point_id}
+              onChange={v => set('start_point_id', v)}
+              placeholder="Select…"
+              options={startPts.map(s => ({ value: String(s.id), label: s.name }))}
+            />
           </div>
           <div>
             <label className="label">Testing Point</label>
-            <select className="input w-full" value={form.testing_point_id}
-              onChange={e => set('testing_point_id', e.target.value)}>
-              <option value="">Select…</option>
-              {testPts.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            <SearchableSelect
+              value={form.testing_point_id}
+              onChange={v => set('testing_point_id', v)}
+              placeholder="Select…"
+              options={testPts.map(t => ({ value: String(t.id), label: t.name }))}
+            />
           </div>
           <div>
             <label className="label">Delivery Point *</label>
-            <select className="input w-full" value={form.delivery_point_id}
-              onChange={e => set('delivery_point_id', e.target.value)}>
-              <option value="">Select…</option>
-              {delivPts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            <SearchableSelect
+              value={form.delivery_point_id}
+              onChange={v => set('delivery_point_id', v)}
+              placeholder="Select…"
+              options={delivPts.map(d => ({ value: String(d.id), label: d.name }))}
+            />
           </div>
         </div>
 
@@ -297,11 +302,13 @@ export default function TripPlanForm() {
               {totalExpQty > 0 && (
                 <span className="text-xs text-[#0078d4] font-medium">{totalExpQty.toLocaleString()} L total</span>
               )}
-              <select className="input text-xs py-1 w-48" defaultValue=""
-                onChange={e => { if (e.target.value) { addBmcu(e.target.value); e.target.value=''; } }}>
-                <option value="">+ Add BMCU</option>
-                {bmcuList.map(b => <option key={b.id} value={b.id}>{b.bmcu_code} — {b.bmcu_name}</option>)}
-              </select>
+              <SearchableSelect
+                value=""
+                onChange={v => { if (v) addBmcu(v); }}
+                placeholder="+ Add BMCU"
+                className="w-56"
+                options={bmcuList.map(b => ({ value: String(b.id), label: `${b.bmcu_code} — ${b.bmcu_name}` }))}
+              />
             </div>
           </div>
           <div className="border rounded-lg overflow-hidden">
