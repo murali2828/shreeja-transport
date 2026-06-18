@@ -8,12 +8,24 @@ import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHe
 
 const EMPTY = { tanker_number: '', compartments: '', capacity_litres: '', per_km_rate: '', vendor_code: '', vendor_name: '', rate_per_km_bmcu: '', rate_per_km_p2p: '', is_active: true };
 
+function SortIcon({ col, sortCol, sortDir }) {
+  if (sortCol !== col) return <span className="text-gray-300 ml-0.5">⇅</span>;
+  return <span className="ml-0.5">{sortDir === 'asc' ? '↑' : '↓'}</span>;
+}
+
 export default function TankerMaster() {
   const qc = useQueryClient();
   const [modal, setModal] = useState(null);
   const [form, setForm]   = useState(EMPTY);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');
+  const [sortCol, setSortCol] = useState('tanker_number');
+  const [sortDir, setSortDir] = useState('asc');
+
+  const toggleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('asc'); }
+  };
 
   const { data: tankers = [], isLoading } = useQuery({
     queryKey: ['tankers', 'all'],
@@ -53,6 +65,15 @@ export default function TankerMaster() {
     if (!search) return true;
     const q = search.toLowerCase();
     return t.tanker_number?.toLowerCase().includes(q) || t.vendor_name?.toLowerCase().includes(q);
+  }).sort((a, b) => {
+    let av = a[sortCol], bv = b[sortCol];
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    if (av == null) av = '';
+    if (bv == null) bv = '';
+    if (av < bv) return sortDir === 'asc' ? -1 : 1;
+    if (av > bv) return sortDir === 'asc' ? 1 : -1;
+    return 0;
   });
 
   return (
@@ -84,12 +105,23 @@ export default function TankerMaster() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b">
             <tr>
-              <th className="table-th">Tanker No</th>
-              <th className="table-th">Vendor</th>
+              <th className="table-th w-8 text-center">#</th>
+              <th className="table-th cursor-pointer select-none" onClick={() => toggleSort('tanker_number')}>
+                Tanker No <SortIcon col="tanker_number" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
+              <th className="table-th cursor-pointer select-none" onClick={() => toggleSort('vendor_name')}>
+                Vendor <SortIcon col="vendor_name" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
               <th className="table-th text-center">Compartments</th>
-              <th className="table-th text-right">Capacity (L)</th>
-              <th className="table-th text-right">₹/km BMCU</th>
-              <th className="table-th text-right">₹/km P2P</th>
+              <th className="table-th text-right cursor-pointer select-none" onClick={() => toggleSort('capacity_litres')}>
+                Capacity (L) <SortIcon col="capacity_litres" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
+              <th className="table-th text-right cursor-pointer select-none" onClick={() => toggleSort('rate_per_km_bmcu')}>
+                ₹/km BMCU <SortIcon col="rate_per_km_bmcu" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
+              <th className="table-th text-right cursor-pointer select-none" onClick={() => toggleSort('rate_per_km_p2p')}>
+                ₹/km P2P <SortIcon col="rate_per_km_p2p" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
               <th className="table-th">Status</th>
               <th className="table-th w-24">Actions</th>
             </tr>
@@ -97,8 +129,9 @@ export default function TankerMaster() {
           <tbody>
             {isLoading && <LoadingState/>}
             {!isLoading && filtered.length === 0 && <EmptyState message={search ? 'No tankers match your search.' : "No tankers yet. Click 'Add Tanker' to create one."}/>}
-            {filtered.map(t => (
-              <tr key={t.id} className="hover:bg-gray-50 border-b border-gray-50">
+            {filtered.map((t, idx) => (
+              <tr key={t.id} className={`hover:bg-gray-50 border-b border-gray-50 ${!t.is_active ? 'opacity-60' : ''}`}>
+                <td className="table-td text-center text-xs text-gray-400">{idx + 1}</td>
                 <td className="table-td font-mono font-semibold text-[#005ba3]">{t.tanker_number}</td>
                 <td className="table-td text-xs">
                   {t.vendor_name ? <span title={t.vendor_code}>{t.vendor_name}</span> : <span className="text-gray-400">—</span>}

@@ -509,7 +509,9 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
     return res.status(400).json({ error: 'plan_date and plan_for_date required' });
 
   const wb   = XLSX.read(req.file.buffer, { type: 'buffer' });
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { range: 2, raw: false });
+  // Find the Trip Plans sheet by name; fall back to first sheet for plain uploads
+  const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes('trip')) || wb.SheetNames[0];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { range: 2, raw: false });
 
   // Parse multi-row format: group rows into trips
   const trips = [];
