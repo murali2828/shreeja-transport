@@ -34,7 +34,7 @@ export const resetPassword   = (token, new_password) => api.post('/auth/reset-pa
 export const changePassword  = (current_password, new_password) => api.post('/auth/change-password', { current_password, new_password });
 
 // ── Masters ───────────────────────────────────────────────────────────────────
-export const getTankers         = ()      => api.get('/masters/tankers');
+export const getTankers         = (params) => api.get('/masters/tankers', { params });
 export const createTanker       = (d)     => api.post('/masters/tankers', d);
 export const updateTanker       = (id, d) => api.put(`/masters/tankers/${id}`, d);
 export const deleteTanker       = (id)    => api.delete(`/masters/tankers/${id}`);

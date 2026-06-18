@@ -14,6 +14,7 @@ export default function TripPlanList() {
   const [showDeleted, setShowDeleted] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null); // { plan, force }
   const [deleteReason, setDeleteReason] = useState('');
+  const [uploadErrors, setUploadErrors] = useState([]);
 
   const { data: plans = [], isLoading } = useQuery({
     queryKey: ['plans', dateFilter, statusFilter],
@@ -62,8 +63,18 @@ export default function TripPlanList() {
     fd.append('plan_for_date', dateFilter);
     try {
       const r = await uploadPlans(fd);
-      toast.success(`${r.data.created} plan(s) uploaded`);
-      if (r.data.errors?.length) toast.error(`${r.data.errors.length} row(s) had errors`);
+      if (r.data.created === 0 && !r.data.errors?.length) {
+        toast.error('0 plans uploaded — no trip rows detected. Re-download the template and ensure column headers match exactly (row 3).');
+        setUploadErrors(['No trip rows were found in the file. Make sure you are using the latest template downloaded from this page, and that column headers in row 3 are unchanged.']);
+      } else {
+        toast.success(`${r.data.created} plan(s) uploaded`);
+        if (r.data.errors?.length) {
+          toast.error(`${r.data.errors.length} row(s) had errors`);
+          setUploadErrors(r.data.errors);
+        } else {
+          setUploadErrors([]);
+        }
+      }
       qc.invalidateQueries(['plans']);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Upload failed');
@@ -226,6 +237,23 @@ export default function TripPlanList() {
           </div>
         )}
       </div>
+
+      {/* Upload errors */}
+      {uploadErrors.length > 0 && (
+        <div className="card p-4 border-red-200 bg-red-50">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-red-700">Upload Errors ({uploadErrors.length} row{uploadErrors.length !== 1 ? 's' : ''})</h3>
+            <button onClick={() => setUploadErrors([])} className="text-xs text-red-500 hover:text-red-700">Dismiss</button>
+          </div>
+          <ul className="space-y-1 max-h-48 overflow-y-auto">
+            {uploadErrors.map((err, i) => (
+              <li key={i} className="text-xs text-red-600 bg-white rounded px-2 py-1 border border-red-100">
+                {typeof err === 'string' ? err : (err.message || err.error || JSON.stringify(err))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Active plans table */}
       <div className="card overflow-hidden">

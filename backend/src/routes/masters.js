@@ -7,11 +7,12 @@ const { authenticate, authorize } = require('../middleware/auth');
 // ─── Tankers ──────────────────────────────────────────────────────────────────
 router.get('/tankers', authenticate, async (req, res) => {
   try {
+    const includeAll = req.query.all === 'true';
     const r = await query(
       `SELECT id, tanker_number, compartments, capacity_litres, per_km_rate,
               vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p,
               is_active, created_at, updated_at
-       FROM tankers WHERE is_active=TRUE ORDER BY tanker_number`
+       FROM tankers ${includeAll ? '' : 'WHERE is_active=TRUE '}ORDER BY tanker_number`
     );
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }

@@ -476,10 +476,10 @@ export default function ExecutionForm() {
           <h2 className="page-title">
             Trip #{exec.trip_no} — {exec.tanker_number}
           </h2>
-          <p className="text-xs font-medium" style={{ color: 'rgba(0,60,120,0.75)' }}>
+          <p className="text-xs font-medium" style={{ color: 'rgba(255,255,255,0.85)' }}>
             {exec.execution_date?.slice(0,10)}
-            {exec.shifts_milk && <> · <span className="text-[#0055a5]">{exec.shifts_milk}</span></>}
-            {exec.route_name  && <> · <span className="text-[#0055a5]">{exec.route_name}</span></>}
+            {exec.shifts_milk && <> · <span style={{ color: 'white' }}>{exec.shifts_milk}</span></>}
+            {exec.route_name  && <> · <span style={{ color: 'white' }}>{exec.route_name}</span></>}
             {exec.delivery_point_name && <> · {exec.delivery_point_name}</>}
           </p>
         </div>

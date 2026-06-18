@@ -13,10 +13,11 @@ export default function TankerMaster() {
   const [modal, setModal] = useState(null);
   const [form, setForm]   = useState(EMPTY);
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active');
 
   const { data: tankers = [], isLoading } = useQuery({
-    queryKey: ['tankers'],
-    queryFn:  () => getTankers().then(r => r.data),
+    queryKey: ['tankers', 'all'],
+    queryFn:  () => getTankers({ all: 'true' }).then(r => r.data),
   });
 
   const openAdd  = () => { setForm(EMPTY); setModal('add'); };
@@ -47,6 +48,8 @@ export default function TankerMaster() {
   });
 
   const filtered = tankers.filter(t => {
+    if (statusFilter === 'active' && !t.is_active) return false;
+    if (statusFilter === 'inactive' && t.is_active) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return t.tanker_number?.toLowerCase().includes(q) || t.vendor_name?.toLowerCase().includes(q);
@@ -57,9 +60,16 @@ export default function TankerMaster() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">Tanker Master</h2>
-          <p className="text-xs text-gray-500">Manage tankers, capacities and per-km rates</p>
+          <p className="text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>Manage tankers, capacities and per-km rates</p>
         </div>
         <div className="flex items-center gap-2">
+          <select
+            className="input py-1.5 text-sm w-28"
+            value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="all">All</option>
+          </select>
           <input
             type="text" placeholder="Search tanker no or transporter…"
             className="input py-1.5 text-sm w-56"
