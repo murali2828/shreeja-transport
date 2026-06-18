@@ -87,13 +87,27 @@ function BmcuSequenceEditor({ bmcus, setBmcus, allBmcus }) {
   );
 }
 
+function SortIcon({ col, sortCol, sortDir }) {
+  if (sortCol !== col) return <span className="text-gray-300 ml-0.5">⇅</span>;
+  return <span className="ml-0.5">{sortDir === 'asc' ? '↑' : '↓'}</span>;
+}
+
 export default function RouteMaster() {
   const qc = useQueryClient();
-  const [modal, setModal]     = useState(null);
-  const [form, setForm]       = useState(EMPTY_ROUTE);
+  const [modal, setModal]         = useState(null);
+  const [form, setForm]           = useState(EMPTY_ROUTE);
   const [formBmcus, setFormBmcus] = useState([]);
+  const [search, setSearch]       = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortCol, setSortCol]     = useState('route_name');
+  const [sortDir, setSortDir]     = useState('asc');
 
-  const { data: routes   = [], isLoading } = useQuery({ queryKey: ['routes'],    queryFn: () => getRoutes().then(r=>r.data) });
+  const toggleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('asc'); }
+  };
+
+  const { data: routes   = [], isLoading } = useQuery({ queryKey: ['routes', 'all'], queryFn: () => getRoutes({ all: 'true' }).then(r=>r.data) });
   const { data: bmcuList = [] }            = useQuery({ queryKey: ['bmcus'],     queryFn: () => getBmcus().then(r=>r.data) });
   const { data: startPts = [] }            = useQuery({ queryKey: ['start-pts'], queryFn: () => getStartingPoints().then(r=>r.data) });
   const { data: testPts  = [] }            = useQuery({ queryKey: ['test-pts'],  queryFn: () => getTestingPoints().then(r=>r.data) });
@@ -125,29 +139,102 @@ export default function RouteMaster() {
     onError: (e) => toast.error(e.response?.data?.error || e.message),
   });
 
+  const activeCount   = routes.filter(r => r.is_active).length;
+  const inactiveCount = routes.filter(r => !r.is_active).length;
+
+  const filtered = routes.filter(r => {
+    if (statusFilter === 'active'   && !r.is_active) return false;
+    if (statusFilter === 'inactive' &&  r.is_active) return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return r.route_no?.toLowerCase().includes(q) || r.route_name?.toLowerCase().includes(q);
+  }).sort((a, b) => {
+    let av = a[sortCol], bv = b[sortCol];
+    if (sortCol === 'bmcu_count' || sortCol === 'distance_km') {
+      av = parseFloat(av) || 0; bv = parseFloat(bv) || 0;
+    } else {
+      av = (av || '').toString().toLowerCase();
+      bv = (bv || '').toString().toLowerCase();
+    }
+    if (av < bv) return sortDir === 'asc' ? -1 : 1;
+    if (av > bv) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
   return (
     <div className="space-y-4 max-w-5xl">
-      <PageHeader title="Route Master" subtitle="Define standard collection routes" onAdd={openAdd} addLabel="Add Route"/>
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">Route Master</h2>
+          <p className="text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>Define standard collection routes</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select className="input py-1.5 text-sm w-28" value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}>
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+          <input type="text" placeholder="Search route no or name…"
+            className="input py-1.5 text-sm w-56"
+            value={search} onChange={e => setSearch(e.target.value)}/>
+          <button onClick={openAdd} className="btn-primary flex items-center gap-1.5 whitespace-nowrap">
+            <Plus size={14}/> Add Route
+          </button>
+        </div>
+      </div>
+
+      {/* Summary counts */}
+      <div className="flex gap-3 text-xs">
+        <span className="px-3 py-1 rounded-full bg-green-100 text-green-700 font-medium">
+          {activeCount} Active
+        </span>
+        <span className="px-3 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">
+          {inactiveCount} Inactive
+        </span>
+        {search || statusFilter !== 'all' ? (
+          <span className="px-3 py-1 rounded-full bg-blue-50 text-blue-600 font-medium">
+            {filtered.length} shown
+          </span>
+        ) : null}
+      </div>
 
       <div className="card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b">
             <tr>
-              <th className="table-th">Route No</th>
-              <th className="table-th">Route Name</th>
-              <th className="table-th">Start Point</th>
-              <th className="table-th">Delivery Point</th>
-              <th className="table-th text-center">BMCUs</th>
-              <th className="table-th text-right">Dist (km)</th>
-              <th className="table-th">Status</th>
+              <th className="table-th w-8 text-center">#</th>
+              <th className="table-th cursor-pointer select-none" onClick={() => toggleSort('route_no')}>
+                Route No <SortIcon col="route_no" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
+              <th className="table-th cursor-pointer select-none" onClick={() => toggleSort('route_name')}>
+                Route Name <SortIcon col="route_name" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
+              <th className="table-th cursor-pointer select-none" onClick={() => toggleSort('start_point_name')}>
+                Start Point <SortIcon col="start_point_name" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
+              <th className="table-th cursor-pointer select-none" onClick={() => toggleSort('delivery_point_name')}>
+                Delivery Point <SortIcon col="delivery_point_name" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
+              <th className="table-th text-center cursor-pointer select-none" onClick={() => toggleSort('bmcu_count')}>
+                BMCUs <SortIcon col="bmcu_count" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
+              <th className="table-th text-right cursor-pointer select-none" onClick={() => toggleSort('distance_km')}>
+                Dist (km) <SortIcon col="distance_km" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
+              <th className="table-th cursor-pointer select-none" onClick={() => toggleSort('is_active')}>
+                Status <SortIcon col="is_active" sortCol={sortCol} sortDir={sortDir}/>
+              </th>
               <th className="table-th w-20">Actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading && <LoadingState/>}
-            {!isLoading && routes.length === 0 && <EmptyState message="No routes yet."/>}
-            {routes.map(r => (
-              <tr key={r.id} className="hover:bg-gray-50 border-b border-gray-50">
+            {!isLoading && filtered.length === 0 && <EmptyState message={search ? 'No routes match your search.' : 'No routes yet.'}/>}
+            {filtered.map((r, idx) => (
+              <tr key={r.id} className={`hover:bg-gray-50 border-b border-gray-50 ${!r.is_active ? 'opacity-60' : ''}`}>
+                <td className="table-td text-center text-xs text-gray-400">{idx + 1}</td>
                 <td className="table-td font-mono text-[#005ba3]">{r.route_no || '—'}</td>
                 <td className="table-td font-semibold">{r.route_name}</td>
                 <td className="table-td text-gray-600 text-xs">{r.start_point_name || '—'}</td>

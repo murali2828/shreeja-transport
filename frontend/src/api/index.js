@@ -59,7 +59,7 @@ export const createDeliveryPoint= (d)     => api.post('/masters/delivery-points'
 export const updateDeliveryPoint= (id, d) => api.put(`/masters/delivery-points/${id}`, d);
 export const deleteDeliveryPoint= (id)    => api.delete(`/masters/delivery-points/${id}`);
 
-export const getRoutes          = ()      => api.get('/masters/routes');
+export const getRoutes          = (params) => api.get('/masters/routes', { params });
 export const getRoute           = (id)    => api.get(`/masters/routes/${id}`);
 export const createRoute        = (d)     => api.post('/masters/routes', d);
 export const updateRoute        = (id, d) => api.put(`/masters/routes/${id}`, d);

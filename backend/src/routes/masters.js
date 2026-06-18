@@ -223,6 +223,7 @@ router.delete('/delivery-points/:id', authenticate, authorize('admin'), async (r
 // ─── Routes ───────────────────────────────────────────────────────────────────
 router.get('/routes', authenticate, async (req, res) => {
   try {
+    const includeAll = req.query.all === 'true';
     const r = await query(`
       SELECT rm.*,
         sp.name AS start_point_name, tp.name AS testing_point_name, dp.name AS delivery_point_name,
@@ -231,7 +232,7 @@ router.get('/routes', authenticate, async (req, res) => {
       LEFT JOIN starting_points sp ON sp.id=rm.start_point_id
       LEFT JOIN testing_points  tp ON tp.id=rm.testing_point_id
       LEFT JOIN delivery_points dp ON dp.id=rm.delivery_point_id
-      WHERE rm.is_active=TRUE ORDER BY rm.route_name`
+      ${includeAll ? '' : 'WHERE rm.is_active=TRUE '}ORDER BY rm.route_name`
     );
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
