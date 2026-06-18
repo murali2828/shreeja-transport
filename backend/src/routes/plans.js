@@ -348,7 +348,7 @@ router.get('/template/download', authenticate, async (req, res) => {
     const tankers    = await query('SELECT tanker_number, capacity_litres FROM tankers WHERE is_active=TRUE ORDER BY tanker_number');
     const bmcus      = await query('SELECT bmcu_code, bmcu_name FROM bmcus WHERE is_active=TRUE ORDER BY bmcu_code');
     const routes     = await query('SELECT route_name FROM route_masters WHERE is_active=TRUE ORDER BY route_name');
-    const startPts   = await query('SELECT name FROM starting_points ORDER BY name');
+    const startPts   = await query('SELECT name FROM starting_points WHERE is_active=TRUE ORDER BY name');
     const delivPts   = await query('SELECT name FROM delivery_points ORDER BY name');
 
     const wb = new ExcelJS.Workbook();
@@ -376,29 +376,29 @@ router.get('/template/download', authenticate, async (req, res) => {
     delivPts.rows.forEach(r => wsDelivPts.addRow([r.name]));
 
     // ── Sheet 1: Trip Plans ──────────────────────────────────────────────────
-    // Column order: A=plan_for_date B=trip_no C=tanker_number D=route_name E=starting_point
-    //               F=delivery_point G=bmcu_code H=shift_code I=expected_qty J=description
-    //               K=expected_km L=driver_name M=loader_name N=remarks
+    // A=plan_for_date B=trip_no C=tanker_number D=route_name E=starting_point F=delivery_point
+    // G=bmcu_name(user selects name→searchable) H=bmcu_code(auto VLOOKUP)
+    // I=shifts_milk J=expected_qty K=description L=expected_km M=driver_name N=loader_name O=remarks
     const ws = wb.addWorksheet('Trip Plans');
 
-    const colWidths = [14,8,18,20,20,20,14,12,13,18,11,18,18,18];
+    const colWidths = [14,8,18,20,20,20,28,14,12,13,18,11,18,18,18];
     ws.columns = [
       'plan_for_date','trip_no','tanker_number','route_name','starting_point','delivery_point',
-      'bmcu_code','shifts_milk','expected_qty','description',
+      'bmcu_name','bmcu_code','shifts_milk','expected_qty','description',
       'expected_km','driver_name','loader_name','remarks'
     ].map((key, i) => ({ key, width: colWidths[i] }));
 
     // Row 1: merged title
-    ws.mergeCells('A1:N1');
+    ws.mergeCells('A1:O1');
     const titleCell = ws.getCell('A1');
     titleCell.value = 'SHREEJA SECONDARY TRANSPORT — Trip Plan Upload Template';
     titleCell.font  = { bold: true, size: 13 };
     titleCell.alignment = { horizontal: 'center' };
 
     // Row 2: instruction
-    ws.mergeCells('A2:N2');
+    ws.mergeCells('A2:O2');
     const instrCell = ws.getCell('A2');
-    instrCell.value = 'Multi-row format: One TRIP HEADER row per trip (cols A–F, K–N), then one BMCU row per plant (cols G–J only). Select from dropdowns. Delete sample rows 4–10 before uploading.';
+    instrCell.value = 'TRIP HEADER: fill A–F and L–O. BMCU rows: select Plant Name from dropdown col G (searchable) → Code auto-fills in col H. Fill cols I–K. Delete sample rows 4–8 before uploading.';
     instrCell.font  = { italic: true, size: 9, color: { argb: 'FF595959' } };
     instrCell.alignment = { wrapText: true };
     ws.getRow(2).height = 28;
@@ -406,7 +406,7 @@ router.get('/template/download', authenticate, async (req, res) => {
     // Row 3: column headers
     const headerRow = ws.addRow([
       'plan_for_date','trip_no','tanker_number','route_name','starting_point','delivery_point',
-      'bmcu_code','shifts_milk','expected_qty','description',
+      'bmcu_name ▼ (select)','bmcu_code (auto)','shifts_milk','expected_qty','description',
       'expected_km','driver_name','loader_name','remarks'
     ]);
     headerRow.eachCell(cell => {
@@ -414,18 +414,17 @@ router.get('/template/download', authenticate, async (req, res) => {
       cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2E75B6' } };
       cell.alignment = { horizontal: 'center' };
     });
+    // Green for user-input BMCU name col, gray for auto-filled code col
+    ws.getCell('G3').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E7E34' } };
+    ws.getCell('H3').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF5A6268' } };
 
     // Sample data rows (yellow)
-    // Columns: plan_for_date, trip_no, tanker_number, route_name, starting_point, delivery_point,
-    //          bmcu_code, shift_code, expected_qty, description, expected_km, driver_name, loader_name, remarks
     const sampleRows = [
-      ['25-05-2026',1,'AP03TF4985','MB Cross','Balaji Dairy','Balaji Dairy Plant','3001','18E19M',2000,'Balance Milk',620,'Sample Driver','Sample Loader','Sample trip'],
-      ['','','','','','','3001','18E19M',5820,'RMRD','','','',''],
-      ['','','','','','','3002','18E19M',3750,'RMRD','','','',''],
-      ['','','','','','','3003','18E19M',4150,'RMRD','','','',''],
-      ['25-05-2026',2,'AP03TF2538','B Kothakota','Balaji Dairy','Balaji Dairy Plant','3004','17E18M',2806,'RMRD',331,'Sample Driver 2','Sample Loader 2',''],
-      ['','','','','','','3005','17E18M',3310,'RMRD','','','',''],
-      ['','','','','','','3006','18M18E',2821,'RMRD','','','',''],
+      ['25-05-2026',1,'AP03TF4985','MB Cross','Balaji Dairy','Balaji Dairy Plant','Penumuru','3001','18E19M',2000,'Balance Milk',620,'Sample Driver','Sample Loader','Sample trip'],
+      ['','','','','','','Pakala','3002','18E19M',5820,'RMRD','','','',''],
+      ['','','','','','','Damalacheruvu','3003','18E19M',3750,'RMRD','','','',''],
+      ['25-05-2026',2,'AP03TF2538','B Kothakota','Balaji Dairy','Balaji Dairy Plant','Y S Gate','3004','17E18M',2806,'RMRD',331,'Sample Driver 2','Sample Loader 2',''],
+      ['','','','','','','Komireddygari Palli','3005','17E18M',3310,'RMRD','','','',''],
     ];
     const yellowFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
     sampleRows.forEach(data => {
@@ -433,24 +432,30 @@ router.get('/template/download', authenticate, async (req, res) => {
       r.eachCell({ includeEmpty: true }, cell => { cell.fill = yellowFill; });
     });
 
-    // Data validation dropdowns for reference columns (rows 4–2000)
-    const tankerCount  = tankers.rows.length;
-    const routeCount   = routes.rows.length;
-    const startCount   = startPts.rows.length;
-    const delivCount   = delivPts.rows.length;
-    const bmcuCount    = bmcus.rows.length;
+    // VLOOKUP formula for bmcu_code (col H) based on bmcu_name (col G) — rows 4–2000
+    const bmcuCount = bmcus.rows.length;
+    const grayFill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
+    for (let r = 4; r <= 500; r++) {
+      const cell = ws.getCell(`H${r}`);
+      cell.value = { formula: `IFERROR(INDEX(BMCUs!$A:$A,MATCH(G${r},BMCUs!$B:$B,0)),"")` };
+      cell.fill  = grayFill;
+      cell.font  = { color: { argb: 'FF444444' }, italic: true };
+    }
 
-    // Column C: tanker_number
+    // Data validation dropdowns (rows 4–2000)
+    const tankerCount = tankers.rows.length;
+    const routeCount  = routes.rows.length;
+    const startCount  = startPts.rows.length;
+    const delivCount  = delivPts.rows.length;
+
     if (tankerCount > 0) {
       ws.dataValidations.add('C4:C2000', {
         type: 'list', allowBlank: true,
         formulae: [`Tankers!$A$2:$A$${tankerCount + 1}`],
         showErrorMessage: true, errorStyle: 'warning',
-        errorTitle: 'Tanker not found', error: 'Select a tanker from the list or type a valid tanker number.'
+        errorTitle: 'Tanker not found', error: 'Select a tanker from the list.'
       });
     }
-
-    // Column D: route_name
     if (routeCount > 0) {
       ws.dataValidations.add('D4:D2000', {
         type: 'list', allowBlank: true,
@@ -458,8 +463,6 @@ router.get('/template/download', authenticate, async (req, res) => {
         showErrorMessage: false
       });
     }
-
-    // Column E: starting_point
     if (startCount > 0) {
       ws.dataValidations.add('E4:E2000', {
         type: 'list', allowBlank: true,
@@ -467,8 +470,6 @@ router.get('/template/download', authenticate, async (req, res) => {
         showErrorMessage: false
       });
     }
-
-    // Column F: delivery_point
     if (delivCount > 0) {
       ws.dataValidations.add('F4:F2000', {
         type: 'list', allowBlank: true,
@@ -477,19 +478,16 @@ router.get('/template/download', authenticate, async (req, res) => {
         errorTitle: 'Delivery point not found', error: 'Select a delivery point from the list.'
       });
     }
-
-    // Column G: bmcu_code
+    // Col G: BMCU name dropdown (searchable by name)
     if (bmcuCount > 0) {
       ws.dataValidations.add('G4:G2000', {
         type: 'list', allowBlank: true,
-        formulae: [`BMCUs!$A$2:$A$${bmcuCount + 1}`],
-        showErrorMessage: true, errorStyle: 'warning',
-        errorTitle: 'BMCU not found', error: 'Select a BMCU code from the list.'
+        formulae: [`BMCUs!$B$2:$B$${bmcuCount + 1}`],
+        showErrorMessage: false
       });
     }
-
-    // Column J: description
-    ws.dataValidations.add('J4:J2000', {
+    // Col K: description
+    ws.dataValidations.add('K4:K2000', {
       type: 'list', allowBlank: true,
       formulae: ['"RMRD,Balance Milk,Internal Shifting"'],
       showErrorMessage: true, errorStyle: 'stop',
@@ -520,11 +518,18 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
     const hasTripHeader = row['plan_for_date'] && row['trip_no'] !== undefined && row['trip_no'] !== null && row['trip_no'] !== '' && row['tanker_number'];
     if (hasTripHeader) {
       if (currentTrip) trips.push(currentTrip);
-      // Normalise date: accepts DD-MM-YYYY, DD/MM/YYYY or YYYY-MM-DD
+      // Normalise date: DD-MM-YYYY, DD/MM/YYYY, YYYY-MM-DD, or Excel locale string
       let pfd = String(row['plan_for_date']).trim();
       if (/^\d{2}[-/]\d{2}[-/]\d{4}$/.test(pfd)) {
+        // DD-MM-YYYY or DD/MM/YYYY
         const [d, m, y] = pfd.split(/[-/]/);
         pfd = `${y}-${m}-${d}`;
+      } else if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(pfd)) {
+        // M/D/YYYY (US Excel format)
+        const [m, d, y] = pfd.split('/');
+        pfd = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+      } else if (/^\d{4}-\d{2}-\d{2}/.test(pfd)) {
+        pfd = pfd.slice(0, 10); // YYYY-MM-DD already
       }
       currentTrip = {
         plan_for_date:   pfd,
@@ -541,11 +546,14 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
         bmcus: []
       };
     }
-    if (currentTrip && row['bmcu_code'] !== undefined && row['bmcu_code'] !== null && row['bmcu_code'] !== '') {
+    const bmcuCode = String(row['bmcu_code'] || '').trim();
+    const bmcuName = String(row['bmcu_name'] || '').trim();
+    if (currentTrip && (bmcuCode || bmcuName)) {
       const desc = String(row['description'] || '').trim();
       const VALID_DESCS = ['RMRD', 'Balance Milk', 'Internal Shifting'];
       currentTrip.bmcus.push({
-        bmcu_code:    String(row['bmcu_code']).trim(),
+        bmcu_code:    bmcuCode || null,
+        bmcu_name:    bmcuName || null,
         shift_code:   String(row['shifts_milk'] || row['shift_code'] || '').trim() || null,
         expected_qty: row['expected_qty'] ? parseFloat(row['expected_qty']) : null,
         description:  VALID_DESCS.includes(desc) ? desc : 'RMRD'
@@ -611,10 +619,13 @@ router.post('/upload', authenticate, authorize('admin','planner'), upload.single
 
         let seq = 1; let totalExpQty = 0;
         for (const bm of trip.bmcus) {
-          const br = await client.query(
-            'SELECT id FROM bmcus WHERE bmcu_code=$1 AND is_active=TRUE', [bm.bmcu_code]
-          );
-          if (!br.rows[0]) { errors.push(`Trip ${rowNum}: BMCU "${bm.bmcu_code}" not found`); continue; }
+          let br = bm.bmcu_code
+            ? await client.query('SELECT id FROM bmcus WHERE bmcu_code=$1 AND is_active=TRUE', [bm.bmcu_code])
+            : { rows: [] };
+          if (!br.rows[0] && bm.bmcu_name) {
+            br = await client.query('SELECT id FROM bmcus WHERE bmcu_name ILIKE $1 AND is_active=TRUE', [bm.bmcu_name]);
+          }
+          if (!br.rows[0]) { errors.push(`Trip ${rowNum}: BMCU "${bm.bmcu_code || bm.bmcu_name}" not found`); continue; }
           const qty = bm.expected_qty || 0;
           totalExpQty += qty;
           await client.query(

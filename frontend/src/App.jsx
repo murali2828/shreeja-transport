@@ -24,6 +24,7 @@ import DistanceMaster  from './pages/masters/DistanceMaster';
 // Planning
 import TripPlanList    from './pages/planning/TripPlanList';
 import TripPlanForm    from './pages/planning/TripPlanForm';
+import DeletedPlansList from './pages/planning/DeletedPlansList';
 import RouteOptimizer  from './pages/planning/RouteOptimizer';
 
 // Execution
@@ -101,6 +102,9 @@ function AppRoutes() {
         }/>
         <Route path="planning/:id/edit" element={
           <ProtectedRoute roles={['admin','planner']}><TripPlanForm/></ProtectedRoute>
+        }/>
+        <Route path="planning/deleted" element={
+          <ProtectedRoute roles={['admin','planner']}><DeletedPlansList/></ProtectedRoute>
         }/>
         <Route path="planning/optimize" element={
           <ProtectedRoute roles={['admin','planner']}><RouteOptimizer/></ProtectedRoute>

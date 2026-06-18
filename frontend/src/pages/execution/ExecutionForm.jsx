@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle, GripVertical } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, cancelExecution } from '../../api/index';
+import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, getStartingPoints, cancelExecution } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
 
 const KG = 1.0285;
@@ -318,9 +318,9 @@ export default function ExecutionForm() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason,    setCancelReason]    = useState('');
 
-  const [dcNumber,         setDcNumber]         = useState('');
   const [actualKm,         setActualKm]         = useState('');
   const [deliveryPointId,  setDeliveryPointId]  = useState('');
+  const [startPointId,     setStartPointId]     = useState('');
   const [bmcuRows,         setBmcuRows]         = useState([]);
   const [shiftRows,        setShiftRows]        = useState([]);
   const [dragIdx,          setDragIdx]          = useState(null);
@@ -336,12 +336,15 @@ export default function ExecutionForm() {
   const { data: deliveryPoints = [] } = useQuery({
     queryKey: ['delivery-points'], queryFn: () => getDeliveryPoints().then(r => r.data)
   });
+  const { data: startingPoints = [] } = useQuery({
+    queryKey: ['start-pts'], queryFn: () => getStartingPoints().then(r => r.data)
+  });
 
   useEffect(() => {
     if (exec) {
-      setDcNumber(exec.dc_number || '');
       setActualKm(exec.actual_km || '');
-      setDeliveryPointId(exec.delivery_point_id || '');
+      setDeliveryPointId(String(exec.delivery_point_id || ''));
+      setStartPointId(String(exec.start_point_id || ''));
       setBmcuRows((exec.bmcus || []).map(b => ({
         ...b,
         milk_date: b.milk_date ? b.milk_date.slice(0, 10) : ''
@@ -426,7 +429,8 @@ export default function ExecutionForm() {
 
   const saveMut = useMutation({
     mutationFn: () => updateExecution(id, {
-      dc_number: dcNumber, actual_km: actualKm, delivery_point_id: deliveryPointId || null,
+      actual_km: actualKm, delivery_point_id: deliveryPointId || null,
+      start_point_id: startPointId || null,
       bmcus: bmcuRows.filter(r => r.bmcu_id), // skip rows where BMCU not yet selected
       shift_rows: shiftRows.map(({ _key, ...r }) => r)
     }),
@@ -472,9 +476,11 @@ export default function ExecutionForm() {
           <h2 className="page-title">
             Trip #{exec.trip_no} — {exec.tanker_number}
           </h2>
-          <p className="text-xs text-gray-500">
-            {exec.execution_date?.slice(0,10)} · {exec.delivery_point_name} · {exec.shifts_milk}
-            {exec.route_name && <> · <span className="text-[#0078d4]">{exec.route_name}</span></>}
+          <p className="text-xs font-medium" style={{ color: 'rgba(0,60,120,0.75)' }}>
+            {exec.execution_date?.slice(0,10)}
+            {exec.shifts_milk && <> · <span className="text-[#0055a5]">{exec.shifts_milk}</span></>}
+            {exec.route_name  && <> · <span className="text-[#0055a5]">{exec.route_name}</span></>}
+            {exec.delivery_point_name && <> · {exec.delivery_point_name}</>}
           </p>
         </div>
         {isAdmin && !isClosed && (
@@ -495,9 +501,12 @@ export default function ExecutionForm() {
       {/* Trip summary */}
       <div className="card p-4 grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm">
         <div>
-          <label className="label text-xs">DC Number</label>
-          <input className="input w-full py-1.5" value={dcNumber}
-            disabled={isClosed} onChange={e => setDcNumber(e.target.value)}/>
+          <label className="label text-xs">Starting Point</label>
+          <select className="input w-full py-1.5" value={startPointId}
+            disabled={isClosed} onChange={e => setStartPointId(e.target.value)}>
+            <option value="">— Select —</option>
+            {startingPoints.map(sp => <option key={sp.id} value={String(sp.id)}>{sp.name}</option>)}
+          </select>
         </div>
         <div>
           <label className="label text-xs">Actual KM</label>
@@ -509,7 +518,7 @@ export default function ExecutionForm() {
           <select className="input w-full py-1.5" value={deliveryPointId}
             disabled={isClosed} onChange={e => setDeliveryPointId(e.target.value)}>
             <option value="">— Select —</option>
-            {deliveryPoints.map(dp => <option key={dp.id} value={dp.id}>{dp.name}</option>)}
+            {deliveryPoints.map(dp => <option key={dp.id} value={String(dp.id)}>{dp.name}</option>)}
           </select>
         </div>
         <div className="text-xs">

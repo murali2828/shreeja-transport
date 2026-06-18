@@ -10,8 +10,9 @@ const EMPTY = { tanker_number: '', compartments: '', capacity_litres: '', per_km
 
 export default function TankerMaster() {
   const qc = useQueryClient();
-  const [modal, setModal] = useState(null); // null | 'add' | row
+  const [modal, setModal] = useState(null);
   const [form, setForm]   = useState(EMPTY);
+  const [search, setSearch] = useState('');
 
   const { data: tankers = [], isLoading } = useQuery({
     queryKey: ['tankers'],
@@ -45,14 +46,29 @@ export default function TankerMaster() {
     onError:   (e) => toast.error(e.response?.data?.error || 'Delete failed'),
   });
 
+  const filtered = tankers.filter(t => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return t.tanker_number?.toLowerCase().includes(q) || t.vendor_name?.toLowerCase().includes(q);
+  });
+
   return (
     <div className="space-y-4 max-w-4xl">
-      <PageHeader
-        title="Tanker Master"
-        subtitle="Manage tankers, capacities and per-km rates"
-        onAdd={openAdd}
-        addLabel="Add Tanker"
-      />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">Tanker Master</h2>
+          <p className="text-xs text-gray-500">Manage tankers, capacities and per-km rates</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="text" placeholder="Search tanker no or transporter…"
+            className="input py-1.5 text-sm w-56"
+            value={search} onChange={e => setSearch(e.target.value)}/>
+          <button onClick={openAdd} className="btn-primary flex items-center gap-1.5 whitespace-nowrap">
+            <Truck size={14}/> Add Tanker
+          </button>
+        </div>
+      </div>
 
       <div className="card overflow-hidden">
         <table className="w-full text-sm">
@@ -70,8 +86,8 @@ export default function TankerMaster() {
           </thead>
           <tbody>
             {isLoading && <LoadingState/>}
-            {!isLoading && tankers.length === 0 && <EmptyState message="No tankers yet. Click 'Add Tanker' to create one."/>}
-            {tankers.map(t => (
+            {!isLoading && filtered.length === 0 && <EmptyState message={search ? 'No tankers match your search.' : "No tankers yet. Click 'Add Tanker' to create one."}/>}
+            {filtered.map(t => (
               <tr key={t.id} className="hover:bg-gray-50 border-b border-gray-50">
                 <td className="table-td font-mono font-semibold text-[#005ba3]">{t.tanker_number}</td>
                 <td className="table-td text-xs">

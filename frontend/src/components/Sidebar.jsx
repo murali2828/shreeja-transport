@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 import {
   Truck, LayoutDashboard, MapPin, Route, Users, Settings,
   ClipboardList, Play, CheckSquare, BarChart2, Mail,
-  ChevronDown, ChevronRight, Zap, Navigation
+  ChevronDown, ChevronRight, Zap, Navigation, Trash2
 } from 'lucide-react';
 
 function NavItem({ to, icon, label, end = false, collapsed = false }) {
@@ -73,6 +73,7 @@ export default function Sidebar({ collapsed = false }) {
         <NavSection label={collapsed ? '' : 'Planning'}>
           {ni('/planning',          <ClipboardList size={15}/>, 'Trip Plans')}
           {ni('/planning/optimize', <Zap size={15}/>,           'Route Optimizer')}
+          {ni('/planning/deleted',  <Trash2 size={15}/>,        'Deleted Plans')}
         </NavSection>
       )}
 

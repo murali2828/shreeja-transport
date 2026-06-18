@@ -140,7 +140,7 @@ router.post('/', authenticate, async (req, res) => {
 
 // PUT /api/executions/:id  — save BMCU data, recalc totals
 router.put('/:id', authenticate, async (req, res) => {
-  const { dc_number, actual_km, delivery_point_id, bmcus, shift_rows } = req.body;
+  const { actual_km, delivery_point_id, start_point_id, bmcus, shift_rows } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -230,18 +230,24 @@ router.put('/:id', authenticate, async (req, res) => {
     if (delivery_point_id != null) {
       await client.query(
         'UPDATE trip_plans SET delivery_point_id=$1 WHERE id=$2',
-        [delivery_point_id, exec.rows[0].trip_plan_id]
+        [delivery_point_id || null, exec.rows[0].trip_plan_id]
+      );
+    }
+    if (start_point_id != null) {
+      await client.query(
+        'UPDATE trip_plans SET start_point_id=$1 WHERE id=$2',
+        [start_point_id || null, exec.rows[0].trip_plan_id]
       );
     }
 
     const r = await client.query(
       `UPDATE trip_executions SET
-         dc_number=$1, actual_km=$2,
-         total_qty_litres=$3, total_qty_kgs=$4,
-         avg_fat=$5, avg_snf=$6, total_kg_fat=$7, total_kg_snf=$8,
+         actual_km=$1,
+         total_qty_litres=$2, total_qty_kgs=$3,
+         avg_fat=$4, avg_snf=$5, total_kg_fat=$6, total_kg_snf=$7,
          status='saved', updated_at=NOW()
-       WHERE id=$9 RETURNING *`,
-      [dc_number||null, actual_km||null,
+       WHERE id=$8 RETURNING *`,
+      [actual_km||null,
        t.total_litres, t.total_kgs,
        Math.round(avgFat * 10000) / 10000, Math.round(avgSnf * 10000) / 10000,
        t.total_kg_fat, t.total_kg_snf,
