@@ -132,7 +132,7 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
     if (field === 'dps_qty_litres') onUpdate(idx, 'dps_qty_kgs', calc.kgs(val));
   };
 
-  const TOTAL_COLS = 17;
+  const TOTAL_COLS = 14;
 
   return (
     <>
@@ -173,7 +173,6 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
           <input type="number" min="0" step="0.01" className="input py-0.5 px-1 text-xs w-20" disabled={isClosed}
             value={row.qty_litres || ''} onChange={e => syncCalc('qty_litres', e.target.value)}/>
         </td>
-        <td className="table-td text-gray-500">{row.qty_kgs || kgs || '—'}</td>
         <td className="table-td">
           <input type="number" min="0" step="0.001" className="input py-0.5 px-1 text-xs w-16" disabled={isClosed}
             value={row.fat_pct || ''} onChange={e => syncCalc('fat_pct', e.target.value)}/>
@@ -182,8 +181,6 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
           <input type="number" min="0" step="0.001" className="input py-0.5 px-1 text-xs w-16" disabled={isClosed}
             value={row.snf_pct || ''} onChange={e => syncCalc('snf_pct', e.target.value)}/>
         </td>
-        <td className="table-td text-gray-500">{row.kg_fat || kgFat || '—'}</td>
-        <td className="table-td text-gray-500">{row.kg_snf || kgSnf || '—'}</td>
         <td className="table-td">
           <select className="input py-0.5 px-1 text-xs w-28" disabled={isClosed}
             value={row.description || 'RMRD'} onChange={e => u('description', e.target.value)}>
@@ -568,10 +565,10 @@ export default function ExecutionForm() {
           )}
         </div>
         <div className="overflow-x-scroll max-h-[55vh]">
-          <table className="text-xs" style={{ minWidth: '1400px' }}>
+          <table className="text-xs" style={{ minWidth: '1100px' }}>
             <thead className="sticky top-0 bg-gray-50 border-b">
               <tr>
-                {['','#','Code','Name','Date','Dispatch Qty L','Dispatch Qty Kg','Dispatch Fat%','Dispatch SNF%','Kg Fat','Kg SNF',
+                {['','#','Code','Name','Date','Dispatch Qty L','Dispatch Fat%','Dispatch SNF%',
                   'Description','Chamber','DPS L','DPS Fat%','DPS SNF%',''].map((h,i) => (
                   <th key={i} className="table-th py-1.5 text-xs whitespace-nowrap">{h}</th>
                 ))}
