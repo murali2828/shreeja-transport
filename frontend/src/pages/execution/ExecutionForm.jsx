@@ -633,6 +633,64 @@ export default function ExecutionForm() {
         </div>
       )}
 
+      {/* Acknowledgement entries — shown on closed trips */}
+      {isClosed && exec.acknowledgements?.length > 0 && (
+        <div className="card p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-700 border-b pb-2">Acknowledgement</h3>
+          <div className="text-xs text-gray-500 mb-1">
+            Date: <strong className="text-gray-700">{exec.acknowledgements[0]?.ack_date?.slice(0,10)}</strong>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="table-th">Chamber</th>
+                  <th className="table-th text-right">Qty Kgs</th>
+                  <th className="table-th text-right">Qty Litres</th>
+                  <th className="table-th text-right">Fat %</th>
+                  <th className="table-th text-right">SNF %</th>
+                  <th className="table-th text-right">Kg Fat</th>
+                  <th className="table-th text-right">Kg SNF</th>
+                  <th className="table-th text-right">Temp</th>
+                  <th className="table-th">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exec.acknowledgements.map((a, i) => (
+                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="table-td">
+                      <span className="inline-flex items-center justify-center w-8 h-6 rounded bg-[#0078d4] text-white text-xs font-bold">
+                        {a.chamber}
+                      </span>
+                    </td>
+                    <td className="table-td text-right font-medium">{parseFloat(a.qty_kgs||0).toLocaleString()}</td>
+                    <td className="table-td text-right">{parseFloat(a.qty_litres||0).toLocaleString()}</td>
+                    <td className="table-td text-right">{a.fat_pct || '—'}</td>
+                    <td className="table-td text-right">{a.snf_pct || '—'}</td>
+                    <td className="table-td text-right">{a.kg_fat || '—'}</td>
+                    <td className="table-td text-right">{a.kg_snf || '—'}</td>
+                    <td className="table-td text-right">{a.temperature || '—'}</td>
+                    <td className="table-td text-xs text-gray-600">{a.description || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-blue-50 border-t font-semibold text-sm">
+                <tr>
+                  <td className="table-td text-xs text-gray-500">Total</td>
+                  <td className="table-td text-right text-[#003a6b]">
+                    {exec.acknowledgements.reduce((s,a) => s + parseFloat(a.qty_kgs||0), 0).toFixed(2)}
+                  </td>
+                  <td className="table-td text-right text-[#003a6b]">
+                    {exec.acknowledgements.reduce((s,a) => s + parseFloat(a.qty_litres||0), 0).toFixed(2)}
+                  </td>
+                  <td colSpan={6}></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Admin cancel modal */}
       {showCancelModal && (
         <div className="modal-overlay" onClick={() => setShowCancelModal(false)}>
