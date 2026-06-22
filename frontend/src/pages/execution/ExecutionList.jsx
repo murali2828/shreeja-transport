@@ -13,6 +13,7 @@ export default function ExecutionList() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [date, setDate] = useState(new Date().toISOString().slice(0,10));
+  const [search, setSearch] = useState('');
   const [cancelReason, setCancelReason] = useState('');
   const [cancelTarget, setCancelTarget] = useState(null); // { execId, planId, tripNo }
 
@@ -58,18 +59,25 @@ export default function ExecutionList() {
 
   const execMap = Object.fromEntries(execs.map(e => [e.trip_plan_id, e]));
 
-  // Filter out cancelled plans from the list
   const visiblePlans = plans.filter(p => {
     const exec = execMap[p.id];
-    return !exec || exec.status !== 'cancelled';
+    if (exec?.status === 'cancelled') return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return p.tanker_number?.toLowerCase().includes(q) || p.route_name?.toLowerCase().includes(q);
   });
 
   return (
     <div className="space-y-4 max-w-5xl">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center gap-3 justify-between">
         <h2 className="page-title">Active Trips</h2>
-        <input type="date" className="input py-1.5 text-sm" value={date}
-          onChange={e => setDate(e.target.value)}/>
+        <div className="flex items-center gap-2">
+          <input type="text" placeholder="Search route or tanker…"
+            className="input py-1.5 text-sm w-52"
+            value={search} onChange={e => setSearch(e.target.value)}/>
+          <input type="date" className="input py-1.5 text-sm" value={date}
+            onChange={e => setDate(e.target.value)}/>
+        </div>
       </div>
 
       <div className="card overflow-hidden">
@@ -80,8 +88,8 @@ export default function ExecutionList() {
                 <th className="table-th">Trip</th>
                 <th className="table-th">Tanker</th>
                 <th className="table-th">Delivery Point</th>
+                <th className="table-th">Route</th>
                 <th className="table-th">Shift</th>
-                <th className="table-th">Driver</th>
                 <th className="table-th text-right">Exp Qty (L)</th>
                 <th className="table-th text-right">KM</th>
                 <th className="table-th">Execution Status</th>
@@ -104,8 +112,8 @@ export default function ExecutionList() {
                     <td className="table-td font-bold text-[#0078d4]">#{p.trip_no}</td>
                     <td className="table-td font-mono text-xs">{p.tanker_number}</td>
                     <td className="table-td text-xs">{p.delivery_point_name || '—'}</td>
+                    <td className="table-td text-xs text-gray-600">{p.route_name || '—'}</td>
                     <td className="table-td">{p.shifts_milk || '—'}</td>
-                    <td className="table-td text-xs">{p.driver_name || '—'}</td>
                     <td className="table-td text-right">{parseFloat(p.expected_total_qty||0).toLocaleString()}</td>
                     <td className="table-td text-right">{p.expected_km || '—'}</td>
                     <td className="table-td">
