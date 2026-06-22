@@ -384,28 +384,48 @@ export default function ExecutionForm() {
   };
 
   const insertRowAfter = (idx) => {
+    // The new row is inserted at 0-based position idx+1.
+    // All rows previously at positions > idx get their seq_no bumped by 1.
+    // Shift rows whose bmcu_seq_no was > idx+1 must also be incremented.
+    const insertedAfterSeq = idx + 1; // 1-based seq_no of the row we insert after
     setBmcuRows(prev => {
       const next = [...prev];
       next.splice(idx + 1, 0, makeEmptyRow(null, 0));
       return next.map((r, i) => ({ ...r, seq_no: i + 1 }));
     });
+    setShiftRows(prev =>
+      prev.map(sr =>
+        sr.bmcu_seq_no > insertedAfterSeq
+          ? { ...sr, bmcu_seq_no: sr.bmcu_seq_no + 1 }
+          : sr
+      )
+    );
   };
 
   const reorderRows = (fromIdx, toIdx) => {
     if (fromIdx === toIdx) return;
+    // Capture old seq_nos before reorder
+    const oldSeqs = bmcuRows.filter(r => !r.is_deleted).map(r => r.seq_no);
     setBmcuRows(prev => {
       const next = [...prev];
       const [moved] = next.splice(fromIdx, 1);
       next.splice(toIdx, 0, moved);
       return next.map((r, i) => ({ ...r, seq_no: i + 1 }));
     });
-    // remap shift rows to follow their BMCU
+    // Build a mapping from old seq_no → new seq_no and remap shift rows
     setShiftRows(prev => {
-      const visibleBefore = bmcuRows.filter(r => !r.is_deleted);
-      const movedSeq = visibleBefore[fromIdx]?.seq_no;
-      const targetSeq = visibleBefore[toIdx]?.seq_no;
-      if (!movedSeq || !targetSeq) return prev;
-      return prev; // seq_no remapping handled by save
+      // After reorder, position i gets the old row that was at oldIdx
+      const reordered = [...oldSeqs];
+      const [movedSeq] = reordered.splice(fromIdx, 1);
+      reordered.splice(toIdx, 0, movedSeq);
+      // reordered[i] = old seq_no that is now at new seq_no (i+1)
+      const oldToNew = {};
+      reordered.forEach((oldSeq, i) => { oldToNew[oldSeq] = i + 1; });
+      return prev.map(sr =>
+        oldToNew[sr.bmcu_seq_no] != null
+          ? { ...sr, bmcu_seq_no: oldToNew[sr.bmcu_seq_no] }
+          : sr
+      );
     });
   };
 
