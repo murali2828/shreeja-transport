@@ -41,10 +41,11 @@ export default function AcknowledgementForm() {
     setChambers(prev => prev.map((c, i) => {
       if (i !== idx) return c;
       const updated = { ...c, [field]: val };
-      if (field === 'qty_litres') {
-        updated.qty_kgs = val ? +(parseFloat(val) * KG).toFixed(4) : '';
-        if (c.fat_pct) updated.kg_fat = +(updated.qty_kgs * parseFloat(c.fat_pct) / 100).toFixed(4);
-        if (c.snf_pct) updated.kg_snf = +(updated.qty_kgs * parseFloat(c.snf_pct) / 100).toFixed(4);
+      if (field === 'qty_kgs') {
+        // Qty Litres = Qty Kgs ÷ 1.028 (auto-calculated, read-only)
+        updated.qty_litres = val ? +(parseFloat(val) / KG).toFixed(2) : '';
+        if (c.fat_pct) updated.kg_fat = +(parseFloat(val) * parseFloat(c.fat_pct) / 100).toFixed(4);
+        if (c.snf_pct) updated.kg_snf = +(parseFloat(val) * parseFloat(c.snf_pct) / 100).toFixed(4);
       }
       if (field === 'fat_pct' && updated.qty_kgs)
         updated.kg_fat = +(parseFloat(updated.qty_kgs) * parseFloat(val) / 100).toFixed(4);
@@ -108,8 +109,8 @@ export default function AcknowledgementForm() {
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[
-                  { label:'Qty Litres',  field:'qty_litres',  type:'number' },
-                  { label:'Qty Kgs',     field:'qty_kgs',     type:'number', readOnly:true },
+                  { label:'Qty Kgs',     field:'qty_kgs',     type:'number' },
+                  { label:'Qty Litres (auto)',  field:'qty_litres',  type:'number', readOnly:true },
                   { label:'Fat %',       field:'fat_pct',     type:'number' },
                   { label:'SNF %',       field:'snf_pct',     type:'number' },
                   { label:'Kg Fat',      field:'kg_fat',      type:'number', readOnly:true },
@@ -121,7 +122,7 @@ export default function AcknowledgementForm() {
                     <label className="label text-xs">{f.label}</label>
                     <input
                       type={f.type} step={f.type==='number'?'0.001':undefined}
-                      className={`input w-full py-1.5 text-sm ${f.readOnly?'bg-gray-50':''}`}
+                      className={`input w-full py-1.5 text-sm ${f.readOnly?'bg-gray-50 text-gray-500':''}`}
                       readOnly={!!f.readOnly}
                       value={ch[f.field] || ''}
                       onChange={e => updateChamber(i, f.field, e.target.value)}/>

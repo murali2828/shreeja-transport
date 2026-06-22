@@ -1,12 +1,14 @@
 // frontend/src/pages/execution/ClosedTrips.jsx
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { getExecutions } from '../../api/index';
 
 export default function ClosedTrips() {
   const today = new Date().toISOString().slice(0,10);
   const [from, setFrom] = useState(today);
   const [to,   setTo]   = useState(today);
+  const navigate = useNavigate();
 
   const { data: execs = [], isLoading } = useQuery({
     queryKey: ['executions', 'closed', from, to],
@@ -15,10 +17,6 @@ export default function ClosedTrips() {
 
   const totalLitres = execs.reduce((s,e) => s + parseFloat(e.total_qty_litres||0), 0);
   const totalKgs    = execs.reduce((s,e) => s + parseFloat(e.total_qty_kgs||0), 0);
-  const totalCost   = execs.reduce((s,e) => {
-    // cost from plan: km × rate
-    return s; // not stored on execution
-  }, 0);
 
   return (
     <div className="space-y-4 max-w-5xl">
@@ -36,9 +34,9 @@ export default function ClosedTrips() {
       {execs.length > 0 && (
         <div className="grid grid-cols-3 gap-3">
           {[
-            { label:'Total Trips', value: execs.length, color:'blue' },
-            { label:'Total Litres', value: totalLitres.toLocaleString(), color:'green' },
-            { label:'Total Kgs', value: totalKgs.toFixed(0), color:'purple' },
+            { label:'Total Trips',  value: execs.length },
+            { label:'Total Litres', value: totalLitres.toLocaleString() },
+            { label:'Total Kgs',    value: totalKgs.toFixed(0) },
           ].map(s => (
             <div key={s.label} className="card p-3 text-center">
               <div className="text-xl font-bold text-gray-800">{s.value}</div>
@@ -75,7 +73,9 @@ export default function ClosedTrips() {
                 </td></tr>
               )}
               {execs.map(e => (
-                <tr key={e.id} className="hover:bg-gray-50 border-b border-gray-50">
+                <tr key={e.id}
+                  className="hover:bg-blue-50 border-b border-gray-50 cursor-pointer"
+                  onClick={() => navigate(`/execution/${e.id}`)}>
                   <td className="table-td">{e.execution_date?.slice(0,10)}</td>
                   <td className="table-td font-bold text-[#0078d4]">#{e.trip_no}</td>
                   <td className="table-td font-mono text-xs">{e.tanker_number}</td>
@@ -95,3 +95,4 @@ export default function ClosedTrips() {
     </div>
   );
 }
+
