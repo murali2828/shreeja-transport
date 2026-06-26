@@ -63,6 +63,55 @@ router.get('/', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/plans/coverage?plan_for_date=YYYY-MM-DD
+router.get('/coverage', authenticate, async (req, res) => {
+  try {
+    const { plan_for_date } = req.query;
+    if (!plan_for_date) return res.status(400).json({ error: 'plan_for_date required' });
+
+    // Total non-deleted plans for date
+    const plansRes = await query(
+      `SELECT COUNT(*) AS total_plans FROM trip_plans WHERE plan_for_date=$1 AND status != 'deleted'`,
+      [plan_for_date]
+    );
+
+    // Active BMCUs covered by at least one plan that day
+    const coveredRes = await query(
+      `SELECT COUNT(DISTINCT tpb.bmcu_id) AS covered_count
+       FROM trip_plan_bmcus tpb
+       JOIN trip_plans tp ON tp.id = tpb.trip_plan_id
+       JOIN bmcus b ON b.id = tpb.bmcu_id
+       WHERE tp.plan_for_date=$1 AND tp.status != 'deleted' AND b.is_active = TRUE`,
+      [plan_for_date]
+    );
+
+    // Active BMCUs NOT covered that day (missed)
+    const missedRes = await query(
+      `SELECT b.id, b.bmcu_code, b.bmcu_name, b.district
+       FROM bmcus b
+       WHERE b.is_active = TRUE
+         AND b.id NOT IN (
+           SELECT DISTINCT tpb.bmcu_id
+           FROM trip_plan_bmcus tpb
+           JOIN trip_plans tp ON tp.id = tpb.trip_plan_id
+           WHERE tp.plan_for_date=$1 AND tp.status != 'deleted'
+         )
+       ORDER BY b.bmcu_code`,
+      [plan_for_date]
+    );
+
+    const totalActiveBmcus = parseInt(coveredRes.rows[0].covered_count) + missedRes.rows.length;
+
+    res.json({
+      total_plans: parseInt(plansRes.rows[0].total_plans),
+      bmcus_covered: parseInt(coveredRes.rows[0].covered_count),
+      bmcus_missed: missedRes.rows.length,
+      total_active_bmcus: totalActiveBmcus,
+      missed_list: missedRes.rows,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/plans/:id
 router.get('/:id', authenticate, async (req, res) => {
   try {

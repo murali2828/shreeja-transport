@@ -1,10 +1,10 @@
 // frontend/src/pages/planning/TripPlanList.jsx
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Download, Upload, Send, Trash2, Edit2, Zap, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getPlans, deletePlan, publishPlans, uploadPlans, downloadPlanTemplate } from '../../api/index';
+import { getPlans, deletePlan, publishPlans, uploadPlans, downloadPlanTemplate, getPlanCoverage } from '../../api/index';
 
 export default function TripPlanList() {
   const navigate = useNavigate();
@@ -15,10 +15,17 @@ export default function TripPlanList() {
   const [deleteTarget, setDeleteTarget] = useState(null); // { plan, force }
   const [deleteReason, setDeleteReason] = useState('');
   const [uploadErrors, setUploadErrors] = useState([]);
+  const [showMissed, setShowMissed] = useState(false);
 
   const { data: plans = [], isLoading } = useQuery({
     queryKey: ['plans', dateFilter, statusFilter],
     queryFn:  () => getPlans({ plan_for_date: dateFilter || undefined, status: statusFilter || undefined }).then(r => r.data)
+  });
+
+  const { data: coverage } = useQuery({
+    queryKey: ['plan-coverage', dateFilter],
+    queryFn: () => dateFilter ? getPlanCoverage(dateFilter).then(r => r.data) : Promise.resolve(null),
+    enabled: !!dateFilter,
   });
 
   const { data: deletedPlans = [] } = useQuery({
@@ -35,6 +42,7 @@ export default function TripPlanList() {
       setDeleteReason('');
       qc.invalidateQueries(['plans']);
       qc.invalidateQueries(['plans-deleted']);
+      qc.invalidateQueries(['plan-coverage']);
     },
     onError: (e) => {
       const data = e.response?.data;
@@ -49,7 +57,7 @@ export default function TripPlanList() {
 
   const publishMut = useMutation({
     mutationFn: () => publishPlans(dateFilter),
-    onSuccess: (r) => { toast.success(`${r.data.published} plan(s) published`); qc.invalidateQueries(['plans']); },
+    onSuccess: (r) => { toast.success(`${r.data.published} plan(s) published`); qc.invalidateQueries(['plans']); qc.invalidateQueries(['plan-coverage']); },
     onError: (e) => toast.error(e.response?.data?.error || 'Publish failed'),
   });
 
@@ -76,6 +84,7 @@ export default function TripPlanList() {
         }
       }
       qc.invalidateQueries(['plans']);
+      qc.invalidateQueries(['plan-coverage']);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Upload failed');
     }
@@ -237,6 +246,45 @@ export default function TripPlanList() {
           </div>
         )}
       </div>
+
+      {/* Coverage summary */}
+      {coverage && dateFilter && (
+        <div className="grid grid-cols-3 gap-3">
+          <div className="card p-4 text-center border-l-4 border-[#005ba3]">
+            <div className="text-2xl font-bold text-[#005ba3]">{coverage.total_plans}</div>
+            <div className="text-xs text-gray-500 mt-0.5">Trips Planned</div>
+          </div>
+          <div className="card p-4 text-center border-l-4 border-green-500">
+            <div className="text-2xl font-bold text-green-600">{coverage.bmcus_covered}</div>
+            <div className="text-xs text-gray-500 mt-0.5">BMCUs Covered</div>
+            <div className="text-xs text-gray-400">of {coverage.total_active_bmcus} active</div>
+          </div>
+          <div className={`card p-4 text-center border-l-4 ${coverage.bmcus_missed > 0 ? 'border-red-400' : 'border-gray-200'}`}>
+            <button className="w-full" onClick={() => coverage.bmcus_missed > 0 && setShowMissed(v => !v)}>
+              <div className={`text-2xl font-bold ${coverage.bmcus_missed > 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                {coverage.bmcus_missed}
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5 flex items-center justify-center gap-1">
+                BMCUs Missed
+                {coverage.bmcus_missed > 0 && (
+                  showMissed ? <ChevronDown size={12}/> : <ChevronRight size={12}/>
+                )}
+              </div>
+            </button>
+            {showMissed && coverage.missed_list?.length > 0 && (
+              <div className="mt-2 text-left max-h-36 overflow-y-auto border-t pt-2">
+                {coverage.missed_list.map(b => (
+                  <div key={b.id} className="text-xs text-red-600 py-0.5">
+                    <span className="font-mono font-medium">{b.bmcu_code}</span>
+                    {' — '}{b.bmcu_name}
+                    {b.district && <span className="text-gray-400"> ({b.district})</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Upload errors */}
       {uploadErrors.length > 0 && (

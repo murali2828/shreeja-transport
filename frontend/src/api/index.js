@@ -71,6 +71,7 @@ export const deleteEmailConfig  = (id)    => api.delete(`/masters/email-config/$
 
 // ── Plans ─────────────────────────────────────────────────────────────────────
 export const getPlans      = (p)     => api.get('/plans', { params: p });
+export const getPlanCoverage = (date) => api.get('/plans/coverage', { params: { plan_for_date: date } });
 export const getPlan       = (id)    => api.get(`/plans/${id}`);
 export const createPlan    = (d)     => api.post('/plans', d);
 export const updatePlan    = (id, d) => api.put(`/plans/${id}`, d);
