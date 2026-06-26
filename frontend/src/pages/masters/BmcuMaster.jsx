@@ -14,24 +14,30 @@ export default function BmcuMaster() {
   const [form, setForm]   = useState(EMPTY);
   const [search, setSearch] = useState('');
   const [stateFilter, setStateFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active');
 
   const { data: bmcus = [], isLoading } = useQuery({
-    queryKey: ['bmcus'],
-    queryFn:  () => getBmcus().then(r => r.data),
+    queryKey: ['bmcus', 'all'],
+    queryFn:  () => getBmcus({ all: 'true' }).then(r => r.data),
   });
+
+  const activeCount   = bmcus.filter(b => b.is_active).length;
+  const inactiveCount = bmcus.filter(b => !b.is_active).length;
 
   const states = useMemo(() => [...new Set(bmcus.map(b => b.state).filter(Boolean))].sort(), [bmcus]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return bmcus.filter(b => {
+      if (statusFilter === 'active'   && !b.is_active) return false;
+      if (statusFilter === 'inactive' &&  b.is_active) return false;
       if (stateFilter && b.state !== stateFilter) return false;
       if (!q) return true;
       return b.bmcu_code?.toLowerCase().includes(q) ||
              b.bmcu_name?.toLowerCase().includes(q) ||
              b.district?.toLowerCase().includes(q);
     });
-  }, [bmcus, search, stateFilter]);
+  }, [bmcus, search, stateFilter, statusFilter]);
 
   const openAdd  = () => { setForm(EMPTY); setModal('add'); };
   const openEdit = (row) => { setForm({ ...row, address: row.address||'', district: row.district||'', state: row.state||'', contact: row.contact||'', latitude: row.latitude||'', longitude: row.longitude||'' }); setModal(row); };
@@ -66,8 +72,23 @@ export default function BmcuMaster() {
         addLabel="Add BMCU"
       />
 
+      {/* Count badges */}
+      <div className="flex gap-3 text-xs">
+        <span className="px-3 py-1 rounded-full bg-green-100 text-green-700 font-medium">{activeCount} Active</span>
+        <span className="px-3 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">{inactiveCount} Inactive</span>
+        {(search || stateFilter || statusFilter !== 'active') && (
+          <span className="px-3 py-1 rounded-full bg-blue-50 text-blue-600 font-medium">{filtered.length} shown</span>
+        )}
+      </div>
+
       {/* Filters */}
       <div className="card p-3 flex flex-wrap gap-3 items-center">
+        <select className="input py-1.5 text-sm w-28" value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+          <option value="all">All</option>
+        </select>
         <div className="relative w-56">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"/>
           <input className="input pl-8 py-1.5 text-sm w-full" placeholder="Search code, name, district…"
@@ -78,9 +99,7 @@ export default function BmcuMaster() {
           <option value="">All States</option>
           {states.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        <span className="ml-auto text-xs text-gray-400">
-          {filtered.length} of {bmcus.length}
-        </span>
+        <span className="ml-auto text-xs text-gray-400">{filtered.length} of {bmcus.length}</span>
       </div>
 
       <div className="card overflow-hidden">
@@ -101,7 +120,7 @@ export default function BmcuMaster() {
               {isLoading && <LoadingState/>}
               {!isLoading && filtered.length === 0 && <EmptyState message="No BMCUs found."/>}
               {filtered.map(b => (
-                <tr key={b.id} className="hover:bg-gray-50 border-b border-gray-50">
+                <tr key={b.id} className={`hover:bg-gray-50 border-b border-gray-50 ${!b.is_active ? 'opacity-60' : ''}`}>
                   <td className="table-td font-mono font-semibold text-[#005ba3]">{b.bmcu_code}</td>
                   <td className="table-td font-medium">{b.bmcu_name}</td>
                   <td className="table-td text-gray-600">{b.district || '—'}</td>

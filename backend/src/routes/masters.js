@@ -65,10 +65,11 @@ router.delete('/tankers/:id', authenticate, authorize('admin'), async (req, res)
 // ─── BMCUs ────────────────────────────────────────────────────────────────────
 router.get('/bmcus', authenticate, async (req, res) => {
   try {
+    const includeAll = req.query.all === 'true';
     const r = await query(
       `SELECT id, bmcu_code, bmcu_name, address, district, state, contact,
               latitude, longitude, is_active, created_at, updated_at
-       FROM bmcus WHERE is_active=TRUE ORDER BY bmcu_code`
+       FROM bmcus ${includeAll ? '' : 'WHERE is_active=TRUE '}ORDER BY bmcu_code`
     );
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }

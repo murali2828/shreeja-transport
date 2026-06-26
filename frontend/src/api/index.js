@@ -39,7 +39,7 @@ export const createTanker       = (d)     => api.post('/masters/tankers', d);
 export const updateTanker       = (id, d) => api.put(`/masters/tankers/${id}`, d);
 export const deleteTanker       = (id)    => api.delete(`/masters/tankers/${id}`);
 
-export const getBmcus           = ()      => api.get('/masters/bmcus');
+export const getBmcus           = (params) => api.get('/masters/bmcus', { params });
 export const createBmcu         = (d)     => api.post('/masters/bmcus', d);
 export const updateBmcu         = (id, d) => api.put(`/masters/bmcus/${id}`, d);
 export const deleteBmcu         = (id)    => api.delete(`/masters/bmcus/${id}`);

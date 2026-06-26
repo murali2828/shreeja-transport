@@ -59,6 +59,9 @@ export default function TankerMaster() {
     onError:   (e) => toast.error(e.response?.data?.error || 'Delete failed'),
   });
 
+  const activeCount   = tankers.filter(t => t.is_active).length;
+  const inactiveCount = tankers.filter(t => !t.is_active).length;
+
   const filtered = tankers.filter(t => {
     if (statusFilter === 'active' && !t.is_active) return false;
     if (statusFilter === 'inactive' && t.is_active) return false;
@@ -82,6 +85,13 @@ export default function TankerMaster() {
         <div>
           <h2 className="text-lg font-semibold">Tanker Master</h2>
           <p className="text-xs" style={{ color: 'rgba(255,255,255,0.75)' }}>Manage tankers, capacities and per-km rates</p>
+          <div className="flex gap-2 mt-1">
+            <span className="px-2.5 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">{activeCount} Active</span>
+            <span className="px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600 text-xs font-medium">{inactiveCount} Inactive</span>
+            {(search || statusFilter !== 'active') && (
+              <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-600 text-xs font-medium">{filtered.length} shown</span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <select
