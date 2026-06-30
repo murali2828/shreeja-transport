@@ -317,7 +317,14 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
               const rows = entriesForBmcu.filter(e => e.kind === 'balance_milk');
               if (!rows.length) return null;
               return (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6, tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col style={{ width: '240px' }}/>
+                    <col style={{ width: '130px' }}/>
+                    <col style={{ width: '120px' }}/>
+                    <col style={{ width: '120px' }}/>
+                    <col style={{ width: '32px' }}/>
+                  </colgroup>
                   <thead>
                     <tr style={{ color: '#0a7d3c', borderBottom: '1px solid #cfe9d8' }}>
                       <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Balance Milk</th>
@@ -371,7 +378,14 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
               const rows = entriesForBmcu.filter(e => e.kind === 'new_mpp');
               if (!rows.length) return null;
               return (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6, tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col style={{ width: '240px' }}/>
+                    <col style={{ width: '130px' }}/>
+                    <col style={{ width: '120px' }}/>
+                    <col style={{ width: '120px' }}/>
+                    <col style={{ width: '32px' }}/>
+                  </colgroup>
                   <thead>
                     <tr style={{ color: '#9a5b00', borderBottom: '1px solid #f0dcc0' }}>
                       <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>New MPP</th>
@@ -419,7 +433,14 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
               const rows = entriesForBmcu.filter(e => e.kind === 'internal_shifting');
               if (!rows.length) return null;
               return (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6, tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col style={{ width: '240px' }}/>
+                    <col style={{ width: '130px' }}/>
+                    <col style={{ width: '120px' }}/>
+                    <col style={{ width: '120px' }}/>
+                    <col style={{ width: '32px' }}/>
+                  </colgroup>
                   <thead>
                     <tr style={{ color: '#6b21a8', borderBottom: '1px solid #e6d6f5' }}>
                       <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Internal Shifting — Source Plant</th>
