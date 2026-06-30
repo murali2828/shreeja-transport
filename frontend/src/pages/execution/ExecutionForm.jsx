@@ -474,15 +474,15 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                   className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1">
                   <Plus size={9}/> Add Shift
                 </button>
-                <button onClick={() => onAddEntry('balance_milk', row.seq_no)}
+                <button onClick={() => onAddEntry('balance_milk', row.seq_no, row.bmcu_id)}
                   className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-green-700 border-green-300">
                   <Plus size={9}/> Balance Milk
                 </button>
-                <button onClick={() => onAddEntry('new_mpp', row.seq_no)}
+                <button onClick={() => onAddEntry('new_mpp', row.seq_no, row.bmcu_id)}
                   className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-amber-700 border-amber-300">
                   <Plus size={9}/> New MPP
                 </button>
-                <button onClick={() => onAddEntry('internal_shifting', row.seq_no)}
+                <button onClick={() => onAddEntry('internal_shifting', row.seq_no, row.bmcu_id)}
                   className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-purple-700 border-purple-300">
                   <Plus size={9}/> Internal Shifting
                 </button>
@@ -657,9 +657,10 @@ export default function ExecutionForm() {
   const deleteShiftRow = (key) =>
     setShiftRows(prev => prev.filter(r => r._key !== key));
 
-  const addEntry = (kind, seqNo) =>
+  const addEntry = (kind, seqNo, bmcuId) =>
     setEntries(prev => [...prev, {
       bmcu_seq_no: seqNo,
+      bmcu_id: bmcuId || null,
       kind,
       category: kind === 'balance_milk' ? BALANCE_CATEGORIES[0] : null,
       source_bmcu_id: null,
@@ -680,7 +681,7 @@ export default function ExecutionForm() {
       start_point_id: startPointId || null,
       bmcus: bmcuRows.filter(r => r.bmcu_id), // skip rows where BMCU not yet selected
       shift_rows: shiftRows.map(({ _key, ...r }) => r),
-      entries: entries.map(({ _key, source_bmcu_code, source_bmcu_name, ...r }) => r)
+      entries: entries.map(({ _key, source_bmcu_code, source_bmcu_name, bmcu_code, bmcu_name, ...r }) => r)
     }),
     onSuccess: () => { toast.success('Saved'); qc.invalidateQueries(['execution', id]); },
     onError: (e) => toast.error(e.response?.data?.error || 'Save failed'),

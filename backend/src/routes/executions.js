@@ -14,6 +14,7 @@ const KG_FACTOR = 1.0285;
         id             SERIAL PRIMARY KEY,
         execution_id   INTEGER NOT NULL REFERENCES trip_executions(id) ON DELETE CASCADE,
         bmcu_seq_no    INTEGER NOT NULL,
+        bmcu_id        INTEGER REFERENCES bmcus(id),
         kind           TEXT NOT NULL,            -- 'balance_milk' | 'new_mpp' | 'internal_shifting'
         category       TEXT,                     -- balance_milk: 'Balance milk' | 'Left Over milk' | 'Lifted milk'
         source_bmcu_id INTEGER REFERENCES bmcus(id),
@@ -23,7 +24,9 @@ const KG_FACTOR = 1.0285;
         created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await query(`ALTER TABLE trip_execution_bmcu_entries ADD COLUMN IF NOT EXISTS bmcu_id INTEGER REFERENCES bmcus(id)`);
     await query(`CREATE INDEX IF NOT EXISTS tebe_exec_idx ON trip_execution_bmcu_entries (execution_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS tebe_bmcu_idx ON trip_execution_bmcu_entries (bmcu_id)`);
   } catch (err) {
     console.error('Migration error (trip_execution_bmcu_entries):', err.message);
   }
@@ -105,8 +108,11 @@ router.get('/:id', authenticate, async (req, res) => {
     );
 
     const entries = await query(`
-      SELECT e.*, sb.bmcu_code AS source_bmcu_code, sb.bmcu_name AS source_bmcu_name
+      SELECT e.*,
+        b.bmcu_code  AS bmcu_code,  b.bmcu_name  AS bmcu_name,
+        sb.bmcu_code AS source_bmcu_code, sb.bmcu_name AS source_bmcu_name
       FROM trip_execution_bmcu_entries e
+      LEFT JOIN bmcus b  ON b.id  = e.bmcu_id
       LEFT JOIN bmcus sb ON sb.id = e.source_bmcu_id
       WHERE e.execution_id=$1 ORDER BY e.bmcu_seq_no, e.id`,
       [req.params.id]
@@ -245,15 +251,22 @@ router.put('/:id', authenticate, async (req, res) => {
 
     // Save sub-entries (balance milk / new MPP / internal shifting)
     if (entries !== undefined) {
+      // Map seq_no → bmcu_id from the submitted BMCU rows so each entry is tied
+      // to its BMCU line item (durable across reorders, used for reports later).
+      const seqToBmcu = {};
+      for (const bm of (bmcus || [])) {
+        if (bm.bmcu_id && bm.seq_no != null) seqToBmcu[bm.seq_no] = bm.bmcu_id;
+      }
       await client.query(
         'DELETE FROM trip_execution_bmcu_entries WHERE execution_id=$1', [req.params.id]
       );
       for (const e of (entries || [])) {
+        const bmcuId = seqToBmcu[e.bmcu_seq_no] || e.bmcu_id || null;
         await client.query(
           `INSERT INTO trip_execution_bmcu_entries
-             (execution_id, bmcu_seq_no, kind, category, source_bmcu_id, qty_litres, fat_pct, snf_pct)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [req.params.id, e.bmcu_seq_no, e.kind, e.category||null,
+             (execution_id, bmcu_seq_no, bmcu_id, kind, category, source_bmcu_id, qty_litres, fat_pct, snf_pct)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [req.params.id, e.bmcu_seq_no, bmcuId, e.kind, e.category||null,
            e.source_bmcu_id||null, e.qty_litres||null, e.fat_pct||null, e.snf_pct||null]
         );
       }
