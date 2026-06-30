@@ -6,6 +6,29 @@ const { authenticate } = require('../middleware/auth');
 
 const KG_FACTOR = 1.0285;
 
+// Ensure the sub-entries table (balance milk / new MPP / internal shifting) exists.
+(async () => {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS trip_execution_bmcu_entries (
+        id             SERIAL PRIMARY KEY,
+        execution_id   INTEGER NOT NULL REFERENCES trip_executions(id) ON DELETE CASCADE,
+        bmcu_seq_no    INTEGER NOT NULL,
+        kind           TEXT NOT NULL,            -- 'balance_milk' | 'new_mpp' | 'internal_shifting'
+        category       TEXT,                     -- balance_milk: 'Balance milk' | 'Left Over milk' | 'Lifted milk'
+        source_bmcu_id INTEGER REFERENCES bmcus(id),
+        qty_litres     NUMERIC,
+        fat_pct        NUMERIC,
+        snf_pct        NUMERIC,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS tebe_exec_idx ON trip_execution_bmcu_entries (execution_id)`);
+  } catch (err) {
+    console.error('Migration error (trip_execution_bmcu_entries):', err.message);
+  }
+})();
+
 function calcKgs(litres)          { return litres ? parseFloat(litres) * KG_FACTOR : 0; }
 function calcKgFat(kgs, fatPct)   { return kgs && fatPct ? parseFloat(kgs) * parseFloat(fatPct) / 100 : 0; }
 function calcKgSnf(kgs, snfPct)   { return kgs && snfPct ? parseFloat(kgs) * parseFloat(snfPct) / 100 : 0; }
@@ -81,7 +104,15 @@ router.get('/:id', authenticate, async (req, res) => {
       [req.params.id]
     );
 
-    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows });
+    const entries = await query(`
+      SELECT e.*, sb.bmcu_code AS source_bmcu_code, sb.bmcu_name AS source_bmcu_name
+      FROM trip_execution_bmcu_entries e
+      LEFT JOIN bmcus sb ON sb.id = e.source_bmcu_id
+      WHERE e.execution_id=$1 ORDER BY e.bmcu_seq_no, e.id`,
+      [req.params.id]
+    );
+
+    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entries.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -140,7 +171,7 @@ router.post('/', authenticate, async (req, res) => {
 
 // PUT /api/executions/:id  — save BMCU data, recalc totals
 router.put('/:id', authenticate, async (req, res) => {
-  const { actual_km, delivery_point_id, start_point_id, bmcus, shift_rows } = req.body;
+  const { actual_km, delivery_point_id, start_point_id, bmcus, shift_rows, entries } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -208,6 +239,22 @@ router.put('/:id', authenticate, async (req, res) => {
            VALUES ($1,$2,$3,$4,$5,$6,$7)`,
           [req.params.id, sr.bmcu_seq_no, sr.milk_date||null, sr.shift||null,
            sr.rmrd_qty||null, sr.rmrd_fat_pct||null, sr.rmrd_snf_pct||null]
+        );
+      }
+    }
+
+    // Save sub-entries (balance milk / new MPP / internal shifting)
+    if (entries !== undefined) {
+      await client.query(
+        'DELETE FROM trip_execution_bmcu_entries WHERE execution_id=$1', [req.params.id]
+      );
+      for (const e of (entries || [])) {
+        await client.query(
+          `INSERT INTO trip_execution_bmcu_entries
+             (execution_id, bmcu_seq_no, kind, category, source_bmcu_id, qty_litres, fat_pct, snf_pct)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [req.params.id, e.bmcu_seq_no, e.kind, e.category||null,
+           e.source_bmcu_id||null, e.qty_litres||null, e.fat_pct||null, e.snf_pct||null]
         );
       }
     }

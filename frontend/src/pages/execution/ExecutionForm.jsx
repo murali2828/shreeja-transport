@@ -17,6 +17,7 @@ const calc = {
 const DESCRIPTIONS = ['RMRD', 'Balance Milk', 'Internal Shifting'];
 const CHAMBERS     = ['FC', 'MC', 'BC'];
 const SHIFTS       = ['AM', 'PM'];
+const BALANCE_CATEGORIES = ['Balance milk', 'Left Over milk', 'Lifted milk'];
 
 function ChamberDropdown({ value, onChange, disabled }) {
   const [open, setOpen] = useState(false);
@@ -110,8 +111,56 @@ function BmcuSearchDropdown({ bmcuList, onSelect }) {
   );
 }
 
+// Searchable BMCU selector for the "source plant" field on internal-shifting entries.
+function SourcePlantSelect({ bmcuList, code, onSelect, disabled }) {
+  const [q, setQ]       = useState('');
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = (q.trim()
+    ? bmcuList.filter(b =>
+        b.bmcu_code.toLowerCase().includes(q.toLowerCase()) ||
+        b.bmcu_name.toLowerCase().includes(q.toLowerCase()))
+    : bmcuList).slice(0, 20);
+
+  return (
+    <div ref={ref} className="relative" style={{ minWidth: 140 }}>
+      <input
+        type="text"
+        disabled={disabled}
+        className="input py-0 px-1 text-xs w-full"
+        placeholder="Search BMCU…"
+        value={open ? q : (code || '')}
+        onChange={e => { setQ(e.target.value); setOpen(true); }}
+        onFocus={() => { setQ(''); setOpen(true); }}
+      />
+      {open && !disabled && (
+        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-y-auto"
+          style={{ maxHeight: 200, minWidth: 200 }}>
+          {filtered.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">No results</div>}
+          {filtered.map(b => (
+            <div key={b.id}
+              className="px-3 py-1.5 text-xs cursor-pointer hover:bg-blue-50 flex gap-2"
+              onMouseDown={() => { onSelect(b); setOpen(false); }}>
+              <span className="font-mono font-semibold text-[#0078d4]">{b.bmcu_code}</span>
+              <span className="text-gray-600 truncate">{b.bmcu_name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClosed,
                    shiftRowsForBmcu, onAddShiftRow, onUpdateShiftRow, onDeleteShiftRow, execDate,
+                   entriesForBmcu, onAddEntry, onUpdateEntry, onDeleteEntry,
                    onDragStart, onDragOver, onDrop, isDragOver }) {
   const u = (field, val) => onUpdate(idx, field, val);
   const kgs    = calc.kgs(row.qty_litres);
@@ -132,7 +181,7 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
     if (field === 'dps_qty_litres') onUpdate(idx, 'dps_qty_kgs', calc.kgs(val));
   };
 
-  const TOTAL_COLS = 14;
+  const TOTAL_COLS = 10;
 
   return (
     <>
@@ -182,37 +231,7 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
             value={row.snf_pct || ''} onChange={e => syncCalc('snf_pct', e.target.value)}/>
         </td>
         <td className="table-td">
-          <select className="input py-0.5 px-1 text-xs w-28" disabled={isClosed}
-            value={row.description || 'RMRD'} onChange={e => u('description', e.target.value)}>
-            {DESCRIPTIONS.map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </td>
-        {row.description === 'Internal Shifting' && (
-          <td className="table-td">
-            <select className="input py-0.5 px-1 text-xs w-32" disabled={isClosed}
-              value={row.source_bmcu_id || ''} onChange={e => u('source_bmcu_id', e.target.value)}>
-              <option value="">Source BMCU</option>
-              {bmcuList.map(b => <option key={b.id} value={b.id}>{b.bmcu_code}</option>)}
-            </select>
-          </td>
-        )}
-        <td className="table-td">
           <ChamberDropdown value={row.chamber} onChange={val => u('chamber', val)} disabled={isClosed}/>
-        </td>
-        <td className="table-td">
-          <input type="number" min="0" step="0.01" className="input py-0.5 px-1 text-xs w-20" disabled={isClosed}
-            value={row.dps_qty_litres || ''} onChange={e => syncCalc('dps_qty_litres', e.target.value)}
-            placeholder="DPS L"/>
-        </td>
-        <td className="table-td">
-          <input type="number" min="0" step="0.001" className="input py-0.5 px-1 text-xs w-16" disabled={isClosed}
-            value={row.dps_fat_pct || ''} onChange={e => u('dps_fat_pct', e.target.value)}
-            placeholder="Fat%"/>
-        </td>
-        <td className="table-td">
-          <input type="number" min="0" step="0.001" className="input py-0.5 px-1 text-xs w-16" disabled={isClosed}
-            value={row.dps_snf_pct || ''} onChange={e => u('dps_snf_pct', e.target.value)}
-            placeholder="SNF%"/>
         </td>
         <td className="table-td">
           <div className="flex gap-1">
@@ -293,11 +312,181 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                 </tbody>
               </table>
             )}
+            {/* Balance Milk entries */}
+            {(() => {
+              const rows = entriesForBmcu.filter(e => e.kind === 'balance_milk');
+              if (!rows.length) return null;
+              return (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6 }}>
+                  <thead>
+                    <tr style={{ color: '#0a7d3c', borderBottom: '1px solid #cfe9d8' }}>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Balance Milk</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Qty (L)</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Fat%</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>SNF%</th>
+                      <th style={{ width: 28 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(e => (
+                      <tr key={e._key} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '2px 4px' }}>
+                          <select disabled={isClosed} className="input py-0 px-1 text-xs w-32"
+                            value={e.category || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'category', ev.target.value)}>
+                            {BALANCE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.01" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-20" value={e.qty_litres || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'qty_litres', ev.target.value)} placeholder="Qty"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.001" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-16" value={e.fat_pct || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'fat_pct', ev.target.value)} placeholder="Fat%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.001" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-16" value={e.snf_pct || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'snf_pct', ev.target.value)} placeholder="SNF%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          {!isClosed && (
+                            <button onClick={() => onDeleteEntry(e._key)} className="btn-danger btn-sm p-0.5" title="Remove">
+                              <Trash2 size={9}/>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              );
+            })()}
+
+            {/* New MPP entries */}
+            {(() => {
+              const rows = entriesForBmcu.filter(e => e.kind === 'new_mpp');
+              if (!rows.length) return null;
+              return (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6 }}>
+                  <thead>
+                    <tr style={{ color: '#9a5b00', borderBottom: '1px solid #f0dcc0' }}>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>New MPP</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Qty (L)</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Fat%</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>SNF%</th>
+                      <th style={{ width: 28 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(e => (
+                      <tr key={e._key} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '2px 4px', color: '#9a5b00', fontWeight: 600 }}>New MPP</td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.01" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-20" value={e.qty_litres || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'qty_litres', ev.target.value)} placeholder="Qty"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.001" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-16" value={e.fat_pct || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'fat_pct', ev.target.value)} placeholder="Fat%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.001" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-16" value={e.snf_pct || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'snf_pct', ev.target.value)} placeholder="SNF%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          {!isClosed && (
+                            <button onClick={() => onDeleteEntry(e._key)} className="btn-danger btn-sm p-0.5" title="Remove">
+                              <Trash2 size={9}/>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              );
+            })()}
+
+            {/* Internal Shifting entries */}
+            {(() => {
+              const rows = entriesForBmcu.filter(e => e.kind === 'internal_shifting');
+              if (!rows.length) return null;
+              return (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6 }}>
+                  <thead>
+                    <tr style={{ color: '#6b21a8', borderBottom: '1px solid #e6d6f5' }}>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Internal Shifting — Source Plant</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Qty (L)</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Fat%</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>SNF%</th>
+                      <th style={{ width: 28 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(e => (
+                      <tr key={e._key} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '2px 4px' }}>
+                          <SourcePlantSelect bmcuList={bmcuList} code={e.source_bmcu_code} disabled={isClosed}
+                            onSelect={bm => {
+                              onUpdateEntry(e._key, 'source_bmcu_id', bm.id);
+                              onUpdateEntry(e._key, 'source_bmcu_code', bm.bmcu_code);
+                            }}/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.01" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-20" value={e.qty_litres || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'qty_litres', ev.target.value)} placeholder="Qty"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.001" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-16" value={e.fat_pct || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'fat_pct', ev.target.value)} placeholder="Fat%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.001" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-16" value={e.snf_pct || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'snf_pct', ev.target.value)} placeholder="SNF%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          {!isClosed && (
+                            <button onClick={() => onDeleteEntry(e._key)} className="btn-danger btn-sm p-0.5" title="Remove">
+                              <Trash2 size={9}/>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              );
+            })()}
+
             {!isClosed && (
-              <button onClick={() => onAddShiftRow(row.seq_no, execDate)}
-                className="btn-secondary btn-sm mt-1 text-xs py-0.5 px-2 flex items-center gap-1">
-                <Plus size={9}/> Add Shift
-              </button>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                <button onClick={() => onAddShiftRow(row.seq_no, execDate)}
+                  className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1">
+                  <Plus size={9}/> Add Shift
+                </button>
+                <button onClick={() => onAddEntry('balance_milk', row.seq_no)}
+                  className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-green-700 border-green-300">
+                  <Plus size={9}/> Balance Milk
+                </button>
+                <button onClick={() => onAddEntry('new_mpp', row.seq_no)}
+                  className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-amber-700 border-amber-300">
+                  <Plus size={9}/> New MPP
+                </button>
+                <button onClick={() => onAddEntry('internal_shifting', row.seq_no)}
+                  className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-purple-700 border-purple-300">
+                  <Plus size={9}/> Internal Shifting
+                </button>
+              </div>
             )}
           </div>
         </td>
@@ -320,6 +509,7 @@ export default function ExecutionForm() {
   const [startPointId,     setStartPointId]     = useState('');
   const [bmcuRows,         setBmcuRows]         = useState([]);
   const [shiftRows,        setShiftRows]        = useState([]);
+  const [entries,          setEntries]          = useState([]);
   const [dragIdx,          setDragIdx]          = useState(null);
   const [dragOverIdx,      setDragOverIdx]      = useState(null);
 
@@ -350,6 +540,10 @@ export default function ExecutionForm() {
         ...sr,
         milk_date: sr.milk_date ? sr.milk_date.slice(0, 10) : '',
         _key: Date.now() + i
+      })));
+      setEntries((exec.entries || []).map((e, i) => ({
+        ...e,
+        _key: 'e' + Date.now() + i
       })));
     }
   }, [exec]);
@@ -397,6 +591,13 @@ export default function ExecutionForm() {
           : sr
       )
     );
+    setEntries(prev =>
+      prev.map(e =>
+        e.bmcu_seq_no > insertedAfterSeq
+          ? { ...e, bmcu_seq_no: e.bmcu_seq_no + 1 }
+          : e
+      )
+    );
   };
 
   const reorderRows = (fromIdx, toIdx) => {
@@ -424,6 +625,18 @@ export default function ExecutionForm() {
           : sr
       );
     });
+    setEntries(prev => {
+      const reordered = [...oldSeqs];
+      const [movedSeq] = reordered.splice(fromIdx, 1);
+      reordered.splice(toIdx, 0, movedSeq);
+      const oldToNew = {};
+      reordered.forEach((oldSeq, i) => { oldToNew[oldSeq] = i + 1; });
+      return prev.map(e =>
+        oldToNew[e.bmcu_seq_no] != null
+          ? { ...e, bmcu_seq_no: oldToNew[e.bmcu_seq_no] }
+          : e
+      );
+    });
   };
 
   const addShiftRow = (seqNo, execDate) => {
@@ -444,12 +657,30 @@ export default function ExecutionForm() {
   const deleteShiftRow = (key) =>
     setShiftRows(prev => prev.filter(r => r._key !== key));
 
+  const addEntry = (kind, seqNo) =>
+    setEntries(prev => [...prev, {
+      bmcu_seq_no: seqNo,
+      kind,
+      category: kind === 'balance_milk' ? BALANCE_CATEGORIES[0] : null,
+      source_bmcu_id: null,
+      source_bmcu_code: '',
+      qty_litres: '', fat_pct: '', snf_pct: '',
+      _key: 'e' + Date.now() + Math.random()
+    }]);
+
+  const updateEntry = (key, field, val) =>
+    setEntries(prev => prev.map(e => e._key === key ? { ...e, [field]: val } : e));
+
+  const deleteEntry = (key) =>
+    setEntries(prev => prev.filter(e => e._key !== key));
+
   const saveMut = useMutation({
     mutationFn: () => updateExecution(id, {
       actual_km: actualKm, delivery_point_id: deliveryPointId || null,
       start_point_id: startPointId || null,
       bmcus: bmcuRows.filter(r => r.bmcu_id), // skip rows where BMCU not yet selected
-      shift_rows: shiftRows.map(({ _key, ...r }) => r)
+      shift_rows: shiftRows.map(({ _key, ...r }) => r),
+      entries: entries.map(({ _key, source_bmcu_code, source_bmcu_name, ...r }) => r)
     }),
     onSuccess: () => { toast.success('Saved'); qc.invalidateQueries(['execution', id]); },
     onError: (e) => toast.error(e.response?.data?.error || 'Save failed'),
@@ -565,11 +796,11 @@ export default function ExecutionForm() {
           )}
         </div>
         <div className="overflow-x-scroll max-h-[55vh]">
-          <table className="text-xs" style={{ minWidth: '1100px' }}>
+          <table className="text-xs" style={{ minWidth: '760px' }}>
             <thead className="sticky top-0 bg-gray-50 border-b">
               <tr>
                 {['','#','Code','Name','Date','Dispatch Qty L','Dispatch Fat%','Dispatch SNF%',
-                  'Description','Chamber','DPS L','DPS Fat%','DPS SNF%',''].map((h,i) => (
+                  'Chamber',''].map((h,i) => (
                   <th key={i} className="table-th py-1.5 text-xs whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -587,6 +818,10 @@ export default function ExecutionForm() {
                     onAddShiftRow={addShiftRow}
                     onUpdateShiftRow={updateShiftRow}
                     onDeleteShiftRow={deleteShiftRow}
+                    entriesForBmcu={entries.filter(e => e.bmcu_seq_no === row.seq_no)}
+                    onAddEntry={addEntry}
+                    onUpdateEntry={updateEntry}
+                    onDeleteEntry={deleteEntry}
                     execDate={exec?.execution_date?.slice(0,10) || ''}
                     onDragStart={() => setDragIdx(i)}
                     onDragOver={() => setDragOverIdx(i)}
@@ -595,7 +830,7 @@ export default function ExecutionForm() {
                 )
               )}
               {visibleRows.length === 0 && (
-                <tr><td colSpan={17} className="table-td text-center py-8 text-gray-400">No BMCU rows</td></tr>
+                <tr><td colSpan={10} className="table-td text-center py-8 text-gray-400">No BMCU rows</td></tr>
               )}
             </tbody>
           </table>
