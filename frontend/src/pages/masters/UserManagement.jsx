@@ -15,7 +15,10 @@ const ROLE_COLORS = {
 };
 const ROLE_ICONS = { admin: Shield, planner: Settings, executor: User, viewer: User };
 
-const EMPTY = { username: '', email: '', full_name: '', role: 'executor', password: '', is_active: true };
+const EMPTY = { user_id: '', email: '', full_name: '', role: 'executor', password: '', is_active: true };
+
+// A User ID may be an email address or an alphanumeric handle — no spaces.
+const USER_ID_RE = /^[A-Za-z0-9._@+-]+$/;
 
 export default function UserManagement() {
   const qc = useQueryClient();
@@ -54,7 +57,9 @@ export default function UserManagement() {
     mutationFn: () => {
       if (!form.full_name || !form.email || !form.role) throw new Error('All fields required');
       if (modal === 'add' && !form.password) throw new Error('Password required for new users');
-      if (modal === 'add' && !form.username)  throw new Error('Username required');
+      if (modal === 'add' && !form.user_id)  throw new Error('User ID required');
+      if (form.user_id && !USER_ID_RE.test(form.user_id))
+        throw new Error('User ID may contain only letters, numbers, and . _ @ + - (no spaces)');
       const payload = { ...form };
       if (!payload.password) delete payload.password;
       return modal === 'add' ? createUser(payload) : updateUser(modal.id, payload);
@@ -95,7 +100,7 @@ export default function UserManagement() {
           <thead className="bg-gray-50 border-b">
             <tr>
               <th className="table-th">Full Name</th>
-              <th className="table-th">Username</th>
+              <th className="table-th">User ID</th>
               <th className="table-th">Email</th>
               <th className="table-th">Role</th>
               <th className="table-th">Status</th>
@@ -120,7 +125,7 @@ export default function UserManagement() {
                       )}
                     </div>
                   </td>
-                  <td className="table-td font-mono text-xs text-gray-600">@{u.username}</td>
+                  <td className="table-td font-mono text-xs text-gray-600">{u.user_id || u.username}</td>
                   <td className="table-td text-xs text-gray-600">{u.email}</td>
                   <td className="table-td">
                     <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLORS[u.role]}`}>
@@ -168,13 +173,11 @@ export default function UserManagement() {
                   <option value="viewer">Viewer</option>
                 </select>
               </Field>
-              {modal === 'add' && (
-                <Field label="Username" required>
-                  <input className="input w-full" placeholder="lowercase, no spaces"
-                    value={form.username}
-                    onChange={e => set('username', e.target.value.toLowerCase().replace(/\s/g,''))}/>
-                </Field>
-              )}
+              <Field label="User ID" required>
+                <input className="input w-full" placeholder="email or alphanumeric, no spaces"
+                  value={form.user_id || ''}
+                  onChange={e => set('user_id', e.target.value.replace(/\s/g,''))}/>
+              </Field>
               <Field label="Email" required>
                 <input type="email" className="input w-full" value={form.email}
                   onChange={e => set('email', e.target.value)}/>

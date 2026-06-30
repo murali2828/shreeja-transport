@@ -11,7 +11,7 @@ import { useAuth } from '../hooks/useAuth';
 export default function Login() {
   const navigate     = useNavigate();
   const { loginUser } = useAuth();
-  const [form, setForm]   = useState({ username: '', password: '' });
+  const [form, setForm]   = useState({ user_id: '', password: '' });
   const [showPw, setShowPw] = useState(false);
 
   const mut = useMutation({
@@ -25,7 +25,7 @@ export default function Login() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!form.username || !form.password) { toast.error('Enter username and password'); return; }
+    if (!form.user_id || !form.password) { toast.error('Enter User ID and password'); return; }
     mut.mutate();
   };
 
@@ -70,13 +70,13 @@ export default function Login() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="label">Username</label>
+            <label className="label">User ID</label>
             <input
               autoFocus
               className="input w-full"
-              placeholder="Enter your username"
-              value={form.username}
-              onChange={e => setForm(p => ({ ...p, username: e.target.value }))}/>
+              placeholder="Enter your User ID"
+              value={form.user_id}
+              onChange={e => setForm(p => ({ ...p, user_id: e.target.value }))}/>
           </div>
 
           <div>
