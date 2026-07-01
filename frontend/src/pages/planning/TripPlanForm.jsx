@@ -158,7 +158,7 @@ export default function TripPlanForm() {
   });
 
   return (
-    <div className="max-w-4xl space-y-5">
+    <div className="w-full space-y-5">
       <div className="flex items-center gap-3">
         <button onClick={() => navigate('/planning')} className="btn-secondary flex items-center gap-1.5">
           <ChevronLeft size={14}/> Back

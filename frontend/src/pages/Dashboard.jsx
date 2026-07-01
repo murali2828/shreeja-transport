@@ -69,7 +69,7 @@ export default function Dashboard() {
   const greet     = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="space-y-6 w-full">
 
       {/* Hero greeting — white text on sky gradient (matches screenshot) */}
       <div className="py-4">

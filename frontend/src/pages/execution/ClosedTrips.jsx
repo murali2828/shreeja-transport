@@ -19,7 +19,7 @@ export default function ClosedTrips() {
   const totalKgs    = execs.reduce((s,e) => s + parseFloat(e.total_qty_kgs||0), 0);
 
   return (
-    <div className="space-y-4 max-w-5xl">
+    <div className="space-y-4 w-full">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="page-title">Closed Trips</h2>
         <div className="flex gap-2 items-center">

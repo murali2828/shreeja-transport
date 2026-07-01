@@ -68,7 +68,7 @@ export default function ExecutionList() {
   });
 
   return (
-    <div className="space-y-4 max-w-5xl">
+    <div className="space-y-4 w-full">
       <div className="flex flex-wrap items-center gap-3 justify-between">
         <h2 className="page-title">Active Trips</h2>
         <div className="flex items-center gap-2">

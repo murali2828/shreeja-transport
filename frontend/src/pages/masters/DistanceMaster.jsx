@@ -250,7 +250,7 @@ export default function DistanceMaster() {
     pct >= 80 ? 'text-green-600' : pct >= 50 ? 'text-amber-600' : 'text-red-500';
 
   return (
-    <div className="space-y-4 max-w-6xl">
+    <div className="space-y-4 w-full">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div>

@@ -69,7 +69,7 @@ export default function AcknowledgementForm() {
   const totalAckK = chambers.reduce((s,c) => s + (parseFloat(c.qty_kgs)||0), 0);
 
   return (
-    <div className="max-w-3xl space-y-5">
+    <div className="w-full space-y-5">
       <div className="flex items-center gap-3">
         <button onClick={() => navigate(`/execution/${id}`)} className="btn-secondary flex items-center gap-1.5">
           <ChevronLeft size={14}/> Back

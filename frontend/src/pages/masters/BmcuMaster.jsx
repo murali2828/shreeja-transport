@@ -64,7 +64,7 @@ export default function BmcuMaster() {
   });
 
   return (
-    <div className="space-y-4 max-w-5xl">
+    <div className="space-y-4 w-full">
       <PageHeader
         title="BMCU Master"
         subtitle="Bulk Milk Cooling Units — collection points"

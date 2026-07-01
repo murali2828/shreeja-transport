@@ -87,7 +87,7 @@ export default function UserManagement() {
   });
 
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="space-y-4 w-full">
       <PageHeader
         title="User Management"
         subtitle="Manage user accounts and role-based access"

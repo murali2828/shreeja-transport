@@ -162,7 +162,7 @@ export default function RouteMaster() {
   });
 
   return (
-    <div className="space-y-4 max-w-5xl">
+    <div className="space-y-4 w-full">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>

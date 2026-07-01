@@ -667,7 +667,7 @@ export default function RouteOptimizer() {
 
   // ─── Layout ───────────────────────────────────────────────────────────────
   return (
-    <div className="max-w-5xl space-y-5">
+    <div className="w-full space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold flex items-center gap-2">

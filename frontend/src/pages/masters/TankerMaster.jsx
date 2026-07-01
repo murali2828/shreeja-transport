@@ -80,7 +80,7 @@ export default function TankerMaster() {
   });
 
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="space-y-4 w-full">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">Tanker Master</h2>

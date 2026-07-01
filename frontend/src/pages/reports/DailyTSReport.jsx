@@ -97,7 +97,7 @@ export default function DailyTSReport() {
   const toggleRow = (i) => setExpanded(prev => ({ ...prev, [i]: !prev[i] }));
 
   return (
-    <div className="space-y-4 max-w-screen-xl">
+    <div className="space-y-4 w-full">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="page-title">Daily TS Variation Report</h2>
         <div className="flex flex-wrap gap-2 items-center">

@@ -126,7 +126,7 @@ export default function LocationMasters() {
   const { data: delivPts = [], isLoading: l3 } = useQuery({ queryKey: ['deliv-pts'], queryFn: () => getDeliveryPoints().then(r=>r.data) });
 
   return (
-    <div className="space-y-8 max-w-4xl">
+    <div className="space-y-8 w-full">
       <div>
         <h2 className="page-title">Location Masters</h2>
         <p className="page-sub">Starting depots, testing labs, and delivery plants</p>
