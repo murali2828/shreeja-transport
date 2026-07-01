@@ -20,6 +20,8 @@ import UserManagement  from './pages/masters/UserManagement';
 import EmailConfig     from './pages/masters/EmailConfig';
 import PlanEmailConfig from './pages/masters/PlanEmailConfig';
 import DistanceMaster  from './pages/masters/DistanceMaster';
+import VendorMaster    from './pages/masters/VendorMaster';
+import TankerDocuments from './pages/masters/TankerDocuments';
 
 // Planning
 import TripPlanList    from './pages/planning/TripPlanList';
@@ -82,6 +84,12 @@ function AppRoutes() {
         }/>
         <Route path="masters/distances" element={
           <ProtectedRoute roles={['admin','planner']}><DistanceMaster/></ProtectedRoute>
+        }/>
+        <Route path="masters/vendors" element={
+          <ProtectedRoute roles={['admin','planner']}><VendorMaster/></ProtectedRoute>
+        }/>
+        <Route path="masters/documents" element={
+          <ProtectedRoute roles={['admin','planner']}><TankerDocuments/></ProtectedRoute>
         }/>
         <Route path="masters/users" element={
           <ProtectedRoute roles={['admin']}><UserManagement/></ProtectedRoute>

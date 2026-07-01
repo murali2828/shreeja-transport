@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 import {
   Truck, LayoutDashboard, MapPin, Route, Users, Settings,
   ClipboardList, Play, CheckSquare, BarChart2, Mail,
-  ChevronDown, ChevronRight, Zap, Navigation, Trash2
+  ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText
 } from 'lucide-react';
 
 function NavItem({ to, icon, label, end = false, collapsed = false }) {
@@ -55,6 +55,8 @@ export default function Sidebar({ collapsed = false }) {
       {isPlanner && (
         <NavSection label={collapsed ? '' : 'Masters'}>
           {ni('/masters/tankers',    <Truck size={15}/>,       'Tankers')}
+          {ni('/masters/vendors',    <Building2 size={15}/>,   'Vendors')}
+          {ni('/masters/documents',  <FileText size={15}/>,    'Tanker Documents')}
           {ni('/masters/bmcus',      <MapPin size={15}/>,      'BMCUs')}
           {ni('/masters/routes',     <Route size={15}/>,       'Routes')}
           {ni('/masters/locations',  <Navigation size={15}/>,  'Locations')}

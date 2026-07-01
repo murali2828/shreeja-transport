@@ -35,6 +35,8 @@ app.use('/api/executions', require('./routes/executions'));
 app.use('/api/reports',    require('./routes/reports'));
 app.use('/api/distances',  require('./routes/distances'));
 app.use('/api/optimize',   require('./routes/optimize'));
+app.use('/api/vendors',    require('./routes/vendors'));
+app.use('/api/documents',  require('./routes/documents'));
 
 // ─── Global error handler ─────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
@@ -48,6 +50,9 @@ app.use('/api/*', (_req, res) => res.status(404).json({ error: 'API route not fo
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`[server] Shreeja Backend running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
+  // Start the tanker-document expiry alert scheduler.
+  try { require('./jobs/docAlerts').startScheduler(); }
+  catch (e) { console.error('[docAlerts] failed to start scheduler:', e.message); }
 });
 
 module.exports = app;

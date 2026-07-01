@@ -99,6 +99,22 @@ export const submitForAck       = (id)    => api.post(`/executions/${id}/submit-
 export const saveAcknowledgements = (id, d) => api.post(`/executions/${id}/acknowledgements`, d);
 export const cancelExecution      = (id, reason) => api.post(`/executions/${id}/cancel`, { reason });
 
+// ── Vendors ───────────────────────────────────────────────────────────────────
+export const getVendors    = (params) => api.get('/vendors', { params });
+export const createVendor  = (d)     => api.post('/vendors', d);
+export const updateVendor  = (id, d) => api.put(`/vendors/${id}`, d);
+
+// ── Tanker Documents ──────────────────────────────────────────────────────────
+export const getDocuments        = (params) => api.get('/documents', { params });
+export const getExpiringDocuments = (within) => api.get('/documents/expiring', { params: { within } });
+export const createDocument      = (d)     => api.post('/documents', d);
+export const updateDocument      = (id, d) => api.put(`/documents/${id}`, d);
+export const deleteDocument      = (id)    => api.delete(`/documents/${id}`);
+export const getDocAlertRecipients    = ()   => api.get('/documents/alerts/recipients');
+export const createDocAlertRecipient  = (d)  => api.post('/documents/alerts/recipients', d);
+export const deleteDocAlertRecipient  = (id) => api.delete(`/documents/alerts/recipients/${id}`);
+export const runDocAlerts             = (force) => api.post('/documents/alerts/run', { force });
+
 // ── Reports ───────────────────────────────────────────────────────────────────
 export const getDailyTSReport   = (p)    => api.get('/reports/daily-ts', { params: p });
 export const getBmcuWiseReport  = (p)    => api.get('/reports/bmcu-wise', { params: p });

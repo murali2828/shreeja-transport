@@ -9,10 +9,13 @@ router.get('/tankers', authenticate, async (req, res) => {
   try {
     const includeAll = req.query.all === 'true';
     const r = await query(
-      `SELECT id, tanker_number, compartments, capacity_litres, per_km_rate,
-              vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p,
-              is_active, created_at, updated_at
-       FROM tankers ${includeAll ? '' : 'WHERE is_active=TRUE '}ORDER BY tanker_number`
+      `SELECT t.id, t.tanker_number, t.compartments, t.capacity_litres, t.per_km_rate,
+              t.vendor_code, t.vendor_name, t.rate_per_km_bmcu, t.rate_per_km_p2p,
+              t.vendor_id, v.vendor_name AS vendor_master_name,
+              t.is_active, t.created_at, t.updated_at
+       FROM tankers t
+       LEFT JOIN vendors v ON v.id = t.vendor_id
+       ${includeAll ? '' : 'WHERE t.is_active=TRUE '}ORDER BY t.tanker_number`
     );
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -20,16 +23,16 @@ router.get('/tankers', authenticate, async (req, res) => {
 
 router.post('/tankers', authenticate, authorize('admin','planner'), async (req, res) => {
   const { tanker_number, compartments, capacity_litres, per_km_rate,
-          vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p } = req.body;
+          vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p, vendor_id } = req.body;
   if (!tanker_number || !capacity_litres)
     return res.status(400).json({ error: 'tanker_number and capacity_litres required' });
   try {
     const r = await query(
       `INSERT INTO tankers (tanker_number,compartments,capacity_litres,per_km_rate,
-                            vendor_code,vendor_name,rate_per_km_bmcu,rate_per_km_p2p)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+                            vendor_code,vendor_name,rate_per_km_bmcu,rate_per_km_p2p,vendor_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [tanker_number.trim().toUpperCase(), compartments||null, capacity_litres, per_km_rate||0,
-       vendor_code||null, vendor_name||null, rate_per_km_bmcu||null, rate_per_km_p2p||null]
+       vendor_code||null, vendor_name||null, rate_per_km_bmcu||null, rate_per_km_p2p||null, vendor_id||null]
     );
     res.status(201).json(r.rows[0]);
   } catch (err) {
@@ -40,15 +43,15 @@ router.post('/tankers', authenticate, authorize('admin','planner'), async (req, 
 
 router.put('/tankers/:id', authenticate, authorize('admin','planner'), async (req, res) => {
   const { tanker_number, compartments, capacity_litres, per_km_rate, is_active,
-          vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p } = req.body;
+          vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p, vendor_id } = req.body;
   try {
     const r = await query(
       `UPDATE tankers SET tanker_number=$1,compartments=$2,capacity_litres=$3,
         per_km_rate=$4,is_active=$5,vendor_code=$6,vendor_name=$7,
-        rate_per_km_bmcu=$8,rate_per_km_p2p=$9,updated_at=NOW() WHERE id=$10 RETURNING *`,
+        rate_per_km_bmcu=$8,rate_per_km_p2p=$9,vendor_id=$10,updated_at=NOW() WHERE id=$11 RETURNING *`,
       [tanker_number?.trim().toUpperCase(), compartments||null, capacity_litres,
        per_km_rate||0, is_active ?? true, vendor_code||null, vendor_name||null,
-       rate_per_km_bmcu||null, rate_per_km_p2p||null, req.params.id]
+       rate_per_km_bmcu||null, rate_per_km_p2p||null, vendor_id||null, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(r.rows[0]);

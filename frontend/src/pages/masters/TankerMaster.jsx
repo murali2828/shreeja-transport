@@ -3,10 +3,10 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Truck } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getTankers, createTanker, updateTanker, deleteTanker } from '../../api/index';
+import { getTankers, createTanker, updateTanker, deleteTanker, getVendors } from '../../api/index';
 import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
 
-const EMPTY = { tanker_number: '', compartments: '', capacity_litres: '', per_km_rate: '', vendor_code: '', vendor_name: '', rate_per_km_bmcu: '', rate_per_km_p2p: '', is_active: true };
+const EMPTY = { tanker_number: '', compartments: '', capacity_litres: '', per_km_rate: '', vendor_id: '', vendor_code: '', vendor_name: '', rate_per_km_bmcu: '', rate_per_km_p2p: '', is_active: true };
 
 function SortIcon({ col, sortCol, sortDir }) {
   if (sortCol !== col) return <span className="text-gray-300 ml-0.5">⇅</span>;
@@ -30,6 +30,10 @@ export default function TankerMaster() {
   const { data: tankers = [], isLoading } = useQuery({
     queryKey: ['tankers', 'all'],
     queryFn:  () => getTankers({ all: 'true' }).then(r => r.data),
+  });
+  const { data: vendors = [] } = useQuery({
+    queryKey: ['vendors'],
+    queryFn:  () => getVendors().then(r => r.data),
   });
 
   const openAdd  = () => { setForm(EMPTY); setModal('add'); };
@@ -202,12 +206,21 @@ export default function TankerMaster() {
                 <input type="number" min="0" step="0.01" className="input w-full" placeholder="e.g. 45.00"
                   value={form.per_km_rate} onChange={e => set('per_km_rate', e.target.value)}/>
               </Field>
-              <Field label="Vendor Code">
-                <input className="input w-full" placeholder="e.g. V001"
-                  value={form.vendor_code} onChange={e => set('vendor_code', e.target.value)}/>
+              <Field label="Vendor (Master)">
+                <select className="input w-full" value={form.vendor_id || ''}
+                  onChange={e => {
+                    const vid = e.target.value;
+                    const v = vendors.find(x => String(x.id) === String(vid));
+                    setForm(p => ({ ...p, vendor_id: vid,
+                      vendor_code: v ? v.vendor_code : p.vendor_code,
+                      vendor_name: v ? v.vendor_name : p.vendor_name }));
+                  }}>
+                  <option value="">— Select vendor —</option>
+                  {vendors.map(v => <option key={v.id} value={v.id}>{v.vendor_code} — {v.vendor_name}</option>)}
+                </select>
               </Field>
-              <Field label="Vendor Name">
-                <input className="input w-full" placeholder="Vendor / owner name"
+              <Field label="Vendor Name (free text)">
+                <input className="input w-full" placeholder="Used if no vendor master selected"
                   value={form.vendor_name} onChange={e => set('vendor_name', e.target.value)}/>
               </Field>
               <Field label="Rate/KM BMCU (₹)">
