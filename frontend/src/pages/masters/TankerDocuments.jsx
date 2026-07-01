@@ -1,11 +1,12 @@
 // frontend/src/pages/masters/TankerDocuments.jsx
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Search, Bell, Trash2, Send, RefreshCw } from 'lucide-react';
+import { Search, Bell, Trash2, Send, RefreshCw, Paperclip, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   getDocuments, createDocument, updateDocument, deleteDocument, getTankers,
   getDocAlertRecipients, createDocAlertRecipient, deleteDocAlertRecipient, runDocAlerts,
+  uploadDocumentFile, downloadDocumentFile, deleteDocumentFile,
 } from '../../api/index';
 import { Modal, Field, SaveButton, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
 import { useAuth } from '../../hooks/useAuth';
@@ -37,6 +38,7 @@ export default function TankerDocuments() {
 
   const [modal, setModal]   = useState(null);
   const [form, setForm]     = useState(EMPTY);
+  const [file, setFile]     = useState(null);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter]     = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -69,26 +71,34 @@ export default function TankerDocuments() {
     });
   }, [docs, search, typeFilter, statusFilter]);
 
-  const openAdd  = () => { setForm(EMPTY); setModal('add'); };
+  const openAdd  = () => { setForm(EMPTY); setFile(null); setModal('add'); };
   const openEdit = (d) => {
     setForm({
       tanker_id: d.tanker_id, doc_type: d.doc_type, doc_name: d.doc_name || '',
       doc_number: d.doc_number || '', issue_date: d.issue_date ? d.issue_date.slice(0,10) : '',
       expiry_date: d.expiry_date ? d.expiry_date.slice(0,10) : '', remarks: d.remarks || '',
     });
+    setFile(null);
     setModal(d);
   };
-  const close = () => setModal(null);
+  const close = () => { setFile(null); setModal(null); };
   const set   = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   const isAgreement = form.doc_type === 'Agreement';
 
   const saveMut = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!form.tanker_id) throw new Error('Select a tanker');
       if (!form.doc_type)  throw new Error('Select a document type');
       if (form.doc_type === 'Other' && !form.doc_name) throw new Error('Enter a name for the Other document');
-      return modal === 'add' ? createDocument(form) : updateDocument(modal.id, form);
+      const res = modal === 'add' ? await createDocument(form) : await updateDocument(modal.id, form);
+      const id  = modal === 'add' ? res.data.id : modal.id;
+      if (file) {
+        const fd = new FormData();
+        fd.append('file', file);
+        await uploadDocumentFile(id, fd);
+      }
+      return res;
     },
     onSuccess: () => {
       toast.success(modal === 'add' ? 'Document added' : 'Document updated');
@@ -96,6 +106,12 @@ export default function TankerDocuments() {
       close();
     },
     onError: (e) => toast.error(e.response?.data?.error || e.message),
+  });
+
+  const removeFileMut = useMutation({
+    mutationFn: (id) => deleteDocumentFile(id),
+    onSuccess: () => { toast.success('Attachment removed'); qc.invalidateQueries(['documents']); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed'),
   });
 
   const deleteMut = useMutation({
@@ -174,6 +190,7 @@ export default function TankerDocuments() {
                 <th className="table-th">Issue / Start</th>
                 <th className="table-th">Expiry / End</th>
                 <th className="table-th">Status</th>
+                <th className="table-th">File</th>
                 <th className="table-th w-16">Actions</th>
               </tr>
             </thead>
@@ -195,6 +212,14 @@ export default function TankerDocuments() {
                       {STATUS_LABEL[d.status]}
                     </span>
                     <span className="ml-1.5 text-[11px] text-gray-400">{daysText(d)}</span>
+                  </td>
+                  <td className="table-td">
+                    {d.has_file ? (
+                      <button onClick={() => downloadDocumentFile(d.id, d.file_name)}
+                        className="inline-flex items-center gap-1 text-xs text-[#0078d4] hover:underline" title={d.file_name}>
+                        <Download size={12}/> View
+                      </button>
+                    ) : <span className="text-xs text-gray-300">—</span>}
                   </td>
                   <td className="table-td">
                     <div className="flex gap-1">
@@ -260,6 +285,31 @@ export default function TankerDocuments() {
               <Field label="Remarks">
                 <textarea className="input w-full" rows={2} value={form.remarks}
                   onChange={e => set('remarks', e.target.value)}/>
+              </Field>
+            </div>
+            <div className="col-span-2">
+              <Field label="Document File (PDF / image)">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="btn-secondary btn-sm flex items-center gap-1.5 cursor-pointer">
+                    <Paperclip size={13}/> {file ? 'Change file' : 'Choose file'}
+                    <input type="file" className="sr-only" accept=".pdf,.png,.jpg,.jpeg,.webp"
+                      onChange={e => setFile(e.target.files?.[0] || null)}/>
+                  </label>
+                  {file && <span className="text-xs text-gray-600">{file.name}</span>}
+                  {!file && modal !== 'add' && modal.has_file && (
+                    <>
+                      <button type="button" onClick={() => downloadDocumentFile(modal.id, modal.file_name)}
+                        className="inline-flex items-center gap-1 text-xs text-[#0078d4] hover:underline">
+                        <Download size={12}/> {modal.file_name}
+                      </button>
+                      <button type="button" onClick={() => { if (window.confirm('Remove attachment?')) removeFileMut.mutate(modal.id); }}
+                        className="text-xs text-red-500 hover:underline">remove</button>
+                    </>
+                  )}
+                  {!file && modal !== 'add' && !modal.has_file && (
+                    <span className="text-xs text-gray-400">No file attached</span>
+                  )}
+                </div>
               </Field>
             </div>
           </div>

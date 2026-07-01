@@ -2,9 +2,12 @@
 // Tanker statutory documents + expiry-alert recipient config.
 const express = require('express');
 const router  = express.Router();
+const multer  = require('multer');
 const { query } = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { runAlertCheck } = require('../jobs/docAlerts');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const DOC_TYPES = ['RC', 'Fitness Certificate', 'Pollution (PUC)', 'Insurance', 'Permit', 'Agreement', 'Other'];
 
@@ -45,6 +48,11 @@ const DOC_TYPES = ['RC', 'Fitness Certificate', 'Pollution (PUC)', 'Insurance', 
     `);
     await query(`CREATE INDEX IF NOT EXISTS tanker_documents_tanker_idx ON tanker_documents (tanker_id)`);
     await query(`CREATE INDEX IF NOT EXISTS tanker_documents_expiry_idx ON tanker_documents (expiry_date)`);
+    // Attached scan/file (stored in DB so it survives ephemeral containers).
+    await query(`ALTER TABLE tanker_documents ADD COLUMN IF NOT EXISTS file_data BYTEA`);
+    await query(`ALTER TABLE tanker_documents ADD COLUMN IF NOT EXISTS file_name TEXT`);
+    await query(`ALTER TABLE tanker_documents ADD COLUMN IF NOT EXISTS file_mime TEXT`);
+    await query(`ALTER TABLE tanker_documents ADD COLUMN IF NOT EXISTS file_size INTEGER`);
     await query(`
       CREATE TABLE IF NOT EXISTS document_alert_recipients (
         id         SERIAL PRIMARY KEY,
@@ -84,7 +92,11 @@ router.get('/', authenticate, async (req, res) => {
     const { tanker_id, doc_type, vendor_id, q } = req.query;
     const params = [];
     let sql = `
-      SELECT d.*, t.tanker_number, t.vendor_id, v.vendor_name,
+      SELECT d.id, d.tanker_id, d.doc_type, d.doc_name, d.doc_number,
+             d.issue_date, d.expiry_date, d.remarks, d.is_active,
+             d.created_at, d.updated_at,
+             (d.file_name IS NOT NULL) AS has_file, d.file_name, d.file_mime, d.file_size,
+             t.tanker_number, t.vendor_id, v.vendor_name,
              (d.expiry_date - CURRENT_DATE) AS days_left
       FROM tanker_documents d
       JOIN tankers t ON t.id = d.tanker_id
@@ -126,7 +138,8 @@ router.post('/', authenticate, authorize('admin','planner'), async (req, res) =>
   try {
     const r = await query(
       `INSERT INTO tanker_documents (tanker_id, doc_type, doc_name, doc_number, issue_date, expiry_date, remarks)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING id, tanker_id, doc_type, doc_name, doc_number, issue_date, expiry_date, remarks, is_active`,
       [tanker_id, doc_type, doc_name||null, doc_number||null, issue_date||null, expiry_date||null, remarks||null]
     );
     res.status(201).json(r.rows[0]);
@@ -142,7 +155,8 @@ router.put('/:id', authenticate, authorize('admin','planner'), async (req, res) 
       `UPDATE tanker_documents SET
          doc_type=COALESCE($1,doc_type), doc_name=$2, doc_number=$3,
          issue_date=$4, expiry_date=$5, remarks=$6, updated_at=NOW()
-       WHERE id=$7 RETURNING *`,
+       WHERE id=$7
+       RETURNING id, tanker_id, doc_type, doc_name, doc_number, issue_date, expiry_date, remarks, is_active`,
       [doc_type||null, doc_name||null, doc_number||null, issue_date||null, expiry_date||null, remarks||null, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
@@ -157,6 +171,47 @@ router.delete('/:id', authenticate, authorize('admin','planner'), async (req, re
   try {
     const r = await query('UPDATE tanker_documents SET is_active=FALSE WHERE id=$1 RETURNING id', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── File attachment (stored in DB) ───────────────────────────────────────────
+// POST /api/documents/:id/file  — upload/replace the scanned document
+router.post('/:id/file', authenticate, authorize('admin','planner'), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const r = await query(
+      `UPDATE tanker_documents SET file_data=$1, file_name=$2, file_mime=$3, file_size=$4, updated_at=NOW()
+       WHERE id=$5 AND is_active=TRUE
+       RETURNING id, (file_name IS NOT NULL) AS has_file, file_name, file_mime, file_size`,
+      [req.file.buffer, req.file.originalname, req.file.mimetype, req.file.size, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Document not found' });
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/documents/:id/file  — download the scanned document
+router.get('/:id/file', authenticate, async (req, res) => {
+  try {
+    const r = await query(
+      'SELECT file_data, file_name, file_mime FROM tanker_documents WHERE id=$1', [req.params.id]
+    );
+    if (!r.rows.length || !r.rows[0].file_data) return res.status(404).json({ error: 'No file' });
+    const { file_data, file_name, file_mime } = r.rows[0];
+    res.setHeader('Content-Type', file_mime || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${(file_name || 'document').replace(/"/g, '')}"`);
+    res.send(file_data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/documents/:id/file  — remove the attachment only
+router.delete('/:id/file', authenticate, authorize('admin','planner'), async (req, res) => {
+  try {
+    await query(
+      'UPDATE tanker_documents SET file_data=NULL, file_name=NULL, file_mime=NULL, file_size=NULL, updated_at=NOW() WHERE id=$1',
+      [req.params.id]
+    );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

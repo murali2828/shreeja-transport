@@ -110,6 +110,15 @@ export const getExpiringDocuments = (within) => api.get('/documents/expiring', {
 export const createDocument      = (d)     => api.post('/documents', d);
 export const updateDocument      = (id, d) => api.put(`/documents/${id}`, d);
 export const deleteDocument      = (id)    => api.delete(`/documents/${id}`);
+export const uploadDocumentFile  = (id, fd) => api.post(`/documents/${id}/file`, fd);
+export const deleteDocumentFile  = (id)     => api.delete(`/documents/${id}/file`);
+export const downloadDocumentFile = (id, filename) =>
+  api.get(`/documents/${id}/file`, { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename || 'document'; a.click();
+    URL.revokeObjectURL(url);
+  });
 export const getDocAlertRecipients    = ()   => api.get('/documents/alerts/recipients');
 export const createDocAlertRecipient  = (d)  => api.post('/documents/alerts/recipients', d);
 export const deleteDocAlertRecipient  = (id) => api.delete(`/documents/alerts/recipients/${id}`);
