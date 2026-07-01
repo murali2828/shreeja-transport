@@ -81,7 +81,11 @@ export default function Layout() {
           style={{ width: pinned ? 220 : 48, minWidth: pinned ? 220 : 48 }}>
           <div className="sidebar flex flex-col absolute top-0 bottom-0 left-0 overflow-hidden transition-all duration-200"
             style={{ width: expanded ? 220 : 48, zIndex: 40,
-                     boxShadow: (!pinned && hovered) ? '4px 0 20px rgba(0,40,90,0.28)' : 'none' }}>
+                     // Opaque background while floating as a hover overlay so menu text stays legible
+                     // over bright page content; keeps the frosted look when pinned.
+                     background: (!pinned && hovered) ? 'linear-gradient(180deg,#0a6cbf 0%,#004e8c 100%)' : undefined,
+                     backdropFilter: (!pinned && hovered) ? 'none' : undefined,
+                     boxShadow: (!pinned && hovered) ? '4px 0 24px rgba(0,30,70,0.35)' : 'none' }}>
             <div style={{ overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
               <Sidebar collapsed={!expanded}/>
             </div>
