@@ -3,9 +3,17 @@
 const express = require('express');
 const router  = express.Router();
 const multer  = require('multer');
+const fs      = require('fs');
+const path    = require('path');
+const crypto  = require('crypto');
 const { query } = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { runAlertCheck } = require('../jobs/docAlerts');
+
+// Files are stored on disk (persistent volume) — only metadata/path lives in the DB.
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '../../uploads/documents');
+try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); }
+catch (e) { console.error('Failed to create upload dir:', e.message); }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -48,8 +56,10 @@ const DOC_TYPES = ['RC', 'Fitness Certificate', 'Pollution (PUC)', 'Insurance', 
     `);
     await query(`CREATE INDEX IF NOT EXISTS tanker_documents_tanker_idx ON tanker_documents (tanker_id)`);
     await query(`CREATE INDEX IF NOT EXISTS tanker_documents_expiry_idx ON tanker_documents (expiry_date)`);
-    // Attached scan/file (stored in DB so it survives ephemeral containers).
+    // Attached scan/file. Bytes live on a disk volume (file_path); file_data is
+    // retained only for backward compatibility with any earlier DB-stored files.
     await query(`ALTER TABLE tanker_documents ADD COLUMN IF NOT EXISTS file_data BYTEA`);
+    await query(`ALTER TABLE tanker_documents ADD COLUMN IF NOT EXISTS file_path TEXT`);
     await query(`ALTER TABLE tanker_documents ADD COLUMN IF NOT EXISTS file_name TEXT`);
     await query(`ALTER TABLE tanker_documents ADD COLUMN IF NOT EXISTS file_mime TEXT`);
     await query(`ALTER TABLE tanker_documents ADD COLUMN IF NOT EXISTS file_size INTEGER`);
@@ -95,7 +105,7 @@ router.get('/', authenticate, async (req, res) => {
       SELECT d.id, d.tanker_id, d.doc_type, d.doc_name, d.doc_number,
              d.issue_date, d.expiry_date, d.remarks, d.is_active,
              d.created_at, d.updated_at,
-             (d.file_name IS NOT NULL) AS has_file, d.file_name, d.file_mime, d.file_size,
+             (d.file_path IS NOT NULL OR d.file_name IS NOT NULL) AS has_file, d.file_name, d.file_mime, d.file_size,
              t.tanker_number, t.vendor_id, v.vendor_name,
              (d.expiry_date - CURRENT_DATE) AS days_left
       FROM tanker_documents d
@@ -176,42 +186,66 @@ router.delete('/:id', authenticate, authorize('admin','planner'), async (req, re
 });
 
 // ─── File attachment (stored in DB) ───────────────────────────────────────────
-// POST /api/documents/:id/file  — upload/replace the scanned document
+// POST /api/documents/:id/file  — upload/replace the scanned document (stored on disk)
 router.post('/:id/file', authenticate, authorize('admin','planner'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
+    // Ensure the document exists and grab any previous on-disk file to clean up.
+    const prev = await query('SELECT file_path FROM tanker_documents WHERE id=$1 AND is_active=TRUE', [req.params.id]);
+    if (!prev.rows.length) return res.status(404).json({ error: 'Document not found' });
+
+    const ext = path.extname(req.file.originalname).slice(0, 12);
+    const fname = `${req.params.id}_${crypto.randomBytes(8).toString('hex')}${ext}`;
+    fs.writeFileSync(path.join(UPLOAD_DIR, fname), req.file.buffer);
+
     const r = await query(
-      `UPDATE tanker_documents SET file_data=$1, file_name=$2, file_mime=$3, file_size=$4, updated_at=NOW()
-       WHERE id=$5 AND is_active=TRUE
-       RETURNING id, (file_name IS NOT NULL) AS has_file, file_name, file_mime, file_size`,
-      [req.file.buffer, req.file.originalname, req.file.mimetype, req.file.size, req.params.id]
+      `UPDATE tanker_documents
+         SET file_path=$1, file_name=$2, file_mime=$3, file_size=$4, file_data=NULL, updated_at=NOW()
+       WHERE id=$5
+       RETURNING id, (file_path IS NOT NULL OR file_name IS NOT NULL) AS has_file, file_name, file_mime, file_size`,
+      [fname, req.file.originalname, req.file.mimetype, req.file.size, req.params.id]
     );
-    if (!r.rows.length) return res.status(404).json({ error: 'Document not found' });
+
+    // Best-effort removal of the previous disk file.
+    if (prev.rows[0].file_path) {
+      fs.unlink(path.join(UPLOAD_DIR, prev.rows[0].file_path), () => {});
+    }
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/documents/:id/file  — download the scanned document
+// GET /api/documents/:id/file  — download/stream the scanned document
 router.get('/:id/file', authenticate, async (req, res) => {
   try {
     const r = await query(
-      'SELECT file_data, file_name, file_mime FROM tanker_documents WHERE id=$1', [req.params.id]
+      'SELECT file_path, file_data, file_name, file_mime FROM tanker_documents WHERE id=$1', [req.params.id]
     );
-    if (!r.rows.length || !r.rows[0].file_data) return res.status(404).json({ error: 'No file' });
-    const { file_data, file_name, file_mime } = r.rows[0];
+    if (!r.rows.length) return res.status(404).json({ error: 'No file' });
+    const { file_path, file_data, file_name, file_mime } = r.rows[0];
     res.setHeader('Content-Type', file_mime || 'application/octet-stream');
     res.setHeader('Content-Disposition', `inline; filename="${(file_name || 'document').replace(/"/g, '')}"`);
-    res.send(file_data);
+
+    if (file_path) {
+      const full = path.join(UPLOAD_DIR, file_path);
+      if (!fs.existsSync(full)) return res.status(404).json({ error: 'File missing on disk' });
+      return fs.createReadStream(full).pipe(res);
+    }
+    if (file_data) return res.send(file_data); // legacy DB-stored file
+    return res.status(404).json({ error: 'No file' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // DELETE /api/documents/:id/file  — remove the attachment only
 router.delete('/:id/file', authenticate, authorize('admin','planner'), async (req, res) => {
   try {
+    const prev = await query('SELECT file_path FROM tanker_documents WHERE id=$1', [req.params.id]);
     await query(
-      'UPDATE tanker_documents SET file_data=NULL, file_name=NULL, file_mime=NULL, file_size=NULL, updated_at=NOW() WHERE id=$1',
+      'UPDATE tanker_documents SET file_path=NULL, file_data=NULL, file_name=NULL, file_mime=NULL, file_size=NULL, updated_at=NOW() WHERE id=$1',
       [req.params.id]
     );
+    if (prev.rows[0]?.file_path) {
+      fs.unlink(path.join(UPLOAD_DIR, prev.rows[0].file_path), () => {});
+    }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

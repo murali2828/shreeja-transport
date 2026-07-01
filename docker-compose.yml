@@ -33,6 +33,9 @@ services:
       DB_HOST:  db
       DB_PORT:  5432
       PORT:     5000
+      UPLOAD_DIR: /app/uploads/documents
+    volumes:
+      - docuploads:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -62,6 +65,8 @@ services:
 volumes:
   pgdata:
     name: shreeja-pgdata
+  docuploads:
+    name: shreeja-docuploads
 
 networks:
   shreeja-net:
