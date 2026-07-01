@@ -736,7 +736,7 @@ export default function ExecutionForm() {
   const canSubmit   = exec.status === 'saved';
 
   return (
-    <div className="space-y-4 max-w-screen-xl">
+    <div className="space-y-4 w-full">
       {/* Header */}
       <div className="flex flex-wrap items-center gap-3">
         <button onClick={() => navigate('/execution')} className="btn-secondary flex items-center gap-1.5">
@@ -817,8 +817,8 @@ export default function ExecutionForm() {
             </select>
           )}
         </div>
-        <div className="overflow-x-scroll max-h-[55vh]">
-          <table className="text-xs" style={{ minWidth: '760px' }}>
+        <div className="overflow-x-auto max-h-[55vh]">
+          <table className="text-xs w-full" style={{ minWidth: '760px' }}>
             <thead className="sticky top-0 bg-gray-50 border-b">
               <tr>
                 {['','#','Code','Name','Date','Dispatch Qty L','Dispatch Fat%','Dispatch SNF%',

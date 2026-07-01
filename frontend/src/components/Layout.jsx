@@ -10,7 +10,9 @@ export default function Layout() {
   const { user, logoutUser } = useAuth();
   const [mobileOpen,   setMobileOpen]   = useState(false);
   const [userMenu,     setUserMenu]     = useState(false);
-  const [sidebarOpen,  setSidebarOpen]  = useState(true);
+  const [pinned,       setPinned]       = useState(false); // when true, sidebar stays expanded and reserves width
+  const [hovered,      setHovered]      = useState(false); // transient hover-to-expand
+  const expanded = pinned || hovered;
 
   return (
     <div style={{ height:'100vh', display:'flex', flexDirection:'column', overflow:'hidden' }}>
@@ -71,18 +73,25 @@ export default function Layout() {
       {/* ── Body ──────────────────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden" style={{ paddingTop: '48px' }}>
 
-        {/* Desktop sidebar */}
-        <div className="hidden sm:flex flex-col sidebar overflow-hidden transition-all duration-200"
-          style={{ width: sidebarOpen ? 220 : 48, minWidth: sidebarOpen ? 220 : 48 }}>
-          <div style={{ overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <Sidebar collapsed={!sidebarOpen}/>
+        {/* Desktop sidebar — auto-collapses to icons; expands as an overlay on hover.
+            Reserves only the collapsed width unless pinned, so content gets the space. */}
+        <div className="hidden sm:block relative"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          style={{ width: pinned ? 220 : 48, minWidth: pinned ? 220 : 48 }}>
+          <div className="sidebar flex flex-col absolute top-0 bottom-0 left-0 overflow-hidden transition-all duration-200"
+            style={{ width: expanded ? 220 : 48, zIndex: 40,
+                     boxShadow: (!pinned && hovered) ? '4px 0 20px rgba(0,40,90,0.28)' : 'none' }}>
+            <div style={{ overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
+              <Sidebar collapsed={!expanded}/>
+            </div>
+            <button
+              onClick={() => setPinned(v => !v)}
+              className="flex items-center justify-center p-2 text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+              title={pinned ? 'Unpin (auto-hide)' : 'Pin sidebar open'}>
+              {pinned ? <ChevronLeft size={16}/> : <ChevronRight size={16}/>}
+            </button>
           </div>
-          <button
-            onClick={() => setSidebarOpen(v => !v)}
-            className="flex items-center justify-center p-2 text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-            title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
-            {sidebarOpen ? <ChevronLeft size={16}/> : <ChevronRight size={16}/>}
-          </button>
         </div>
 
         {/* Mobile sidebar */}
