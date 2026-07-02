@@ -47,29 +47,59 @@ const r2 = v => Math.round(v * 100) / 100;
 const r4 = v => Math.round(v * 10000) / 10000;
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
-// Fleet-aware best-fit: each tanker used once while the pool lasts (a real day
-// can't send the same tanker on many simultaneous trips). Falls back to reuse
-// (flagged) only if routes outnumber feasible tankers.
-function assignTankersFleet(routes, routeLoads, tankers) {
+// Fleet-FEASIBLE assignment: each tanker is used at most once while the pool
+// lasts, and any route too big for the remaining tankers is SPLIT (along its
+// nearest-neighbour order, so splits stay geographically contiguous) until
+// every trip fits the tanker actually assigned to it. Overflow can only remain
+// if a single BMCU's quantity exceeds every tanker in the fleet.
+function assignTankersFleetFeasible(rawRoutes, tankers, resolve, depot) {
   const pool_ = [...tankers].sort((a, b) => a.capacity_litres - b.capacity_litres);
-  const order = routes.map((_, i) => i).sort((a, b) => routeLoads[b] - routeLoads[a]); // big loads first
-  const out = new Array(routes.length);
-  const used = new Set();
-  for (const idx of order) {
-    const load = routeLoads[idx];
+  const used  = new Set();
+  const loadOf = r => r.reduce((s, b) => s + b.expected_qty_litres, 0);
+
+  // Work queue, always taking the heaviest pending route first.
+  const queue = rawRoutes.map(r => [...r]);
+  const out = [];
+
+  while (queue.length) {
+    queue.sort((a, b) => loadOf(b) - loadOf(a));
+    const route = queue.shift();
+    const load  = loadOf(route);
+
+    // Smallest unused tanker that fits the whole route.
     let pick = pool_.find(t => !used.has(t.id) && t.capacity_litres >= load);
-    let reused = false, overflow = false;
-    if (!pick) {
-      pick = pool_.filter(t => !used.has(t.id)).pop(); // largest unused (overflow)
-      if (pick) overflow = pick.capacity_litres < load;
+    if (pick) {
+      used.add(pick.id);
+      out.push({ route, load, tanker: pick, reused: false, overflow: false });
+      continue;
     }
-    if (!pick) { // pool exhausted → reuse best-fit
-      pick = pool_.find(t => t.capacity_litres >= load) || pool_[pool_.length - 1];
-      reused = true;
-      overflow = pick.capacity_litres < load;
+
+    const unused = pool_.filter(t => !used.has(t.id));
+    if (unused.length) {
+      // Split: fill the largest unused tanker along the route's NN order,
+      // push the remainder back for assignment to another tanker.
+      const big = unused[unused.length - 1];
+      const ordered = nearestNeighbourOrder(depot, route, resolve);
+      const prefix = [];
+      let cum = 0;
+      for (const bm of ordered) {
+        if (prefix.length > 0 && cum + bm.expected_qty_litres > big.capacity_litres) break;
+        prefix.push(bm);
+        cum += bm.expected_qty_litres;
+      }
+      const rest = ordered.slice(prefix.length);
+      used.add(big.id);
+      out.push({
+        route: prefix, load: cum, tanker: big,
+        reused: false, overflow: cum > big.capacity_litres, // single-BMCU > capacity only
+      });
+      if (rest.length) queue.push(rest);
+      continue;
     }
-    used.add(pick.id);
-    out[idx] = { route: routes[idx], load, tanker: pick, reused, overflow };
+
+    // Pool exhausted → reuse best-fit (flagged).
+    pick = pool_.find(t => t.capacity_litres >= load) || pool_[pool_.length - 1];
+    out.push({ route, load, tanker: pick, reused: true, overflow: pick.capacity_litres < load });
   }
   return out;
 }
@@ -186,8 +216,7 @@ async function main() {
     } else {
       rawRoutes = clarkeWrightSavings(depot, items, resolve, maxCapacity);
     }
-    const routeLoads  = rawRoutes.map(r => r.reduce((s, b) => s + b.expected_qty_litres, 0));
-    const assignments = assignTankersFleet(rawRoutes, routeLoads, tankers);
+    const assignments = assignTankersFleetFeasible(rawRoutes, tankers, resolve, depot);
 
     const optLegSources = legCounter();
     const optTrips = assignments.map((asgn, i) => {
