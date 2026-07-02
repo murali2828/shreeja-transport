@@ -17,7 +17,7 @@ const calc = {
 const DESCRIPTIONS = ['RMRD', 'Balance Milk', 'Internal Shifting'];
 const CHAMBERS     = ['FC', 'MC', 'BC'];
 const SHIFTS       = ['AM', 'PM'];
-const BALANCE_CATEGORIES = ['Balance milk', 'Left Over milk', 'Lifted milk'];
+const BALANCE_CATEGORIES = ['Left Over milk', 'Lifted milk'];
 
 function ChamberDropdown({ value, onChange, disabled }) {
   const [open, setOpen] = useState(false);
