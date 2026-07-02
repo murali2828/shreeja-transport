@@ -3,6 +3,9 @@ const express = require('express');
 const router  = express.Router();
 const { pool, query } = require('../config/db');
 const { authenticate } = require('../middleware/auth');
+const { haversineKm, ROAD_FACTOR } = require('../utils/geo');
+const { getMasterDistanceKm, upsertMasterDistanceKm } = require('../services/distanceLookup');
+const { googleLegKm } = require('../services/roadDistance');
 
 const KG_FACTOR = 1.0285;
 
@@ -35,6 +38,78 @@ const KG_FACTOR = 1.0285;
 function calcKgs(litres)          { return litres ? parseFloat(litres) * KG_FACTOR : 0; }
 function calcKgFat(kgs, fatPct)   { return kgs && fatPct ? parseFloat(kgs) * parseFloat(fatPct) / 100 : 0; }
 function calcKgSnf(kgs, snfPct)   { return kgs && snfPct ? parseFloat(kgs) * parseFloat(snfPct) / 100 : 0; }
+
+const coord = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+
+// Compute the road distance a tanker covered on this execution:
+//   start point → each covered BMCU (in seq order) → delivery point.
+// Per-leg km resolution cascade: Distance Master (exact) → Google Routes API
+// (cached back into Distance Master) → Haversine × road factor (flagged estimated).
+// Persists calculated_km / km_estimated_leg_count / km_incomplete and returns the breakdown.
+async function computeExecutionDistance(client, execId, userId) {
+  const head = await client.query(`
+    SELECT tp.start_point_id, tp.delivery_point_id,
+           sp.name AS start_name, sp.latitude AS start_lat, sp.longitude AS start_lng,
+           dp.name AS del_name,   dp.latitude AS del_lat,   dp.longitude AS del_lng
+    FROM trip_executions te
+    JOIN trip_plans tp           ON tp.id = te.trip_plan_id
+    LEFT JOIN starting_points sp ON sp.id = tp.start_point_id
+    LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
+    WHERE te.id = $1`, [execId]);
+  if (!head.rows.length) return { total_km: 0, legs: [], estimated_leg_count: 0, incomplete: false };
+  const h = head.rows[0];
+
+  const bmcus = await client.query(`
+    SELECT teb.bmcu_id, teb.seq_no, b.bmcu_code, b.bmcu_name, b.latitude, b.longitude
+    FROM trip_execution_bmcus teb
+    JOIN bmcus b ON b.id = teb.bmcu_id
+    WHERE teb.execution_id = $1 AND teb.is_deleted = FALSE
+    ORDER BY teb.seq_no`, [execId]);
+
+  // Ordered node chain: start → BMCUs → delivery.
+  const nodes = [];
+  if (h.start_point_id)
+    nodes.push({ type: 'starting_point', id: h.start_point_id, lat: coord(h.start_lat), lng: coord(h.start_lng), label: `[Start] ${h.start_name || ''}`.trim() });
+  for (const b of bmcus.rows)
+    nodes.push({ type: 'bmcu', id: b.bmcu_id, lat: coord(b.latitude), lng: coord(b.longitude), label: `${b.bmcu_code} — ${b.bmcu_name}` });
+  if (h.delivery_point_id)
+    nodes.push({ type: 'delivery_point', id: h.delivery_point_id, lat: coord(h.del_lat), lng: coord(h.del_lng), label: `[Plant] ${h.del_name || ''}`.trim() });
+
+  const legs = [];
+  let total = 0, estimated = 0, incomplete = false;
+
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const a = nodes[i], z = nodes[i + 1];
+    let km = 0, source = 'missing';
+
+    const master = await getMasterDistanceKm(client, a.type, a.id, z.type, z.id);
+    if (master != null) {
+      km = master; source = 'master';
+    } else if (a.lat != null && a.lng != null && z.lat != null && z.lng != null) {
+      const g = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
+      if (g != null) {
+        km = g; source = 'google';
+        await upsertMasterDistanceKm(client, a.type, a.id, z.type, z.id, g, 'auto: Google Routes API', userId);
+      } else {
+        km = haversineKm(a.lat, a.lng, z.lat, z.lng) * ROAD_FACTOR;
+        source = 'estimated'; estimated++;
+      }
+    } else {
+      incomplete = true; // no master value and missing coordinates
+    }
+
+    km = Math.round(km * 100) / 100;
+    total += km;
+    legs.push({ from_label: a.label, to_label: z.label, km, source });
+  }
+
+  total = Math.round(total * 100) / 100;
+  await client.query(
+    'UPDATE trip_executions SET calculated_km=$1, km_estimated_leg_count=$2, km_incomplete=$3 WHERE id=$4',
+    [total, estimated, incomplete, execId]
+  );
+  return { total_km: total, legs, estimated_leg_count: estimated, incomplete };
+}
 
 // GET /api/executions
 router.get('/', authenticate, async (req, res) => {
@@ -166,6 +241,14 @@ router.post('/', authenticate, async (req, res) => {
         [execId, bm.seq_no, bm.bmcu_id, execution_date, bm.description||'RMRD']
       );
     }
+
+    // Auto-calculate road distance and seed Actual KM from it.
+    const dist = await computeExecutionDistance(client, execId, req.user.id);
+    await client.query('UPDATE trip_executions SET actual_km=$1 WHERE id=$2', [dist.total_km, execId]);
+    r.rows[0].actual_km             = dist.total_km;
+    r.rows[0].calculated_km         = dist.total_km;
+    r.rows[0].km_estimated_leg_count = dist.estimated_leg_count;
+    r.rows[0].km_incomplete         = dist.incomplete;
 
     await client.query('COMMIT');
     res.status(201).json(r.rows[0]);
@@ -314,10 +397,30 @@ router.put('/:id', authenticate, async (req, res) => {
        req.params.id]
     );
 
+    // Recompute road distance from the saved BMCU sequence (for vendor payment).
+    const dist = await computeExecutionDistance(client, req.params.id, req.user.id);
+    r.rows[0].calculated_km          = dist.total_km;
+    r.rows[0].km_estimated_leg_count = dist.estimated_leg_count;
+    r.rows[0].km_incomplete          = dist.incomplete;
+
     await client.query('COMMIT');
-    res.json(r.rows[0]);
+    res.json({ ...r.rows[0], distance: dist });
   } catch (err) {
     await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+// GET /api/executions/:id/distance — per-leg road-distance breakdown
+router.get('/:id/distance', authenticate, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const dist = await computeExecutionDistance(client, req.params.id, req.user.id);
+    await client.query('COMMIT');
+    res.json(dist);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: err.message });
   } finally { client.release(); }
 });

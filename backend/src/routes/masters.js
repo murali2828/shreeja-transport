@@ -124,22 +124,22 @@ router.get('/starting-points', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 router.post('/starting-points', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { name, location, description } = req.body;
+  const { name, location, description, latitude, longitude } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
     const r = await query(
-      'INSERT INTO starting_points (name,location,description) VALUES ($1,$2,$3) RETURNING *',
-      [name.trim(), location||null, description||null]
+      'INSERT INTO starting_points (name,location,description,latitude,longitude) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+      [name.trim(), location||null, description||null, latitude||null, longitude||null]
     );
     res.status(201).json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 router.put('/starting-points/:id', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { name, location, description, is_active } = req.body;
+  const { name, location, description, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
-      'UPDATE starting_points SET name=$1,location=$2,description=$3,is_active=$4 WHERE id=$5 RETURNING *',
-      [name, location||null, description||null, is_active ?? true, req.params.id]
+      'UPDATE starting_points SET name=$1,location=$2,description=$3,is_active=$4,latitude=$5,longitude=$6 WHERE id=$7 RETURNING *',
+      [name, location||null, description||null, is_active ?? true, latitude||null, longitude||null, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(r.rows[0]);
@@ -160,22 +160,22 @@ router.get('/testing-points', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 router.post('/testing-points', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { name, location } = req.body;
+  const { name, location, latitude, longitude } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
     const r = await query(
-      'INSERT INTO testing_points (name,location) VALUES ($1,$2) RETURNING *',
-      [name.trim(), location||null]
+      'INSERT INTO testing_points (name,location,latitude,longitude) VALUES ($1,$2,$3,$4) RETURNING *',
+      [name.trim(), location||null, latitude||null, longitude||null]
     );
     res.status(201).json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 router.put('/testing-points/:id', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { name, location, is_active } = req.body;
+  const { name, location, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
-      'UPDATE testing_points SET name=$1,location=$2,is_active=$3 WHERE id=$4 RETURNING *',
-      [name, location||null, is_active ?? true, req.params.id]
+      'UPDATE testing_points SET name=$1,location=$2,is_active=$3,latitude=$4,longitude=$5 WHERE id=$6 RETURNING *',
+      [name, location||null, is_active ?? true, latitude||null, longitude||null, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(r.rows[0]);
@@ -196,22 +196,22 @@ router.get('/delivery-points', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 router.post('/delivery-points', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { name, receiver_name, location } = req.body;
+  const { name, receiver_name, location, latitude, longitude } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
     const r = await query(
-      'INSERT INTO delivery_points (name,receiver_name,location) VALUES ($1,$2,$3) RETURNING *',
-      [name.trim(), receiver_name||null, location||null]
+      'INSERT INTO delivery_points (name,receiver_name,location,latitude,longitude) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+      [name.trim(), receiver_name||null, location||null, latitude||null, longitude||null]
     );
     res.status(201).json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 router.put('/delivery-points/:id', authenticate, authorize('admin','planner'), async (req, res) => {
-  const { name, receiver_name, location, is_active } = req.body;
+  const { name, receiver_name, location, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
-      'UPDATE delivery_points SET name=$1,receiver_name=$2,location=$3,is_active=$4 WHERE id=$5 RETURNING *',
-      [name, receiver_name||null, location||null, is_active ?? true, req.params.id]
+      'UPDATE delivery_points SET name=$1,receiver_name=$2,location=$3,is_active=$4,latitude=$5,longitude=$6 WHERE id=$7 RETURNING *',
+      [name, receiver_name||null, location||null, is_active ?? true, latitude||null, longitude||null, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(r.rows[0]);

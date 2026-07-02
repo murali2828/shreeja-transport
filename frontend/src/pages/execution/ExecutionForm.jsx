@@ -2,9 +2,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle, GripVertical } from 'lucide-react';
+import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle, GripVertical, Navigation, AlertTriangle, ChevronDown } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, getStartingPoints, cancelExecution } from '../../api/index';
+import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, getStartingPoints, cancelExecution, getExecutionDistance } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
 
 const KG = 1.0285;
@@ -548,6 +548,21 @@ export default function ExecutionForm() {
   const { data: startingPoints = [] } = useQuery({
     queryKey: ['start-pts'], queryFn: () => getStartingPoints().then(r => r.data)
   });
+  // Auto-calculated road distance breakdown (start → BMCUs → delivery).
+  const { data: distInfo, refetch: refetchDist, isFetching: distLoading } = useQuery({
+    queryKey: ['exec-distance', id], queryFn: () => getExecutionDistance(id).then(r => r.data), enabled: !!id
+  });
+  const [showLegs, setShowLegs] = useState(false);
+
+  // Auto-fill Actual KM from the calculated total when the field is empty.
+  useEffect(() => {
+    if (distInfo && (actualKm === '' || actualKm == null)) setActualKm(String(distInfo.total_km));
+  }, [distInfo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const recalcAndFill = async () => {
+    const { data } = await refetchDist();
+    if (data) { setActualKm(String(data.total_km)); toast.success(`Recalculated: ${data.total_km} km`); }
+  };
 
   useEffect(() => {
     if (exec) {
@@ -705,7 +720,7 @@ export default function ExecutionForm() {
       shift_rows: shiftRows.map(({ _key, ...r }) => r),
       entries: entries.map(({ _key, source_bmcu_code, source_bmcu_name, bmcu_code, bmcu_name, ...r }) => r)
     }),
-    onSuccess: () => { toast.success('Saved'); qc.invalidateQueries(['execution', id]); },
+    onSuccess: () => { toast.success('Saved'); qc.invalidateQueries(['execution', id]); refetchDist(); },
     onError: (e) => toast.error(e.response?.data?.error || 'Save failed'),
   });
 
@@ -780,9 +795,37 @@ export default function ExecutionForm() {
           </select>
         </div>
         <div>
-          <label className="label text-xs">Actual KM</label>
+          <label className="label text-xs flex items-center justify-between">
+            <span>Actual KM</span>
+            {!isClosed && (
+              <button type="button" onClick={recalcAndFill} disabled={distLoading}
+                className="text-[11px] text-[#0078d4] hover:underline flex items-center gap-0.5"
+                title="Recalculate road distance from the covered BMCU route">
+                <Navigation size={11} className={distLoading ? 'animate-pulse' : ''}/> Recalc
+              </button>
+            )}
+          </label>
           <input type="number" className="input w-full py-1.5" value={actualKm}
             disabled={isClosed} onChange={e => setActualKm(e.target.value)}/>
+          {distInfo && (
+            <div className="mt-1 text-[11px] leading-tight">
+              <button type="button" onClick={() => setShowLegs(s => !s)}
+                className="text-gray-500 hover:text-gray-700 flex items-center gap-0.5">
+                Calculated: <span className="font-semibold text-gray-700">{distInfo.total_km} km</span>
+                <ChevronDown size={11} className={`transition-transform ${showLegs ? 'rotate-180' : ''}`}/>
+              </button>
+              {distInfo.incomplete && (
+                <div className="text-red-600 flex items-center gap-1 mt-0.5">
+                  <AlertTriangle size={11}/> Missing coordinates on some stops — total is incomplete.
+                </div>
+              )}
+              {!distInfo.incomplete && distInfo.estimated_leg_count > 0 && (
+                <div className="text-amber-600 flex items-center gap-1 mt-0.5">
+                  <AlertTriangle size={11}/> {distInfo.estimated_leg_count} leg(s) estimated — add road km in Distance Master for exact payment.
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div>
           <label className="label text-xs">Delivery Point</label>
@@ -805,6 +848,41 @@ export default function ExecutionForm() {
           <div className="font-bold text-lg">{parseFloat(exec.expected_total_qty||0).toLocaleString()} L</div>
         </div>
       </div>
+
+      {/* Distance breakdown (start → BMCUs → delivery) */}
+      {showLegs && distInfo && (
+        <div className="card p-3 text-xs">
+          <div className="font-medium text-gray-700 mb-2 flex items-center gap-1">
+            <Navigation size={13}/> Road distance breakdown
+          </div>
+          {(!distInfo.legs || distInfo.legs.length === 0) && (
+            <div className="text-gray-400">No legs — set a start point, delivery point and covered BMCUs.</div>
+          )}
+          <div className="space-y-1">
+            {(distInfo.legs || []).map((leg, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 border-b border-gray-50 pb-1">
+                <span className="text-gray-600 truncate">{leg.from_label} → {leg.to_label}</span>
+                <span className="flex items-center gap-2 flex-shrink-0">
+                  <span className="font-mono">{leg.km} km</span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                    leg.source === 'master'    ? 'bg-green-100 text-green-700' :
+                    leg.source === 'google'    ? 'bg-blue-100 text-blue-700' :
+                    leg.source === 'estimated' ? 'bg-amber-100 text-amber-700' :
+                                                 'bg-red-100 text-red-700'}`}>
+                    {leg.source === 'master' ? 'Distance Master'
+                      : leg.source === 'google' ? 'Google (cached)'
+                      : leg.source === 'estimated' ? 'Estimated ×1.3'
+                      : 'Missing coords'}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-between mt-2 pt-1 font-semibold text-gray-700">
+            <span>Total</span><span className="font-mono">{distInfo.total_km} km</span>
+          </div>
+        </div>
+      )}
 
       {/* BMCU data table */}
       <div className="card">

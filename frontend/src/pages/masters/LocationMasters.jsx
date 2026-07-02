@@ -146,6 +146,8 @@ export default function LocationMasters() {
         formFields={[
           { key: 'name',        label: 'Name',        required: true,  placeholder: 'e.g. Balaji Dairy Depot' },
           { key: 'location',    label: 'Location',    placeholder: 'Town, District' },
+          { key: 'latitude',    label: 'Latitude',    type: 'number',  placeholder: 'e.g. 13.2172' },
+          { key: 'longitude',   label: 'Longitude',   type: 'number',  placeholder: 'e.g. 79.1003' },
           { key: 'description', label: 'Description', type: 'textarea', placeholder: 'Optional notes' },
         ]}
       />
@@ -163,6 +165,8 @@ export default function LocationMasters() {
         formFields={[
           { key: 'name',     label: 'Name',     required: true, placeholder: 'e.g. Balaji Lab' },
           { key: 'location', label: 'Location', placeholder: 'Town, District' },
+          { key: 'latitude',  label: 'Latitude',  type: 'number', placeholder: 'e.g. 13.2172' },
+          { key: 'longitude', label: 'Longitude', type: 'number', placeholder: 'e.g. 79.1003' },
         ]}
       />
 
@@ -181,6 +185,8 @@ export default function LocationMasters() {
           { key: 'name',          label: 'Plant Name',   required: true, placeholder: 'e.g. Balaji Plant' },
           { key: 'receiver_name', label: 'Receiver Name', placeholder: 'e.g. MDFVPL' },
           { key: 'location',      label: 'Location',     placeholder: 'Town, District' },
+          { key: 'latitude',      label: 'Latitude',     type: 'number', placeholder: 'e.g. 13.2172' },
+          { key: 'longitude',     label: 'Longitude',    type: 'number', placeholder: 'e.g. 79.1003' },
         ]}
       />
     </div>

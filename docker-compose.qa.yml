@@ -1,0 +1,79 @@
+version: '3.9'
+
+# ============================================================
+# QA / staging stack — fully isolated from production.
+# Run with:
+#   docker compose -p shreeja-qa --env-file .env.qa -f docker-compose.qa.yml up -d --build
+# Separate DB, volumes, network and host port (8081) so it can run on the
+# SAME server as production (8080) without any collision.
+# A host reverse proxy maps qatms.shreejamilk.com -> 127.0.0.1:8081
+# (see deploy/reverse-proxy.conf.example).
+# ============================================================
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: shreeja-qa-db
+    restart: always
+    environment:
+      POSTGRES_DB:       ${DB_NAME:-dairy_transport_qa}
+      POSTGRES_USER:     ${DB_USER:-shreeja_db}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - qa-pgdata:/var/lib/postgresql/data
+    networks:
+      - shreeja-qa-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-shreeja_db} -d ${DB_NAME:-dairy_transport_qa}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: shreeja-qa-backend
+    restart: always
+    env_file: .env.qa
+    environment:
+      NODE_ENV: production
+      DB_HOST:  db
+      DB_PORT:  5432
+      PORT:     5000
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - shreeja-qa-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: shreeja-qa-frontend
+    restart: always
+    ports:
+      - "8081:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - shreeja-qa-net
+
+volumes:
+  qa-pgdata:
+    name: shreeja-qa-pgdata
+
+networks:
+  shreeja-qa-net:
+    name: shreeja-qa-network
+    driver: bridge

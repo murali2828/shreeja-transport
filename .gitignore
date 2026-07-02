@@ -7,6 +7,7 @@ node_modules/
 .env.local
 .env.production
 .env.staging
+.env.qa
 backend/.env
 
 # ─── Build output ─────────────────────────────────────────────────────────────

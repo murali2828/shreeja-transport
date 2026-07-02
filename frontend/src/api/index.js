@@ -93,6 +93,7 @@ export const downloadPlanTemplate = () =>
 // ── Executions ────────────────────────────────────────────────────────────────
 export const getExecutions      = (p)     => api.get('/executions', { params: p });
 export const getExecution       = (id)    => api.get(`/executions/${id}`);
+export const getExecutionDistance = (id)  => api.get(`/executions/${id}/distance`);
 export const createExecution    = (d)     => api.post('/executions', d);
 export const updateExecution    = (id, d) => api.put(`/executions/${id}`, d);
 export const submitForAck       = (id)    => api.post(`/executions/${id}/submit-ack`);
