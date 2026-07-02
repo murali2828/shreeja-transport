@@ -152,16 +152,24 @@ async function main() {
        FROM tankers WHERE is_active = TRUE ORDER BY capacity_litres DESC`);
     const tankers = tankersRes.rows;
 
-    // Aggregate optimizer input: same BMCUs, same quantities (summed per BMCU).
-    const inputByBmcu = {};
-    for (const row of planBmcus) {
-      if (!inputByBmcu[row.bmcu_id]) {
-        inputByBmcu[row.bmcu_id] = { ...row, bmcu_id: row.bmcu_id, expected_qty_litres: 0 };
-      }
-      inputByBmcu[row.bmcu_id].expected_qty_litres += num(row.expected_qty);
-    }
-    const items = Object.values(inputByBmcu);
+    // Optimizer input: ONE ITEM PER PICKUP ROW (a BMCU visited in several manual
+    // trips — e.g. AM/PM shifts — stays several pickups; summing them would create
+    // fictional loads bigger than any tanker).
+    const items = planBmcus.map(row => ({
+      bmcu_id: row.bmcu_id, expected_qty_litres: num(row.expected_qty),
+      bmcu_code: row.bmcu_code, bmcu_name: row.bmcu_name,
+      district: row.district, state: row.state,
+      latitude: row.latitude, longitude: row.longitude,
+      shift_code: row.shift_code,
+    }));
     const totalQty = items.reduce((s, b) => s + b.expected_qty_litres, 0);
+    // Per-BMCU rollup (for the changes sheet + data-quality checks).
+    const byBmcu = {};
+    for (const it of items) {
+      if (!byBmcu[it.bmcu_id]) byBmcu[it.bmcu_id] = { ...it, expected_qty_litres: 0 };
+      byBmcu[it.bmcu_id].expected_qty_litres += it.expected_qty_litres;
+    }
+    const uniqueBmcus = Object.values(byBmcu);
 
     // Distance resolver over every node we may touch.
     const allNodes = [
@@ -206,43 +214,69 @@ async function main() {
       };
     });
 
-    // ── 4. Optimize the same input ───────────────────────────────────────────
-    const maxCapacity = tankers[0].capacity_litres;
-    let rawRoutes;
-    if (STRATEGY === 'district') {
-      const groups = {};
-      for (const it of items) (groups[it.district || it.state || 'other'] ||= []).push(it);
-      rawRoutes = Object.values(groups).flatMap(g => clarkeWrightSavings(depot, g, resolve, maxCapacity));
-    } else {
-      rawRoutes = clarkeWrightSavings(depot, items, resolve, maxCapacity);
-    }
-    const assignments = assignTankersFleetFeasible(rawRoutes, tankers, resolve, depot);
-
-    const optLegSources = legCounter();
-    const optTrips = assignments.map((asgn, i) => {
-      const ordered = nearestNeighbourOrder(depot, asgn.route, resolve);
-      const { totalKm, legs, returnLeg } = computeRouteKm(depot, ordered, resolve);
-      countLegs(optLegSources, legs, returnLeg);
-      const rate = effectiveRate(asgn.tanker);
+    // ── 4. Optimize the same input — capacity sweep for a fleet-feasible plan ─
+    // Clarke-Wright packs routes up to one capacity value. Packing to the LARGEST
+    // tanker exhausts the few big tankers and leaves loads no remaining tanker
+    // fits, so we sweep the fleet's distinct capacities and keep the best plan
+    // where EVERY trip fits its assigned tanker with no tanker double-booked.
+    // Ranking: feasible first, then fewest trips, then least km.
+    const buildTrips = (capacity) => {
+      let rawRoutes;
+      if (STRATEGY === 'district') {
+        const groups = {};
+        for (const it of items) (groups[it.district || it.state || 'other'] ||= []).push(it);
+        rawRoutes = Object.values(groups).flatMap(g => clarkeWrightSavings(depot, g, resolve, capacity));
+      } else {
+        rawRoutes = clarkeWrightSavings(depot, items, resolve, capacity);
+      }
+      const assignments = assignTankersFleetFeasible(rawRoutes, tankers, resolve, depot);
+      const legSources = legCounter();
+      const trips = assignments.map((asgn, i) => {
+        const ordered = nearestNeighbourOrder(depot, asgn.route, resolve);
+        const { totalKm, legs, returnLeg } = computeRouteKm(depot, ordered, resolve);
+        countLegs(legSources, legs, returnLeg);
+        const rate = effectiveRate(asgn.tanker);
+        return {
+          trip_no: i + 1, tanker_number: asgn.tanker.tanker_number,
+          capacity: num(asgn.tanker.capacity_litres),
+          qty: asgn.load, util: asgn.tanker.capacity_litres > 0 ? asgn.load / asgn.tanker.capacity_litres * 100 : 0,
+          model_km: totalKm, rate, model_cost: totalKm * rate,
+          bmcu_count: ordered.length,
+          ordered, legs, returnLeg,
+          reused: asgn.reused, overflow: asgn.overflow,
+        };
+      });
       return {
-        trip_no: i + 1, tanker_number: asgn.tanker.tanker_number,
-        capacity: num(asgn.tanker.capacity_litres),
-        qty: asgn.load, util: asgn.tanker.capacity_litres > 0 ? asgn.load / asgn.tanker.capacity_litres * 100 : 0,
-        model_km: totalKm, rate, model_cost: totalKm * rate,
-        bmcu_count: ordered.length,
-        ordered, legs, returnLeg,
-        reused: asgn.reused, overflow: asgn.overflow,
+        capacity, trips, legSources,
+        km: trips.reduce((s, t) => s + t.model_km, 0),
+        overflowCount: trips.filter(t => t.overflow).length,
+        reusedCount:   trips.filter(t => t.reused).length,
       };
-    });
+    };
 
-    // ── 5. Coverage assertion ────────────────────────────────────────────────
+    const capOptions = [...new Set(tankers.map(t => num(t.capacity_litres)))].sort((a, b) => b - a);
+    let best = null;
+    for (const cap of capOptions) {
+      const cand = buildTrips(cap);
+      const feasible = cand.overflowCount === 0 && cand.reusedCount === 0;
+      const better = !best
+        || (feasible && !best.feasible)
+        || (feasible === best.feasible
+            && (cand.trips.length < best.trips.length
+                || (cand.trips.length === best.trips.length && cand.km < best.km)));
+      if (better) best = { ...cand, feasible };
+    }
+    const optTrips = best.trips;
+    const optLegSources = best.legSources;
+    console.log(`Capacity sweep: chose routing capacity ${best.capacity} L (${capOptions.length} candidates, feasible=${best.feasible})`);
+
+    // ── 5. Coverage assertion (unique BMCU set + pickup count conserved) ─────
     const inputIds  = new Set(items.map(b => b.bmcu_id));
     const outputIds = new Set(optTrips.flatMap(t => t.ordered.map(b => b.bmcu_id)));
     const dropped   = [...inputIds].filter(id => !outputIds.has(id));
-    const duplicated = optTrips.flatMap(t => t.ordered.map(b => b.bmcu_id))
-      .filter((id, i, arr) => arr.indexOf(id) !== i);
-    if (dropped.length || duplicated.length) {
-      console.error(`COVERAGE FAILURE — dropped: [${dropped}], duplicated: [${duplicated}]`);
+    const outputItemCount = optTrips.reduce((s, t) => s + t.ordered.length, 0);
+    if (dropped.length || outputItemCount !== items.length) {
+      console.error(`COVERAGE FAILURE — dropped BMCUs: [${dropped}], pickups in=${items.length} out=${outputItemCount}`);
       process.exit(3);
     }
 
@@ -265,16 +299,19 @@ async function main() {
     M.stored_cost = sum(manualTrips, t => t.stored_cost);
 
     // ── 7. Data quality ──────────────────────────────────────────────────────
-    const noCoordBmcus = items.filter(b => !(num(b.latitude) && num(b.longitude)));
+    const noCoordBmcus = uniqueBmcus.filter(b => !(num(b.latitude) && num(b.longitude)));
     const noRateTankers = tankers.filter(t => effectiveRate(t) === 0);
     const reusedCount   = optTrips.filter(t => t.reused).length;
     const overflowCount = optTrips.filter(t => t.overflow).length;
 
-    // Manual assignment map for the changes sheet
+    // Assignment maps for the changes sheet — a BMCU may appear in several trips
+    // (multi-shift pickups), so collect the list of trip numbers per BMCU.
+    const collect = (map, id, tripNo) => { (map[id] ||= []).includes(tripNo) || map[id].push(tripNo); };
     const manualTripOfBmcu = {};
-    manualTrips.forEach(t => t.bmcus.forEach(b => { manualTripOfBmcu[b.bmcu_id] = t.trip_no; }));
+    manualTrips.forEach(t => t.bmcus.forEach(b => collect(manualTripOfBmcu, b.bmcu_id, t.trip_no)));
     const optTripOfBmcu = {};
-    optTrips.forEach(t => t.ordered.forEach(b => { optTripOfBmcu[b.bmcu_id] = t.trip_no; }));
+    optTrips.forEach(t => t.ordered.forEach(b => collect(optTripOfBmcu, b.bmcu_id, t.trip_no)));
+    const tripsLabel = arr => (arr && arr.length) ? arr.join('+') : '—';
 
     // ── 8. Excel ─────────────────────────────────────────────────────────────
     fs.mkdirSync(path.dirname(OUT), { recursive: true });
@@ -345,12 +382,12 @@ async function main() {
       { header: 'Changed', width: 9 },
     ];
     cws.getRow(1).font = bold.font;
-    items
+    uniqueBmcus
       .sort((a, b) => (a.bmcu_code || '').localeCompare(b.bmcu_code || ''))
       .forEach(b => cws.addRow([
         b.bmcu_code, b.bmcu_name, b.district || '', r2(b.expected_qty_litres),
-        manualTripOfBmcu[b.bmcu_id] ?? '—', optTripOfBmcu[b.bmcu_id] ?? '—',
-        manualTripOfBmcu[b.bmcu_id] !== optTripOfBmcu[b.bmcu_id] ? 'YES' : '',
+        tripsLabel(manualTripOfBmcu[b.bmcu_id]), tripsLabel(optTripOfBmcu[b.bmcu_id]),
+        tripsLabel(manualTripOfBmcu[b.bmcu_id]) !== tripsLabel(optTripOfBmcu[b.bmcu_id]) ? 'YES' : '',
       ]));
 
     const dws = wb.addWorksheet('Data Quality');
@@ -360,6 +397,8 @@ async function main() {
       const tot = (c.master || 0) + (c.geo || 0) + (c.fallback || 0);
       return tot ? `master ${c.master || 0} · geo ${c.geo || 0} · fallback ${c.fallback || 0} (of ${tot})` : '—';
     };
+    dws.addRow(['Routing capacity chosen (fleet-feasibility sweep)', best.capacity + ' L',
+      `${capOptions.length} capacity candidates tried; feasible=${best.feasible}`]);
     dws.addRow(['Manual legs by distance source', '', legPct(manualLegSources)]);
     dws.addRow(['Optimized legs by distance source', '', legPct(optLegSources)]);
     dws.addRow(['BMCUs missing coordinates', noCoordBmcus.length,

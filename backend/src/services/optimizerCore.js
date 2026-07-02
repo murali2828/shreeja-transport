@@ -134,7 +134,9 @@ function computeRouteKm(depot, orderedBmcus, resolve) {
   };
 }
 
-// ─── Clarke-Wright savings — groups BMCUs into routes ────────────────────────
+// ─── Clarke-Wright savings — groups pickup items into routes ─────────────────
+// Items are identified by object reference (not bmcu_id), so the same BMCU may
+// appear as multiple items (e.g. separate AM/PM pickups) without breaking merges.
 function clarkeWrightSavings(depot, bmcus, resolve, tankerCapacity) {
   const n = bmcus.length;
   if (n === 0) return [];
@@ -167,10 +169,10 @@ function clarkeWrightSavings(depot, bmcus, resolve, tankerCapacity) {
 
     if (routeLoad[ri] + routeLoad[rj] > tankerCapacity) continue;
 
-    const iAtEnd   = routeI[routeI.length - 1].bmcu_id === bmcus[i].bmcu_id;
-    const iAtStart = routeI[0].bmcu_id === bmcus[i].bmcu_id;
-    const jAtStart = routeJ[0].bmcu_id === bmcus[j].bmcu_id;
-    const jAtEnd   = routeJ[routeJ.length - 1].bmcu_id === bmcus[j].bmcu_id;
+    const iAtEnd   = routeI[routeI.length - 1] === bmcus[i];
+    const iAtStart = routeI[0] === bmcus[i];
+    const jAtStart = routeJ[0] === bmcus[j];
+    const jAtEnd   = routeJ[routeJ.length - 1] === bmcus[j];
 
     let merged = null;
     if (iAtEnd   && jAtStart) merged = [...routeI, ...routeJ];
@@ -183,7 +185,7 @@ function clarkeWrightSavings(depot, bmcus, resolve, tankerCapacity) {
     routes.push(merged);
     routeLoad.push(routeLoad[ri] + routeLoad[rj]);
     for (const bm of merged) {
-      const origIdx = bmcus.findIndex(b => b.bmcu_id === bm.bmcu_id);
+      const origIdx = bmcus.indexOf(bm); // reference identity — supports duplicate bmcu_ids
       if (origIdx !== -1) routeOf[origIdx] = newIdx;
     }
     routes[ri] = null;
