@@ -1,235 +1,22 @@
 // backend/src/routes/optimize.js
 // =============================================================================
-// Shreeja Route Optimizer
-//
-// ALGORITHM: Clarke-Wright Savings with manual distance matrix
-//
-// Distance resolution order for any pair (A, B):
-//   1. Exact entry in distance_master table (planner-entered road km)
-//   2. Fallback: district-based estimate (if same district → 20 km avg, else 50 km)
-//   3. Hard fallback: configurable default (15 km)
-//   Any leg that used fallback is flagged km_is_estimated = TRUE on the trip.
-//
-// The algorithm:
-//   Phase 1 – Build distance matrix for depot + all selected BMCUs
-//   Phase 2 – Clarke-Wright: compute savings s(i,j) = d(depot,i)+d(depot,j)−d(i,j)
-//   Phase 3 – Sort savings descending; merge routes greedily respecting capacity
-//   Phase 4 – Assign best-fit tanker to each route
-//   Phase 5 – Within each route: re-order by nearest-neighbour using distance matrix
-//   Phase 6 – Compute final KM per leg, total cost, utilisation
+// Shreeja Route Optimizer — HTTP endpoints.
+// Core algorithms (Clarke-Wright savings, nearest-neighbour ordering, distance
+// resolution) live in services/optimizerCore.js and are shared with offline
+// analysis scripts. Distance cascade per leg:
+//   distance_master (exact road km) → coordinates Haversine × road factor →
+//   district constants (flagged 'fallback').
 // =============================================================================
 
 const express = require('express');
 const router  = express.Router();
 const { pool } = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
-
-// ─── Default fallback km values (tunable) ────────────────────────────────────
-const SAME_DISTRICT_FALLBACK_KM  = 20;
-const DIFF_DISTRICT_FALLBACK_KM  = 50;
-const HARD_FALLBACK_KM           = 30;
-
-// =============================================================================
-// DISTANCE MATRIX BUILDER
-// Loads all relevant distances from distance_master into an in-memory map.
-// Key: "type:id — type:id" (always normalised so lower key first)
-// =============================================================================
-function distKey(typeA, idA, typeB, idB) {
-  const a = `${typeA}:${idA}`;
-  const b = `${typeB}:${idB}`;
-  return a <= b ? `${a}||${b}` : `${b}||${a}`;
-}
-
-async function buildDistanceMap(client, nodeIds) {
-  // nodeIds: [{ type, id }]
-  if (!nodeIds.length) return {};
-
-  // Pull all relevant pairs from DB in one query using ANY
-  const types = [...new Set(nodeIds.map(n => n.type))];
-  const ids   = [...new Set(nodeIds.map(n => n.id))];
-
-  const r = await client.query(
-    `SELECT from_type, from_id, to_type, to_id, distance_km
-     FROM distance_master
-     WHERE (from_type = ANY($1) AND from_id = ANY($2))
-        OR (to_type   = ANY($1) AND to_id   = ANY($2))`,
-    [types, ids]
-  );
-
-  const map = {};
-  for (const row of r.rows) {
-    const key = distKey(row.from_type, row.from_id, row.to_type, row.to_id);
-    map[key] = parseFloat(row.distance_km);
-  }
-  return map;
-}
-
-function getDistance(distMap, typeA, idA, typeB, idB, nodeA, nodeB) {
-  const key = distKey(typeA, idA, typeB, idB);
-  if (distMap[key] !== undefined) return { km: distMap[key], estimated: false };
-
-  // Fallback by district match
-  if (typeA === 'bmcu' && typeB === 'bmcu' && nodeA && nodeB) {
-    if (nodeA.district && nodeB.district && nodeA.district === nodeB.district) {
-      return { km: SAME_DISTRICT_FALLBACK_KM, estimated: true };
-    }
-    return { km: DIFF_DISTRICT_FALLBACK_KM, estimated: true };
-  }
-  return { km: HARD_FALLBACK_KM, estimated: true };
-}
-
-// =============================================================================
-// NEAREST-NEIGHBOUR TSP within a single route
-// Reorders the BMCU list to minimise total leg distance
-// =============================================================================
-function nearestNeighbourOrder(depot, bmcus, distMap) {
-  if (bmcus.length <= 1) return bmcus;
-
-  const remaining = [...bmcus];
-  const ordered   = [];
-  let current     = depot; // start at depot
-
-  while (remaining.length > 0) {
-    let bestIdx  = 0;
-    let bestKm   = Infinity;
-
-    for (let i = 0; i < remaining.length; i++) {
-      const bm = remaining[i];
-      const { km } = getDistance(distMap, current.type, current.id, 'bmcu', bm.bmcu_id, null, bm);
-      if (km < bestKm) { bestKm = km; bestIdx = i; }
-    }
-
-    ordered.push(remaining[bestIdx]);
-    current = { type: 'bmcu', id: remaining[bestIdx].bmcu_id };
-    remaining.splice(bestIdx, 1);
-  }
-
-  return ordered;
-}
-
-// =============================================================================
-// COMPUTE ROUTE KM
-// depot → bmcu1 → bmcu2 → … → bmcuN → depot (depot = delivery point)
-// Returns { totalKm, legs, anyEstimated }
-// =============================================================================
-function computeRouteKm(depot, orderedBmcus, distMap, bmcuDetailsMap) {
-  const legs = [];
-  let totalKm = 0;
-  let anyEstimated = false;
-
-  let prev = depot;
-
-  for (const bm of orderedBmcus) {
-    const bmNode = bmcuDetailsMap[bm.bmcu_id] || {};
-    const { km, estimated } = getDistance(distMap, prev.type, prev.id, 'bmcu', bm.bmcu_id, null, bmNode);
-    legs.push({ bmcu_id: bm.bmcu_id, leg_km: km, leg_is_estimated: estimated });
-    totalKm += km;
-    if (estimated) anyEstimated = true;
-    prev = { type: 'bmcu', id: bm.bmcu_id };
-  }
-
-  // Return leg (last BMCU → delivery point)
-  const lastBmcu = orderedBmcus[orderedBmcus.length - 1];
-  const lastBmNode = bmcuDetailsMap[lastBmcu?.bmcu_id] || {};
-  const { km: returnKm, estimated: returnEst } =
-    getDistance(distMap, 'bmcu', lastBmcu?.bmcu_id, depot.type, depot.id, lastBmNode, null);
-  totalKm += returnKm;
-  if (returnEst) anyEstimated = true;
-
-  return { totalKm: Math.round(totalKm * 10) / 10, legs, anyEstimated };
-}
-
-// =============================================================================
-// CLARKE-WRIGHT SAVINGS
-// Returns array of routes (each route = array of bmcu items)
-// =============================================================================
-function clarkeWrightSavings(depot, bmcus, distMap, bmcuDetailsMap, tankerCapacity) {
-  const n = bmcus.length;
-  if (n === 0) return [];
-
-  // Compute savings for all pairs
-  const savings = [];
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const bmA = bmcus[i];
-      const bmB = bmcus[j];
-      const dA  = getDistance(distMap, depot.type, depot.id, 'bmcu', bmA.bmcu_id, null, bmcuDetailsMap[bmA.bmcu_id]);
-      const dB  = getDistance(distMap, depot.type, depot.id, 'bmcu', bmB.bmcu_id, null, bmcuDetailsMap[bmB.bmcu_id]);
-      const dAB = getDistance(distMap, 'bmcu', bmA.bmcu_id, 'bmcu', bmB.bmcu_id, bmcuDetailsMap[bmA.bmcu_id], bmcuDetailsMap[bmB.bmcu_id]);
-      const saving = dA.km + dB.km - dAB.km;
-      savings.push({ i, j, saving });
-    }
-  }
-  savings.sort((a, b) => b.saving - a.saving); // descending
-
-  // Each BMCU starts in its own route
-  const routes    = bmcus.map(bm => [bm]);
-  const routeLoad = bmcus.map(bm => parseFloat(bm.expected_qty_litres) || 0);
-  const routeOf   = bmcus.map((_, i) => i); // routeOf[i] = route index
-
-  for (const { i, j, saving } of savings) {
-    if (saving <= 0) break; // no more beneficial merges
-
-    const ri = routeOf[i];
-    const rj = routeOf[j];
-    if (ri === rj || ri === -1 || rj === -1) continue;
-
-    const routeI = routes[ri];
-    const routeJ = routes[rj];
-    if (!routeI || !routeJ) continue;
-
-    // Check capacity
-    if (routeLoad[ri] + routeLoad[rj] > tankerCapacity) continue;
-
-    // i must be at a route end, j must be at a route end
-    const iAtEnd   = routeI[routeI.length - 1].bmcu_id === bmcus[i].bmcu_id;
-    const iAtStart = routeI[0].bmcu_id === bmcus[i].bmcu_id;
-    const jAtStart = routeJ[0].bmcu_id === bmcus[j].bmcu_id;
-    const jAtEnd   = routeJ[routeJ.length - 1].bmcu_id === bmcus[j].bmcu_id;
-
-    let merged = null;
-    if (iAtEnd   && jAtStart) merged = [...routeI, ...routeJ];
-    else if (jAtEnd   && iAtStart) merged = [...routeJ, ...routeI];
-    else if (iAtEnd   && jAtEnd)   merged = [...routeI, ...[...routeJ].reverse()];
-    else if (iAtStart && jAtStart) merged = [...[...routeI].reverse(), ...routeJ];
-    else continue;
-
-    const newIdx = routes.length;
-    routes.push(merged);
-    routeLoad.push(routeLoad[ri] + routeLoad[rj]);
-
-    // Update routeOf for all nodes in merged routes
-    for (const bm of merged) {
-      const origIdx = bmcus.findIndex(b => b.bmcu_id === bm.bmcu_id);
-      if (origIdx !== -1) routeOf[origIdx] = newIdx;
-    }
-    routes[ri] = null;
-    routes[rj] = null;
-  }
-
-  return routes.filter(r => r !== null && r.length > 0);
-}
-
-// =============================================================================
-// TANKER ASSIGNMENT
-// Given a set of routes with known loads, pick the cheapest feasible tanker
-// =============================================================================
-function assignTankers(routes, routeLoads, tankers, strategy) {
-  const sorter = strategy === 'cheapest'
-    ? (a, b) => a.per_km_rate - b.per_km_rate || b.capacity_litres - a.capacity_litres
-    : (a, b) => b.capacity_litres - a.capacity_litres; // best_fit: largest first
-
-  const sorted = [...tankers].sort(sorter);
-
-  return routes.map((route, idx) => {
-    const load = routeLoads[idx];
-    // Best-fit: smallest tanker that still fits
-    const fit = sorted.filter(t => t.capacity_litres >= load)
-      .sort((a, b) => a.capacity_litres - b.capacity_litres)[0]
-      || sorted[0]; // overflow fallback
-    return { route, load, tanker: fit };
-  });
-}
+const {
+  buildDistanceMap, makeResolver, nodeKey,
+  nearestNeighbourOrder, computeRouteKm, clarkeWrightSavings,
+  assignTankers, effectiveRate,
+} = require('../services/optimizerCore');
 
 // =============================================================================
 // POST /api/optimize/run
@@ -249,15 +36,15 @@ router.post('/run', authenticate, authorize('admin', 'planner'), async (req, res
   try {
     // 1. Load delivery point (the "depot" for routing — tankers end here)
     const dpRes = await client.query(
-      'SELECT id, name FROM delivery_points WHERE id=$1 AND is_active=TRUE', [delivery_point_id]
+      'SELECT id, name, latitude, longitude FROM delivery_points WHERE id=$1 AND is_active=TRUE', [delivery_point_id]
     );
     if (!dpRes.rows.length) return res.status(404).json({ error: 'Delivery point not found' });
     const depot = { type: 'delivery_point', id: parseInt(delivery_point_id), name: dpRes.rows[0].name };
 
-    // 2. Load BMCU details
+    // 2. Load BMCU details (incl. coordinates for geo-distance fallback)
     const bmcuIds = inputBmcus.map(b => b.bmcu_id);
     const bmcuRes = await client.query(
-      'SELECT id, bmcu_code, bmcu_name, district, state FROM bmcus WHERE id=ANY($1) AND is_active=TRUE',
+      'SELECT id, bmcu_code, bmcu_name, district, state, latitude, longitude FROM bmcus WHERE id=ANY($1) AND is_active=TRUE',
       [bmcuIds]
     );
     const bmcuDetailsMap = {};
@@ -268,9 +55,9 @@ router.post('/run', authenticate, authorize('admin', 'planner'), async (req, res
       return res.status(400).json({ error: `BMCUs not found: ${missingBmcus.map(b=>b.bmcu_id).join(', ')}` });
     }
 
-    // 3. Load active tankers
+    // 3. Load active tankers (rate_per_km_bmcu is the maintained collection rate)
     const tankerRes = await client.query(
-      'SELECT id, tanker_number, capacity_litres, per_km_rate FROM tankers WHERE is_active=TRUE ORDER BY capacity_litres DESC'
+      'SELECT id, tanker_number, capacity_litres, per_km_rate, rate_per_km_bmcu FROM tankers WHERE is_active=TRUE ORDER BY capacity_litres DESC'
     );
     if (!tankerRes.rows.length) return res.status(400).json({ error: 'No active tankers' });
     const tankers = tankerRes.rows;
@@ -282,6 +69,17 @@ router.post('/run', authenticate, authorize('admin', 'planner'), async (req, res
       ...bmcuIds.map(id => ({ type: 'bmcu', id }))
     ];
     const distMap = await buildDistanceMap(client, allNodes);
+
+    // 4b. Node map (coords + district) → distance resolver:
+    //     distance_master → Haversine × road factor → district constants
+    const spRes = await client.query(
+      'SELECT id, latitude, longitude FROM starting_points WHERE id=$1', [start_point_id]
+    );
+    const nodeMap = {};
+    nodeMap[nodeKey('delivery_point', depot.id)] = dpRes.rows[0];
+    if (spRes.rows.length) nodeMap[nodeKey('starting_point', parseInt(start_point_id))] = spRes.rows[0];
+    bmcuRes.rows.forEach(b => { nodeMap[nodeKey('bmcu', b.id)] = b; });
+    const resolve = makeResolver(distMap, nodeMap);
 
     // 5. Enrich input items
     const items = inputBmcus.map(inp => ({
@@ -309,33 +107,33 @@ router.post('/run', authenticate, authorize('admin', 'planner'), async (req, res
       }
       rawRoutes = [];
       for (const groupItems of Object.values(groups)) {
-        const groupRoutes = clarkeWrightSavings(depot, groupItems, distMap, bmcuDetailsMap, maxCapacity);
+        const groupRoutes = clarkeWrightSavings(depot, groupItems, resolve, maxCapacity);
         rawRoutes.push(...groupRoutes);
       }
     } else {
       // distance_savings, best_fit, cheapest all use full savings
-      rawRoutes = clarkeWrightSavings(depot, items, distMap, bmcuDetailsMap, maxCapacity);
+      rawRoutes = clarkeWrightSavings(depot, items, resolve, maxCapacity);
     }
 
     const routeLoads = rawRoutes.map(route =>
       route.reduce((s, bm) => s + bm.expected_qty_litres, 0)
     );
 
-    // 8. Assign tankers
-    const assignments = assignTankers(rawRoutes, routeLoads, tankers, strategy);
+    // 8. Assign tankers (effective rate = rate_per_km_bmcu → per_km_rate)
+    const assignments = assignTankers(rawRoutes, routeLoads, tankers, strategy, effectiveRate);
 
     // 9. For each route: nearest-neighbour reorder + compute km
     let totalEstimatedKm   = 0;
     let totalEstimatedCost = 0;
-    let totalEstimatedLegs = 0;
+    let totalFallbackLegs  = 0; // legs on crude district constants (no master km, no coords)
     let totalLegs          = 0;
 
     const trips = assignments.map((asgn, i) => {
-      // Re-order BMCUs within trip using distance matrix
-      const ordered = nearestNeighbourOrder(depot, asgn.route, distMap);
-      const { totalKm, legs, anyEstimated } = computeRouteKm(depot, ordered, distMap, bmcuDetailsMap);
+      // Re-order BMCUs within trip using the distance resolver
+      const ordered = nearestNeighbourOrder(depot, asgn.route, resolve);
+      const { totalKm, legs, anyEstimated, returnLeg } = computeRouteKm(depot, ordered, resolve);
 
-      const estimatedCost = totalKm * parseFloat(asgn.tanker.per_km_rate);
+      const estimatedCost = totalKm * effectiveRate(asgn.tanker);
       const perLitreCost  = asgn.load > 0 ? estimatedCost / asgn.load : 0;
       const utilPct       = asgn.tanker.capacity_litres > 0
         ? (asgn.load / asgn.tanker.capacity_litres) * 100 : 0;
@@ -343,7 +141,8 @@ router.post('/run', authenticate, authorize('admin', 'planner'), async (req, res
       totalEstimatedKm   += totalKm;
       totalEstimatedCost += estimatedCost;
       totalLegs          += legs.length + 1; // +1 for return leg
-      totalEstimatedLegs += legs.filter(l => l.leg_is_estimated).length + (anyEstimated ? 1 : 0);
+      totalFallbackLegs  += legs.filter(l => l.leg_source === 'fallback').length
+                          + (returnLeg.leg_source === 'fallback' ? 1 : 0);
 
       return {
         trip_seq: i + 1,
@@ -368,13 +167,16 @@ router.post('/run', authenticate, authorize('admin', 'planner'), async (req, res
             shift_code: bm.shift_code,
             leg_km: legInfo.leg_km,
             leg_is_estimated: legInfo.leg_is_estimated || false,
+            leg_source: legInfo.leg_source,
           };
         })
       };
     });
 
+    // Coverage = % of legs resolved with usable distances (master road km or
+    // coordinate-based geo estimate); only crude district-constant legs count against it.
     const kmCoverage = totalLegs > 0
-      ? Math.round((1 - totalEstimatedLegs / totalLegs) * 100 * 10) / 10
+      ? Math.round((1 - totalFallbackLegs / totalLegs) * 100 * 10) / 10
       : 0;
 
     // 10. Persist session
@@ -410,7 +212,7 @@ router.post('/run', authenticate, authorize('admin', 'planner'), async (req, res
             total_qty_litres, utilization_pct, estimated_km, estimated_cost, per_liter_cost, km_is_estimated)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
         [sessionId, trip.trip_seq, trip.tanker.id, trip.tanker.tanker_number,
-         trip.tanker.capacity_litres, trip.tanker.per_km_rate,
+         trip.tanker.capacity_litres, effectiveRate(trip.tanker),
          trip.total_qty_litres, trip.utilization_pct,
          trip.estimated_km, trip.estimated_cost, trip.per_liter_cost, trip.km_is_estimated]
       );
@@ -438,9 +240,11 @@ router.post('/run', authenticate, authorize('admin', 'planner'), async (req, res
       strategy,
       km_coverage_pct: kmCoverage,
       has_estimated_legs: estimatedLegsExist,
-      warning: estimatedLegsExist
-        ? `Some distances used fallback estimates (marked with ⚠). Add more entries in Distance Master for precise KM calculations.`
-        : null,
+      warning: totalFallbackLegs > 0
+        ? `${totalFallbackLegs} leg(s) had no road km or coordinates and used crude district estimates (marked with ⚠). Add Distance Master entries or BMCU coordinates for precise KM.`
+        : (estimatedLegsExist
+            ? 'Distances are coordinate-based estimates (straight-line × road factor). Add Distance Master entries for exact road KM.'
+            : null),
       summary: {
         trip_count: trips.length,
         total_qty_litres: Math.round(totalQty * 100) / 100,
@@ -492,10 +296,11 @@ router.post('/:sessionId/save-as-plans', authenticate, authorize('admin', 'plann
       const expectedKm = parseFloat(ov.expected_km || optTrip.estimated_km);
 
       const tRes = await client.query(
-        'SELECT per_km_rate, capacity_litres FROM tankers WHERE id=$1', [tankerId]
+        'SELECT per_km_rate, rate_per_km_bmcu, capacity_litres FROM tankers WHERE id=$1', [tankerId]
       );
       const tanker       = tRes.rows[0];
-      const perKmRate    = parseFloat(tanker?.per_km_rate   || optTrip.per_km_rate);
+      const perKmRate    = tanker ? (effectiveRate(tanker) || parseFloat(optTrip.per_km_rate) || 0)
+                                  : (parseFloat(optTrip.per_km_rate) || 0);
       const totalCost    = expectedKm * perKmRate;
       const perLitreCost = optTrip.total_qty_litres > 0 ? totalCost / optTrip.total_qty_litres : 0;
       const utilPct      = tanker?.capacity_litres > 0
