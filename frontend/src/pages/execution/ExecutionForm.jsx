@@ -341,6 +341,7 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                           <select disabled={isClosed} className="input py-0 px-1 text-xs w-32"
                             value={e.category || ''}
                             onChange={ev => onUpdateEntry(e._key, 'category', ev.target.value)}>
+                            <option value="">— Select —</option>
                             {BALANCE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                         </td>
@@ -683,7 +684,7 @@ export default function ExecutionForm() {
       bmcu_seq_no: seqNo,
       bmcu_id: bmcuId || null,
       kind,
-      category: kind === 'balance_milk' ? BALANCE_CATEGORIES[0] : null,
+      category: null,
       source_bmcu_id: null,
       source_bmcu_code: '',
       qty_litres: '', fat_pct: '', snf_pct: '',
