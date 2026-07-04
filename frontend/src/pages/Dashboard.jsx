@@ -1,5 +1,6 @@
 // frontend/src/pages/Dashboard.jsx
 // Shreeja Platform Theme: white greeting text, frosted glass cards, sky-blue background
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Truck, ClipboardList, Play, CheckSquare, TrendingUp, Zap, Route } from 'lucide-react';
@@ -43,15 +44,17 @@ export default function Dashboard() {
   const { user } = useAuth();
   const navigate  = useNavigate();
   const today     = new Date().toISOString().slice(0, 10);
+  const [selectedDate, setSelectedDate] = useState(today);
+  const isToday = selectedDate === today;
 
   const { data: todayPlans = [] } = useQuery({
-    queryKey: ['plans', today],
-    queryFn:  () => getPlans({ plan_for_date: today }).then(r => r.data),
+    queryKey: ['plans', selectedDate],
+    queryFn:  () => getPlans({ plan_for_date: selectedDate }).then(r => r.data),
   });
 
   const { data: activeExecs = [] } = useQuery({
-    queryKey: ['executions', 'active'],
-    queryFn:  () => getExecutions({ execution_date: today }).then(r => r.data),
+    queryKey: ['executions', selectedDate],
+    queryFn:  () => getExecutions({ execution_date: selectedDate }).then(r => r.data),
   });
 
   const { data: distSummary } = useQuery({
@@ -72,18 +75,31 @@ export default function Dashboard() {
     <div className="space-y-6 w-full">
 
       {/* Hero greeting — white text on sky gradient (matches screenshot) */}
-      <div className="py-4">
-        <h1 className="page-title text-2xl">
-          {greet}, {user?.full_name?.split(' ').slice(0, 2).join(' ')}
-        </h1>
-        <p className="page-sub">
-          {new Date().toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long', year:'numeric' })}
-        </p>
+      <div className="py-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="page-title text-2xl">
+            {greet}, {user?.full_name?.split(' ').slice(0, 2).join(' ')}
+          </h1>
+          <p className="page-sub">
+            {new Date().toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long', year:'numeric' })}
+          </p>
+        </div>
+        {/* Date filter — tiles reflect this date */}
+        <div className="flex items-center gap-2">
+          <input type="date" className="input py-1.5 text-sm" value={selectedDate}
+            onChange={e => setSelectedDate(e.target.value || today)}/>
+          {!isToday && (
+            <button onClick={() => setSelectedDate(today)}
+              className="btn-secondary text-xs py-1.5 px-3">Today</button>
+          )}
+        </div>
       </div>
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard icon={ClipboardList} label="Today's Plans"    value={todayPlans.length}
+        <StatCard icon={ClipboardList}
+          label={isToday ? "Today's Plans" : `Plans — ${selectedDate.split('-').reverse().join('/')}`}
+          value={todayPlans.length}
           sub={`${published} published · ${drafts} draft`}
           colorClass="stat-card-blue"  onClick={() => navigate('/planning')}/>
         <StatCard icon={Play}         label="In Progress"       value={inProg}
@@ -92,7 +108,7 @@ export default function Dashboard() {
         <StatCard icon={CheckSquare}  label="Pending Ack"       value={pendAck}
           sub="awaiting acknowledgement"
           colorClass="stat-card-amber" onClick={() => navigate('/execution')}/>
-        <StatCard icon={TrendingUp}   label="Closed Today"      value={closed}
+        <StatCard icon={TrendingUp}   label={isToday ? 'Closed Today' : 'Closed'} value={closed}
           sub="trips completed"
           colorClass="stat-card-green"/>
       </div>

@@ -125,6 +125,17 @@ export const createDocAlertRecipient  = (d)  => api.post('/documents/alerts/reci
 export const deleteDocAlertRecipient  = (id) => api.delete(`/documents/alerts/recipients/${id}`);
 export const runDocAlerts             = (force) => api.post('/documents/alerts/run', { force });
 
+// ── Audit / User Activity ─────────────────────────────────────────────────────
+export const getAuditLogs    = (p) => api.get('/audit', { params: p });
+export const getAuditFilters = ()  => api.get('/audit/filters');
+export const exportAuditLogs = (p) =>
+  api.get('/audit/export', { params: p, responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'user_activity_report.xlsx'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
 // ── Reports ───────────────────────────────────────────────────────────────────
 export const getDailyTSReport   = (p)    => api.get('/reports/daily-ts', { params: p });
 export const getBmcuWiseReport  = (p)    => api.get('/reports/bmcu-wise', { params: p });

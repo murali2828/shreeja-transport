@@ -89,6 +89,7 @@ export default function Sidebar({ collapsed = false }) {
       {(isPlanner || isViewer) && (
         <NavSection label={collapsed ? '' : 'Reports'}>
           {ni('/reports', <BarChart2 size={15}/>, 'Daily TS Report')}
+          {isAdmin && ni('/reports/audit', <Users size={15}/>, 'User Activity')}
         </NavSection>
       )}
 

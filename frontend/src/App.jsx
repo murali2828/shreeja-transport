@@ -37,6 +37,7 @@ import ClosedTrips          from './pages/execution/ClosedTrips';
 
 // Reports
 import DailyTSReport   from './pages/reports/DailyTSReport';
+import AuditLog        from './pages/reports/AuditLog';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } }
@@ -126,6 +127,9 @@ function AppRoutes() {
 
         {/* Reports — all roles */}
         <Route path="reports" element={<DailyTSReport/>}/>
+        <Route path="reports/audit" element={
+          <ProtectedRoute roles={['admin']}><AuditLog/></ProtectedRoute>
+        }/>
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace/>}/>

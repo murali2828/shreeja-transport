@@ -27,6 +27,9 @@ if (process.env.NODE_ENV !== 'production') {
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
+// ─── Audit trail — records every mutating API call (who/what/when) ───────────
+app.use('/api', require('./middleware/auditLog'));
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth',       require('./routes/auth'));
 app.use('/api/masters',    require('./routes/masters'));
@@ -37,6 +40,7 @@ app.use('/api/distances',  require('./routes/distances'));
 app.use('/api/optimize',   require('./routes/optimize'));
 app.use('/api/vendors',    require('./routes/vendors'));
 app.use('/api/documents',  require('./routes/documents'));
+app.use('/api/audit',      require('./routes/audit'));
 
 // ─── Global error handler ─────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {

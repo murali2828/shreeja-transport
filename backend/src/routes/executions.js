@@ -28,6 +28,8 @@ const KG_FACTOR = 1.0285;
       )
     `);
     await query(`ALTER TABLE trip_execution_bmcu_entries ADD COLUMN IF NOT EXISTS bmcu_id INTEGER REFERENCES bmcus(id)`);
+    // Free-text remarks on balance-milk entries (Left Over / Lifted) — used in reports.
+    await query(`ALTER TABLE trip_execution_bmcu_entries ADD COLUMN IF NOT EXISTS remarks TEXT`);
     await query(`CREATE INDEX IF NOT EXISTS tebe_exec_idx ON trip_execution_bmcu_entries (execution_id)`);
     await query(`CREATE INDEX IF NOT EXISTS tebe_bmcu_idx ON trip_execution_bmcu_entries (bmcu_id)`);
   } catch (err) {
@@ -347,10 +349,11 @@ router.put('/:id', authenticate, async (req, res) => {
         const bmcuId = seqToBmcu[e.bmcu_seq_no] || e.bmcu_id || null;
         await client.query(
           `INSERT INTO trip_execution_bmcu_entries
-             (execution_id, bmcu_seq_no, bmcu_id, kind, category, source_bmcu_id, qty_litres, fat_pct, snf_pct)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+             (execution_id, bmcu_seq_no, bmcu_id, kind, category, source_bmcu_id, qty_litres, fat_pct, snf_pct, remarks)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [req.params.id, e.bmcu_seq_no, bmcuId, e.kind, e.category||null,
-           e.source_bmcu_id||null, e.qty_litres||null, e.fat_pct||null, e.snf_pct||null]
+           e.source_bmcu_id||null, e.qty_litres||null, e.fat_pct||null, e.snf_pct||null,
+           (e.remarks || '').trim() || null]
         );
       }
     }
