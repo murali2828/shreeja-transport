@@ -34,6 +34,7 @@ import ExecutionList        from './pages/execution/ExecutionList';
 import ExecutionForm        from './pages/execution/ExecutionForm';
 import AcknowledgementForm  from './pages/execution/AcknowledgementForm';
 import ClosedTrips          from './pages/execution/ClosedTrips';
+import Approvals            from './pages/execution/Approvals';
 
 // Reports
 import DailyTSReport   from './pages/reports/DailyTSReport';
@@ -122,6 +123,7 @@ function AppRoutes() {
         {/* Execution — all roles */}
         <Route path="execution"           element={<ExecutionList/>}/>
         <Route path="execution/closed"    element={<ClosedTrips/>}/>
+        <Route path="approvals"           element={<Approvals/>}/>
         <Route path="execution/:id"       element={<ExecutionForm/>}/>
         <Route path="execution/:id/acknowledge" element={<AcknowledgementForm/>}/>
 

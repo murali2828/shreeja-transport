@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle, GripVertical, Navigation, AlertTriangle, ChevronDown } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, getStartingPoints, cancelExecution, getExecutionDistance } from '../../api/index';
+import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, getStartingPoints, cancelExecution, getExecutionDistance, getChangeRequests, createChangeRequest } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
 
 const KG = 1.0285;
@@ -543,6 +543,11 @@ export default function ExecutionForm() {
   const [dragIdx,          setDragIdx]          = useState(null);
   const [dragOverIdx,      setDragOverIdx]      = useState(null);
 
+  // Post-closure change-request staging (edits go for PP01 approval, not saved directly)
+  const [staging,       setStaging]       = useState(false);
+  const [stagingReason, setStagingReason] = useState('');
+  const [ackRows,       setAckRows]       = useState([]);
+
   const { data: exec, isLoading } = useQuery({
     queryKey: ['execution', id],
     queryFn:  () => getExecution(id).then(r => r.data)
@@ -561,6 +566,53 @@ export default function ExecutionForm() {
     queryKey: ['exec-distance', id], queryFn: () => getExecutionDistance(id).then(r => r.data), enabled: !!id
   });
   const [showLegs, setShowLegs] = useState(false);
+
+  // Change requests for this execution (pending banner + staging control)
+  const { data: crList, refetch: refetchCRs } = useQuery({
+    queryKey: ['change-requests', id],
+    queryFn:  () => getChangeRequests({ execution_id: id }).then(r => r.data),
+    enabled:  !!id && exec?.status === 'closed',
+  });
+
+  const startStaging = () => {
+    setAckRows((exec.acknowledgements || []).map(a => ({ ...a })));
+    setStagingReason('');
+    setStaging(true);
+    toast('Editing a CLOSED trip — changes will go to PP01 for approval, not saved directly.', { icon: '📝' });
+  };
+  const cancelStaging = () => {
+    setStaging(false);
+    qc.invalidateQueries(['execution', id]); // reload original values
+  };
+
+  const crMut = useMutation({
+    mutationFn: () => {
+      if (!stagingReason.trim()) throw new Error('Please give a reason for the change');
+      return createChangeRequest(id, {
+        reason: stagingReason,
+        changes: {
+          actual_km: actualKm,
+          delivery_point_id: deliveryPointId || null,
+          start_point_id: startPointId || null,
+          bmcus: bmcuRows.filter(r => r.bmcu_id),
+          shift_rows: shiftRows.map(({ _key, ...r }) => r),
+          entries: entries.map(({ _key, source_bmcu_code, source_bmcu_name, bmcu_code, bmcu_name, ...r }) => r),
+          acknowledgements: ackRows.map(a => ({
+            chamber: a.chamber, qty_litres: a.qty_litres, fat_pct: a.fat_pct,
+            snf_pct: a.snf_pct, temperature: a.temperature, description: a.description,
+            ack_date: a.ack_date,
+          })),
+        },
+      });
+    },
+    onSuccess: (r) => {
+      toast.success(r.data.message || 'Change request submitted for approval');
+      setStaging(false);
+      refetchCRs();
+      qc.invalidateQueries(['execution', id]);
+    },
+    onError: (e) => toast.error(e.response?.data?.error || e.message),
+  });
 
   // Auto-fill Actual KM from the calculated total when the field is empty.
   useEffect(() => {
@@ -756,8 +808,12 @@ export default function ExecutionForm() {
   const visibleRows = bmcuRows.filter(r => !r.is_deleted);
   const totalLitres = visibleRows.filter(r => r.description !== 'Balance Milk').reduce((s,r) => s + (parseFloat(r.qty_litres)||0), 0);
   const totalKgs    = visibleRows.filter(r => r.description !== 'Balance Milk').reduce((s,r) => s + (parseFloat(r.qty_kgs) || parseFloat(r.qty_litres||0)*1.0285), 0);
-  const isClosed    = exec.status === 'closed';
+  const isTrulyClosed = exec.status === 'closed';
+  // Staging mode: closed trip fields become editable, but changes go to a
+  // change request for PP01 approval instead of saving directly.
+  const isClosed    = isTrulyClosed && !staging;
   const canSubmit   = exec.status === 'saved';
+  const pendingCR   = (crList?.rows || []).find(c => c.status === 'pending');
 
   return (
     <div className="space-y-4 w-full">
@@ -790,7 +846,36 @@ export default function ExecutionForm() {
              'bg-green-100 text-green-700'}`}>
           {exec.status.replace('_',' ')}
         </span>
+        {isTrulyClosed && !staging && !pendingCR && (
+          <button onClick={startStaging} className="btn-secondary flex items-center gap-1.5 text-xs">
+            ✏ Request Changes
+          </button>
+        )}
       </div>
+
+      {/* Pending change-request banner */}
+      {isTrulyClosed && pendingCR && (
+        <div className="card p-3 flex items-center gap-2 text-sm"
+          style={{ background: '#fef3c7', border: '1px solid #f59e0b' }}>
+          <AlertTriangle size={16} className="text-amber-600 flex-shrink-0"/>
+          <span className="text-amber-800">
+            Change request <b>#{pendingCR.id}</b> is pending approval by <b>{crList?.approver_name}</b> —
+            submitted by {pendingCR.requested_by_name} on {new Date(pendingCR.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}.
+            Reports continue to show the original data until it is approved.
+          </span>
+          <button onClick={() => navigate('/approvals')} className="ml-auto btn-secondary text-xs whitespace-nowrap">
+            View in Approvals
+          </button>
+        </div>
+      )}
+
+      {/* Staging-mode notice */}
+      {staging && (
+        <div className="card p-3 text-sm" style={{ background: '#e0f2fe', border: '1px solid #0284c7' }}>
+          <b className="text-sky-800">Editing closed trip (staged).</b>
+          <span className="text-sky-700"> Your edits below will NOT be saved directly — they will be sent to {crList?.approver_name || 'PP01'} for approval.</span>
+        </div>
+      )}
 
       {/* Trip summary */}
       <div className="card p-4 grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm">
@@ -946,8 +1031,8 @@ export default function ExecutionForm() {
         </div>
       </div>
 
-      {/* Action buttons */}
-      {!isClosed && (
+      {/* Action buttons (normal editing) */}
+      {!isClosed && !staging && (
         <div className="flex justify-end gap-3">
           <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending} className="btn-secondary">
             {saveMut.isPending ? <><RefreshCw size={14} className="animate-spin"/> Saving…</> : 'Save'}
@@ -966,6 +1051,26 @@ export default function ExecutionForm() {
         </div>
       )}
 
+      {/* Staging actions — reason + submit for approval */}
+      {staging && (
+        <div className="card p-4 space-y-3">
+          <div>
+            <label className="label text-xs">Reason for change <span className="text-red-500">*</span></label>
+            <textarea className="input w-full" rows={2} value={stagingReason}
+              onChange={e => setStagingReason(e.target.value)}
+              placeholder="Why is this correction needed? (goes in the approval email to PP01)"/>
+          </div>
+          <div className="flex justify-end gap-3">
+            <button onClick={cancelStaging} className="btn-secondary">Discard Edits</button>
+            <button onClick={() => crMut.mutate()} disabled={crMut.isPending}
+              className="btn-primary flex items-center gap-2">
+              {crMut.isPending ? <RefreshCw size={14} className="animate-spin"/> : <Send size={14}/>}
+              Submit for Approval
+            </button>
+          </div>
+        </div>
+      )}
+
       {exec.status === 'pending_ack' && (
         <div className="flex justify-end">
           <button onClick={() => navigate(`/execution/${id}/acknowledge`)} className="btn-primary flex items-center gap-2">
@@ -974,10 +1079,12 @@ export default function ExecutionForm() {
         </div>
       )}
 
-      {/* Acknowledgement entries — shown on closed trips */}
-      {isClosed && exec.acknowledgements?.length > 0 && (
+      {/* Acknowledgement entries — shown on closed trips (editable in staging mode) */}
+      {isTrulyClosed && exec.acknowledgements?.length > 0 && (
         <div className="card p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-gray-700 border-b pb-2">Acknowledgement</h3>
+          <h3 className="text-sm font-semibold text-gray-700 border-b pb-2">
+            Acknowledgement {staging && <span className="text-sky-600 font-normal text-xs">(editing — staged for approval)</span>}
+          </h3>
           <div className="text-xs text-gray-500 mb-1">
             Date: <strong className="text-gray-700">{exec.acknowledgements[0]?.ack_date?.slice(0,10)}</strong>
           </div>
@@ -997,23 +1104,54 @@ export default function ExecutionForm() {
                 </tr>
               </thead>
               <tbody>
-                {exec.acknowledgements.map((a, i) => (
+                {(staging ? ackRows : exec.acknowledgements).map((a, i) => {
+                  const setA = (field, val) =>
+                    setAckRows(prev => prev.map((r, j) => j === i ? { ...r, [field]: val } : r));
+                  return (
                   <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                     <td className="table-td">
                       <span className="inline-flex items-center justify-center w-8 h-6 rounded bg-[#0078d4] text-white text-xs font-bold">
                         {a.chamber}
                       </span>
                     </td>
-                    <td className="table-td text-right font-medium">{parseFloat(a.qty_kgs||0).toLocaleString()}</td>
-                    <td className="table-td text-right">{parseFloat(a.qty_litres||0).toLocaleString()}</td>
-                    <td className="table-td text-right">{a.fat_pct || '—'}</td>
-                    <td className="table-td text-right">{a.snf_pct || '—'}</td>
-                    <td className="table-td text-right">{a.kg_fat || '—'}</td>
-                    <td className="table-td text-right">{a.kg_snf || '—'}</td>
-                    <td className="table-td text-right">{a.temperature || '—'}</td>
-                    <td className="table-td text-xs text-gray-600">{a.description || '—'}</td>
+                    <td className="table-td text-right font-medium">
+                      {staging ? '(auto)' : parseFloat(a.qty_kgs||0).toLocaleString()}
+                    </td>
+                    <td className="table-td text-right">
+                      {staging
+                        ? <input type="number" min="0" step="0.01" className="input py-0.5 px-1 text-xs w-24 text-right"
+                            value={a.qty_litres || ''} onChange={e => setA('qty_litres', e.target.value)}/>
+                        : parseFloat(a.qty_litres||0).toLocaleString()}
+                    </td>
+                    <td className="table-td text-right">
+                      {staging
+                        ? <input type="number" min="0" step="0.001" className="input py-0.5 px-1 text-xs w-16 text-right"
+                            value={a.fat_pct || ''} onChange={e => setA('fat_pct', e.target.value)}/>
+                        : (a.fat_pct || '—')}
+                    </td>
+                    <td className="table-td text-right">
+                      {staging
+                        ? <input type="number" min="0" step="0.001" className="input py-0.5 px-1 text-xs w-16 text-right"
+                            value={a.snf_pct || ''} onChange={e => setA('snf_pct', e.target.value)}/>
+                        : (a.snf_pct || '—')}
+                    </td>
+                    <td className="table-td text-right">{staging ? '(auto)' : (a.kg_fat || '—')}</td>
+                    <td className="table-td text-right">{staging ? '(auto)' : (a.kg_snf || '—')}</td>
+                    <td className="table-td text-right">
+                      {staging
+                        ? <input type="text" className="input py-0.5 px-1 text-xs w-16 text-right"
+                            value={a.temperature || ''} onChange={e => setA('temperature', e.target.value)}/>
+                        : (a.temperature || '—')}
+                    </td>
+                    <td className="table-td text-xs text-gray-600">
+                      {staging
+                        ? <input type="text" className="input py-0.5 px-1 text-xs w-full"
+                            value={a.description || ''} onChange={e => setA('description', e.target.value)}/>
+                        : (a.description || '—')}
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
               <tfoot className="bg-blue-50 border-t font-semibold text-sm">
                 <tr>

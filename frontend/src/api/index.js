@@ -125,6 +125,12 @@ export const createDocAlertRecipient  = (d)  => api.post('/documents/alerts/reci
 export const deleteDocAlertRecipient  = (id) => api.delete(`/documents/alerts/recipients/${id}`);
 export const runDocAlerts             = (force) => api.post('/documents/alerts/run', { force });
 
+// ── Change Requests (post-closure corrections, PP01 approval) ─────────────────
+export const createChangeRequest  = (execId, d) => api.post(`/change-requests/executions/${execId}`, d);
+export const getChangeRequests    = (p)  => api.get('/change-requests', { params: p });
+export const getChangeRequest     = (id) => api.get(`/change-requests/${id}`);
+export const decideChangeRequest  = (id, decision, note) => api.post(`/change-requests/${id}/${decision}`, { note });
+
 // ── Audit / User Activity ─────────────────────────────────────────────────────
 export const getAuditLogs    = (p) => api.get('/audit', { params: p });
 export const getAuditFilters = ()  => api.get('/audit/filters');
