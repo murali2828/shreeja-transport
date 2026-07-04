@@ -19,7 +19,7 @@ const GROUPS = [
   { title: 'As per Dispatch',            prefix: 'disp',      cls: 'bg-emerald-50' },
   { title: 'As per Acknowledgement',     prefix: 'ack',       cls: 'bg-violet-50' },
   { title: 'Difference RMRD Vs Ack',     prefix: 'diff_rmrd', cls: 'bg-amber-50', diff: true },
-  { title: 'Difference Despatch Vs Ack', prefix: 'diff_disp', cls: 'bg-rose-50',  diff: true },
+  { title: 'Difference Dispatch Vs Ack', prefix: 'diff_disp', cls: 'bg-rose-50',  diff: true },
 ];
 
 function DiffCell({ value, fmt }) {

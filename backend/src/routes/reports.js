@@ -20,7 +20,7 @@ function createTransport() {
 // DAILY TS REPORT — reconciliation format (per Report_TMS.xlsx spec)
 // One row per trip PLANNED for the report date. Column groups:
 //   As per RMRD | As per Dispatch | As per Acknowledgement |
-//   Difference RMRD Vs Ack (Ack−RMRD) | Difference Despatch Vs Ack (Ack−Dispatch)
+//   Difference RMRD Vs Ack (Ack−RMRD) | Difference Dispatch Vs Ack (Ack−Dispatch)
 // each with Qty Ltrs / Qty Kgs / Kg.Fat / Kg.SNF.
 // ═════════════════════════════════════════════════════════════════════════════
 const { calcKgs, calcKgFat, calcKgSnf } = require('../services/executionData');
@@ -133,7 +133,7 @@ function buildTsWorkbook(rows, reportDate) {
     'As per Dispatch', null, null, null,
     'As per Acknowledgement', null, null, null,
     'Difference RMRD Vs Ack', null, null, null,
-    'Difference Despatch Vs Ack', null, null, null,
+    'Difference Dispatch Vs Ack', null, null, null,
   ];
   const subHeader = [
     null, null, null, null, null,
