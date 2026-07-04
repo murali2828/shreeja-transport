@@ -16,91 +16,169 @@ function createTransport() {
   });
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// DAILY TS REPORT — reconciliation format (per Report_TMS.xlsx spec)
+// One row per trip PLANNED for the report date. Column groups:
+//   As per RMRD | As per Dispatch | As per Acknowledgement |
+//   Difference RMRD Vs Ack (Ack−RMRD) | Difference Despatch Vs Ack (Ack−Dispatch)
+// each with Qty Ltrs / Qty Kgs / Kg.Fat / Kg.SNF.
+// ═════════════════════════════════════════════════════════════════════════════
+const { calcKgs, calcKgFat, calcKgSnf } = require('../services/executionData');
+
+const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
+
+async function buildTsReport(reportDate) {
+  // One row per plan of the date; latest non-cancelled execution (if any).
+  const r = await query(`
+    SELECT
+      tp.id AS plan_id, tp.trip_no, tp.shifts_milk,
+      t.tanker_number, rm.route_name, dp.name AS unloading_point,
+      te.id AS execution_id, te.status AS execution_status, te.dc_number, te.actual_km,
+
+      (SELECT MIN(teb.milk_date) FROM trip_execution_bmcus teb
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE)          AS lifting_date,
+      (SELECT MIN(ta.ack_date) FROM trip_acknowledgements ta
+        WHERE ta.execution_id=te.id)                                    AS ack_date,
+      (SELECT COUNT(*) FROM trip_acknowledgements ta
+        WHERE ta.execution_id=te.id)::int                               AS ack_count,
+
+      -- Dispatch totals (existing TS convention: exclude Balance Milk / deleted)
+      COALESCE((SELECT SUM(teb.qty_litres) FROM trip_execution_bmcus teb
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS disp_litres,
+      COALESCE((SELECT SUM(teb.qty_kgs) FROM trip_execution_bmcus teb
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS disp_kgs,
+      COALESCE((SELECT SUM(teb.kg_fat) FROM trip_execution_bmcus teb
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS disp_kg_fat,
+      COALESCE((SELECT SUM(teb.kg_snf) FROM trip_execution_bmcus teb
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS disp_kg_snf,
+
+      -- Acknowledgement totals
+      COALESCE((SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_litres,
+      COALESCE((SELECT SUM(ta.qty_kgs)    FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kgs,
+      COALESCE((SELECT SUM(ta.kg_fat)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_fat,
+      COALESCE((SELECT SUM(ta.kg_snf)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_snf
+    FROM trip_plans tp
+    LEFT JOIN LATERAL (
+      SELECT * FROM trip_executions x
+      WHERE x.trip_plan_id=tp.id AND x.status != 'cancelled'
+      ORDER BY x.id DESC LIMIT 1
+    ) te ON TRUE
+    LEFT JOIN tankers t         ON t.id=tp.tanker_id
+    LEFT JOIN route_masters rm  ON rm.id=tp.route_id
+    LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
+    WHERE tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
+    ORDER BY tp.trip_no`, [reportDate]);
+
+  // RMRD totals per execution from shift rows (qty in litres; kgs/fat/snf derived).
+  const execIds = r.rows.map(x => x.execution_id).filter(Boolean);
+  const rmrdByExec = {};
+  if (execIds.length) {
+    const sr = await query(`
+      SELECT tebs.execution_id, tebs.rmrd_qty, tebs.rmrd_fat_pct, tebs.rmrd_snf_pct
+      FROM trip_execution_bmcu_shifts tebs
+      JOIN trip_execution_bmcus teb
+        ON teb.execution_id = tebs.execution_id AND teb.seq_no = tebs.bmcu_seq_no AND teb.is_deleted=FALSE
+      WHERE tebs.execution_id = ANY($1)`, [execIds]);
+    for (const s of sr.rows) {
+      const acc = rmrdByExec[s.execution_id] ||= { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
+      const kgs = calcKgs(s.rmrd_qty);
+      acc.litres += parseFloat(s.rmrd_qty) || 0;
+      acc.kgs    += kgs;
+      acc.kg_fat += calcKgFat(kgs, s.rmrd_fat_pct);
+      acc.kg_snf += calcKgSnf(kgs, s.rmrd_snf_pct);
+    }
+  }
+
+  return r.rows.map(row => {
+    const rmrd = rmrdByExec[row.execution_id] || { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
+    const hasAck = row.ack_count > 0;
+    const diff = (ack, other) => hasAck ? rN(parseFloat(ack) - parseFloat(other), 4) : null;
+    return {
+      trip_no: row.trip_no,
+      tanker_number: row.tanker_number,
+      lifting_date: row.lifting_date,
+      ack_date: row.ack_date,
+      route_name: row.route_name,
+      unloading_point: row.unloading_point,
+      execution_status: row.execution_status,
+      shifts_milk: row.shifts_milk,
+      has_ack: hasAck,
+      rmrd_litres: rN(rmrd.litres), rmrd_kgs: rN(rmrd.kgs, 4),
+      rmrd_kg_fat: rN(rmrd.kg_fat, 4), rmrd_kg_snf: rN(rmrd.kg_snf, 4),
+      disp_litres: rN(row.disp_litres), disp_kgs: rN(row.disp_kgs, 4),
+      disp_kg_fat: rN(row.disp_kg_fat, 4), disp_kg_snf: rN(row.disp_kg_snf, 4),
+      ack_litres: hasAck ? rN(row.ack_litres) : null,
+      ack_kgs: hasAck ? rN(row.ack_kgs, 4) : null,
+      ack_kg_fat: hasAck ? rN(row.ack_kg_fat, 4) : null,
+      ack_kg_snf: hasAck ? rN(row.ack_kg_snf, 4) : null,
+      diff_rmrd_litres: diff(row.ack_litres, rmrd.litres),
+      diff_rmrd_kgs:    diff(row.ack_kgs, rmrd.kgs),
+      diff_rmrd_kg_fat: diff(row.ack_kg_fat, rmrd.kg_fat),
+      diff_rmrd_kg_snf: diff(row.ack_kg_snf, rmrd.kg_snf),
+      diff_disp_litres: diff(row.ack_litres, row.disp_litres),
+      diff_disp_kgs:    diff(row.ack_kgs, row.disp_kgs),
+      diff_disp_kg_fat: diff(row.ack_kg_fat, row.disp_kg_fat),
+      diff_disp_kg_snf: diff(row.ack_kg_snf, row.disp_kg_snf),
+    };
+  });
+}
+
+const fmtDate = d => !d ? '' : (d.toISOString ? d.toISOString().slice(0, 10) : String(d).slice(0, 10));
+
+// Workbook in the exact Report_TMS.xlsx layout (grouped two-row header, 25 columns).
+function buildTsWorkbook(rows, reportDate) {
+  const groupHeader = [
+    'Tanker Number', 'Milk Lifting Date', 'Ack.Date', 'Route Name', 'Unloading Point',
+    'As per RMRD', null, null, null,
+    'As per Dispatch', null, null, null,
+    'As per Acknowledgement', null, null, null,
+    'Difference RMRD Vs Ack', null, null, null,
+    'Difference Despatch Vs Ack', null, null, null,
+  ];
+  const subHeader = [
+    null, null, null, null, null,
+    ...Array(5).fill(['Qty Ltrs', 'Qty Kgs', 'Kg.Fat', 'Kg.SNF']).flat(),
+  ];
+  const dataRows = rows.map(x => [
+    x.tanker_number, fmtDate(x.lifting_date), fmtDate(x.ack_date), x.route_name, x.unloading_point,
+    x.rmrd_litres, x.rmrd_kgs, x.rmrd_kg_fat, x.rmrd_kg_snf,
+    x.disp_litres, x.disp_kgs, x.disp_kg_fat, x.disp_kg_snf,
+    x.ack_litres, x.ack_kgs, x.ack_kg_fat, x.ack_kg_snf,
+    x.diff_rmrd_litres, x.diff_rmrd_kgs, x.diff_rmrd_kg_fat, x.diff_rmrd_kg_snf,
+    x.diff_disp_litres, x.diff_disp_kgs, x.diff_disp_kg_fat, x.diff_disp_kg_snf,
+  ]);
+  // Totals row
+  const sumCol = key => rN(rows.reduce((s, x) => s + (parseFloat(x[key]) || 0), 0), 4);
+  const totalRow = [
+    'TOTAL', '', '', '', '',
+    sumCol('rmrd_litres'), sumCol('rmrd_kgs'), sumCol('rmrd_kg_fat'), sumCol('rmrd_kg_snf'),
+    sumCol('disp_litres'), sumCol('disp_kgs'), sumCol('disp_kg_fat'), sumCol('disp_kg_snf'),
+    sumCol('ack_litres'), sumCol('ack_kgs'), sumCol('ack_kg_fat'), sumCol('ack_kg_snf'),
+    sumCol('diff_rmrd_litres'), sumCol('diff_rmrd_kgs'), sumCol('diff_rmrd_kg_fat'), sumCol('diff_rmrd_kg_snf'),
+    sumCol('diff_disp_litres'), sumCol('diff_disp_kgs'), sumCol('diff_disp_kg_fat'), sumCol('diff_disp_kg_snf'),
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet([groupHeader, subHeader, ...dataRows, totalRow]);
+  // Merges: info columns span both header rows; each group title spans its 4 columns.
+  ws['!merges'] = [
+    ...[0, 1, 2, 3, 4].map(c => ({ s: { r: 0, c }, e: { r: 1, c } })),
+    ...[5, 9, 13, 17, 21].map(c => ({ s: { r: 0, c }, e: { r: 0, c: c + 3 } })),
+  ];
+  ws['!cols'] = groupHeader.map((_, i) => ({ wch: i < 5 ? 16 : 11 }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `TS Report ${reportDate}`);
+  return wb;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/reports/daily-ts?from_date=&to_date=
+// GET /api/reports/daily-ts?report_date=YYYY-MM-DD   (planning date)
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/daily-ts', authenticate, async (req, res) => {
-  const { from_date, to_date } = req.query;
-  if (!from_date || !to_date)
-    return res.status(400).json({ error: 'from_date and to_date required' });
+  const reportDate = req.query.report_date || req.query.from_date;
+  if (!reportDate) return res.status(400).json({ error: 'report_date required' });
   try {
-    const r = await query(`
-      SELECT
-        te.execution_date,
-        tp.trip_no,
-        t.tanker_number,
-        rm.route_name,
-        sp.name AS start_point_name,
-        dp.name AS delivery_point_name,
-        te.dc_number,
-        te.actual_km,
-
-        -- DPS totals
-        COALESCE(SUM(teb.dps_qty_litres) FILTER(WHERE teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS dps_litres,
-        COALESCE(SUM(teb.dps_qty_kgs)    FILTER(WHERE teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS dps_kgs,
-
-        -- Truck Sheet totals
-        te.total_qty_litres  AS ts_litres,
-        te.total_qty_kgs     AS ts_kgs,
-        te.avg_fat           AS ts_fat,
-        te.avg_snf           AS ts_snf,
-        te.total_kg_fat      AS ts_kg_fat,
-        te.total_kg_snf      AS ts_kg_snf,
-
-        -- Acknowledgement totals
-        COALESCE((SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_litres,
-        COALESCE((SELECT SUM(ta.qty_kgs)    FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kgs,
-        COALESCE((SELECT SUM(ta.kg_fat)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_fat,
-        COALESCE((SELECT SUM(ta.kg_snf)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_snf,
-        (SELECT STRING_AGG(ta.temperature, ' / ') FROM trip_acknowledgements ta WHERE ta.execution_id=te.id) AS temperature,
-
-        tp.trip_no,
-        tp.shifts_milk
-      FROM trip_executions te
-      JOIN trip_plans tp ON te.trip_plan_id=tp.id
-      LEFT JOIN tankers t              ON t.id=tp.tanker_id
-      LEFT JOIN route_masters rm       ON rm.id=tp.route_id
-      LEFT JOIN starting_points sp     ON sp.id=tp.start_point_id
-      LEFT JOIN delivery_points dp     ON dp.id=tp.delivery_point_id
-      LEFT JOIN trip_execution_bmcus teb ON teb.execution_id=te.id
-      WHERE te.execution_date BETWEEN $1 AND $2 AND te.status='closed'
-      GROUP BY te.id, tp.id, t.id, rm.id, sp.id, dp.id
-      ORDER BY te.execution_date, tp.trip_no`,
-      [from_date, to_date]
-    );
-
-    // Fetch shift-level RMRD rows for all executions in range
-    const execIds = r.rows.map(row => row.id);
-    let shiftMap = {};
-    if (execIds.length) {
-      const sr = await query(`
-        SELECT tebs.execution_id, tebs.bmcu_seq_no, tebs.milk_date, tebs.shift,
-               tebs.rmrd_qty, tebs.rmrd_fat_pct, tebs.rmrd_snf_pct,
-               b.bmcu_code, b.bmcu_name
-        FROM trip_execution_bmcu_shifts tebs
-        JOIN trip_execution_bmcus teb
-          ON teb.execution_id = tebs.execution_id AND teb.seq_no = tebs.bmcu_seq_no AND teb.is_deleted=FALSE
-        JOIN bmcus b ON b.id = teb.bmcu_id
-        WHERE tebs.execution_id = ANY($1)
-        ORDER BY tebs.execution_id, tebs.bmcu_seq_no, tebs.id`,
-        [execIds]
-      );
-      for (const s of sr.rows) {
-        if (!shiftMap[s.execution_id]) shiftMap[s.execution_id] = [];
-        shiftMap[s.execution_id].push(s);
-      }
-    }
-
-    // Compute variations and attach shift rows
-    const rows = r.rows.map(row => ({
-      ...row,
-      var_litres: parseFloat(row.ack_litres) - parseFloat(row.ts_litres),
-      var_kgs:    parseFloat(row.ack_kgs)    - parseFloat(row.ts_kgs),
-      var_kg_fat: parseFloat(row.ack_kg_fat) - parseFloat(row.ts_kg_fat),
-      var_kg_snf: parseFloat(row.ack_kg_snf) - parseFloat(row.ts_kg_snf),
-      shift_rows: shiftMap[row.id] || [],
-    }));
-    res.json(rows);
+    res.json(await buildTsReport(reportDate));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -139,108 +217,15 @@ router.get('/bmcu-wise', authenticate, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/reports/daily-ts/excel?report_date=YYYY-MM-DD
+// GET /api/reports/daily-ts/excel?report_date=YYYY-MM-DD  (planning date)
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/daily-ts/excel', authenticate, async (req, res) => {
   const { report_date } = req.query;
   if (!report_date) return res.status(400).json({ error: 'report_date required' });
-
   try {
-    const r = await query(`
-      SELECT
-        te.execution_date, tp.trip_no, t.tanker_number, rm.route_name,
-        sp.name AS start_point, dp.name AS delivery_point,
-        te.dc_number, te.actual_km, tp.shifts_milk,
-        COALESCE(SUM(teb.dps_qty_litres) FILTER(WHERE teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS dps_litres,
-        COALESCE(SUM(teb.dps_qty_kgs)    FILTER(WHERE teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS dps_kgs,
-        te.total_qty_litres AS ts_litres, te.total_qty_kgs AS ts_kgs,
-        te.avg_fat, te.avg_snf, te.total_kg_fat, te.total_kg_snf,
-        COALESCE((SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_litres,
-        COALESCE((SELECT SUM(ta.qty_kgs)    FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kgs,
-        COALESCE((SELECT SUM(ta.kg_fat)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_fat,
-        COALESCE((SELECT SUM(ta.kg_snf)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_snf,
-        (SELECT STRING_AGG(ta.temperature, ' / ') FROM trip_acknowledgements ta WHERE ta.execution_id=te.id) AS temperature
-      FROM trip_executions te
-      JOIN trip_plans tp ON te.trip_plan_id=tp.id
-      LEFT JOIN tankers t             ON t.id=tp.tanker_id
-      LEFT JOIN route_masters rm      ON rm.id=tp.route_id
-      LEFT JOIN starting_points sp    ON sp.id=tp.start_point_id
-      LEFT JOIN delivery_points dp    ON dp.id=tp.delivery_point_id
-      LEFT JOIN trip_execution_bmcus teb ON teb.execution_id=te.id
-      WHERE te.execution_date=$1 AND te.status='closed'
-      GROUP BY te.id, tp.id, t.id, rm.id, sp.id, dp.id
-      ORDER BY tp.trip_no`, [report_date]
-    );
-
-    // Fetch shift detail rows for Excel sheet 2
-    const execIds = r.rows.map(row => row.id);
-    let shiftRows = [];
-    if (execIds.length) {
-      const sr = await query(`
-        SELECT te.execution_date, tp.trip_no, t.tanker_number,
-               tebs.bmcu_seq_no, b.bmcu_code, b.bmcu_name,
-               tebs.milk_date, tebs.shift, tebs.rmrd_qty, tebs.rmrd_fat_pct, tebs.rmrd_snf_pct
-        FROM trip_execution_bmcu_shifts tebs
-        JOIN trip_executions te ON te.id = tebs.execution_id
-        JOIN trip_plans tp ON tp.id = te.trip_plan_id
-        LEFT JOIN tankers t ON t.id = tp.tanker_id
-        JOIN trip_execution_bmcus teb
-          ON teb.execution_id = tebs.execution_id AND teb.seq_no = tebs.bmcu_seq_no AND teb.is_deleted=FALSE
-        JOIN bmcus b ON b.id = teb.bmcu_id
-        WHERE tebs.execution_id = ANY($1)
-        ORDER BY te.execution_date, tp.trip_no, tebs.bmcu_seq_no, tebs.id`,
-        [execIds]
-      );
-      shiftRows = sr.rows;
-    }
-
-    const wb = XLSX.utils.book_new();
-
-    // Sheet 1: TS Summary
-    const headers = [
-      'Date','Trip','Tanker','Route','Start Point','Delivery Point','Shift','DC No','Actual KM',
-      'DPS Litres','DPS Kgs',
-      'TS Litres','TS Kgs','TS Avg Fat%','TS Avg SNF%','TS Kg Fat','TS Kg SNF',
-      'Ack Litres','Ack Kgs','Ack Kg Fat','Ack Kg SNF','Temperature',
-      'Var Litres','Var Kgs','Var Kg Fat','Var Kg SNF'
-    ];
-    const dataRows = r.rows.map(row => {
-      const vLit = parseFloat(row.ack_litres) - parseFloat(row.ts_litres);
-      const vKgs = parseFloat(row.ack_kgs)    - parseFloat(row.ts_kgs);
-      const vFat = parseFloat(row.ack_kg_fat) - parseFloat(row.total_kg_fat);
-      const vSnf = parseFloat(row.ack_kg_snf) - parseFloat(row.total_kg_snf);
-      return [
-        row.execution_date?.toISOString?.().slice(0,10) || row.execution_date,
-        row.trip_no, row.tanker_number, row.route_name,
-        row.start_point, row.delivery_point, row.shifts_milk, row.dc_number, row.actual_km,
-        row.dps_litres, row.dps_kgs,
-        row.ts_litres, row.ts_kgs, row.avg_fat, row.avg_snf, row.total_kg_fat, row.total_kg_snf,
-        row.ack_litres, row.ack_kgs, row.ack_kg_fat, row.ack_kg_snf, row.temperature,
-        vLit.toFixed(2), vKgs.toFixed(4), vFat.toFixed(4), vSnf.toFixed(4)
-      ];
-    });
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
-    ws['!cols'] = headers.map((_, i) => ({ wch: i < 9 ? 16 : 12 }));
-    XLSX.utils.book_append_sheet(wb, ws, `TS Report ${report_date}`);
-
-    // Sheet 2: RMRD Shift Detail
-    const shiftHeaders = [
-      'Date','Trip','Tanker','BMCU Code','BMCU Name','Milk Date','Shift',
-      'RMRD Qty (L)','RMRD Fat%','RMRD SNF%'
-    ];
-    const shiftDataRows = shiftRows.map(s => [
-      s.execution_date?.toISOString?.().slice(0,10) || s.execution_date,
-      s.trip_no, s.tanker_number,
-      s.bmcu_code, s.bmcu_name,
-      s.milk_date?.toISOString?.().slice(0,10) || s.milk_date,
-      s.shift,
-      s.rmrd_qty, s.rmrd_fat_pct, s.rmrd_snf_pct
-    ]);
-    const ws2 = XLSX.utils.aoa_to_sheet([shiftHeaders, ...shiftDataRows]);
-    ws2['!cols'] = shiftHeaders.map((_, i) => ({ wch: i < 5 ? 18 : 12 }));
-    XLSX.utils.book_append_sheet(wb, ws2, 'RMRD Shift Detail');
-
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const rows = await buildTsReport(report_date);
+    const wb   = buildTsWorkbook(rows, report_date);
+    const buf  = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Disposition', `attachment; filename=ts_report_${report_date}.xlsx`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
@@ -248,64 +233,39 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/reports/send-email  { report_date }
+// POST /api/reports/send-email  { report_date }  — same workbook as the download
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/send-email', authenticate, async (req, res) => {
   const { report_date } = req.body;
   if (!report_date) return res.status(400).json({ error: 'report_date required' });
-
   try {
     const recipients = await query(
       'SELECT email, full_name FROM report_email_config WHERE is_active=TRUE'
     );
-    if (!recipients.rows.length) return res.status(400).json({ error: 'No active email recipients configured' });
+    if (!recipients.rows.length)
+      return res.status(400).json({ error: 'No active email recipients configured' });
 
-    // Build Excel buffer (reuse report query)
-    const r = await query(`
-      SELECT te.execution_date, tp.trip_no, t.tanker_number,
-        te.total_qty_litres AS ts_litres, te.total_qty_kgs AS ts_kgs,
-        te.avg_fat, te.avg_snf, te.total_kg_fat, te.total_kg_snf,
-        COALESCE((SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_litres,
-        COALESCE((SELECT SUM(ta.qty_kgs)    FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kgs
-      FROM trip_executions te
-      JOIN trip_plans tp ON te.trip_plan_id=tp.id
-      LEFT JOIN tankers t ON t.id=tp.tanker_id
-      WHERE te.execution_date=$1 AND te.status='closed'
-      ORDER BY tp.trip_no`, [report_date]
-    );
+    const rows = await buildTsReport(report_date);
+    const wb   = buildTsWorkbook(rows, report_date);
+    const buf  = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-    const wb   = XLSX.utils.book_new();
-    const rows = [
-      ['Date','Trip','Tanker','TS Litres','TS Kgs','Avg Fat%','Avg SNF%','Kg Fat','Kg SNF','Ack Litres','Ack Kgs'],
-      ...r.rows.map(row => [
-        row.execution_date?.toISOString?.().slice(0,10)||row.execution_date,
-        row.trip_no, row.tanker_number,
-        row.ts_litres, row.ts_kgs, row.avg_fat, row.avg_snf, row.total_kg_fat, row.total_kg_snf,
-        row.ack_litres, row.ack_kgs
-      ])
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb, ws, 'TS Report');
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-
+    const acked = rows.filter(r => r.has_ack).length;
     const transporter = createTransport();
-    const toList = recipients.rows.map(r => `${r.full_name} <${r.email}>`).join(', ');
-
     await transporter.sendMail({
       from:    process.env.SMTP_FROM,
-      to:      toList,
-      subject: `TS Report — ${report_date}`,
-      text:    `Please find attached the TS Variation Report for ${report_date}.`,
-      html:    `<p>Dear Team,</p><p>Please find attached the TS Variation Report for <strong>${report_date}</strong>.</p><p>Trips closed: ${r.rows.length}</p>
-                <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/>
-                <p style="font-family:sans-serif;font-size:12px;color:#9ca3af;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <strong style="color:#6b7280;">Shreeja IT Team</strong>.</p>`,
+      to:      recipients.rows.map(r => `${r.full_name} <${r.email}>`).join(', '),
+      subject: `Daily TS Report — ${report_date}`,
+      html: `<p>Dear Team,</p>
+             <p>Please find attached the Daily TS Report for <strong>${report_date}</strong> (planning date).</p>
+             <p>Trips planned: ${rows.length} · Acknowledged: ${acked}</p>
+             <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/>
+             <p style="font-family:sans-serif;font-size:12px;color:#9ca3af;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <strong style="color:#6b7280;">Shreeja IT Team</strong>.</p>`,
       attachments: [{
-        filename:    `ts_report_${report_date}.xlsx`,
-        content:     buf,
-        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      }]
+        filename: `ts_report_${report_date}.xlsx`,
+        content: buf,
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }],
     });
-
     res.json({ sent: true, recipients: recipients.rows.length });
   } catch (err) {
     console.error('Email error:', err);
