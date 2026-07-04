@@ -87,6 +87,30 @@ async function buildTsReport(reportDate) {
       acc.kg_fat += calcKgFat(kgs, s.rmrd_fat_pct);
       acc.kg_snf += calcKgSnf(kgs, s.rmrd_snf_pct);
     }
+
+    // RMRD adjustments from sub-entries (user rules):
+    //   Left Over milk    → DEDUCT from RMRD (milk left behind at the BMCU)
+    //   Lifted milk       → ADD to RMRD (extra milk lifted)
+    //   Internal shifting → ADD to RMRD (milk received from a source plant)
+    //   New MPP           → no RMRD effect
+    const er = await query(`
+      SELECT execution_id, kind, category, qty_litres, fat_pct, snf_pct
+      FROM trip_execution_bmcu_entries
+      WHERE execution_id = ANY($1)`, [execIds]);
+    for (const e of er.rows) {
+      let sign = 0;
+      if (e.kind === 'balance_milk' && e.category === 'Left Over milk') sign = -1;
+      else if (e.kind === 'balance_milk' && e.category === 'Lifted milk') sign = 1;
+      else if (e.kind === 'internal_shifting') sign = 1;
+      if (!sign || !e.qty_litres) continue;
+
+      const acc = rmrdByExec[e.execution_id] ||= { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
+      const kgs = calcKgs(e.qty_litres);
+      acc.litres += sign * (parseFloat(e.qty_litres) || 0);
+      acc.kgs    += sign * kgs;
+      acc.kg_fat += sign * calcKgFat(kgs, e.fat_pct);
+      acc.kg_snf += sign * calcKgSnf(kgs, e.snf_pct);
+    }
   }
 
   return r.rows.map(row => {
