@@ -92,7 +92,7 @@ async function buildTsReport(reportDate) {
     //   Left Over milk    → DEDUCT from RMRD (milk left behind at the BMCU)
     //   Lifted milk       → ADD to RMRD (extra milk lifted)
     //   Internal shifting → ADD to RMRD (milk received from a source plant)
-    //   New MPP           → no RMRD effect
+    //   New MPP           → ADD to RMRD (new MPP milk collected on the trip)
     const er = await query(`
       SELECT execution_id, kind, category, qty_litres, fat_pct, snf_pct
       FROM trip_execution_bmcu_entries
@@ -102,6 +102,7 @@ async function buildTsReport(reportDate) {
       if (e.kind === 'balance_milk' && e.category === 'Left Over milk') sign = -1;
       else if (e.kind === 'balance_milk' && e.category === 'Lifted milk') sign = 1;
       else if (e.kind === 'internal_shifting') sign = 1;
+      else if (e.kind === 'new_mpp') sign = 1;
       if (!sign || !e.qty_litres) continue;
 
       const acc = rmrdByExec[e.execution_id] ||= { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
