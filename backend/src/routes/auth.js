@@ -136,20 +136,25 @@ router.put('/users/:id', authenticate, authorize('admin'), async (req, res) => {
   if (userId !== undefined && !USER_ID_RE.test(userId))
     return res.status(400).json({ error: 'User ID may contain only letters, numbers, and . _ @ + - (no spaces)' });
   try {
-    const sets = ['full_name=$1', 'role=$2', 'email=$3', 'is_active=$4'];
-    const params = [full_name, role, email || null, is_active ?? true];
+    // Only update fields the caller actually sent — a password-only reset must not
+    // touch (and null out) full_name/role/email/is_active.
+    const sets = [];
+    const params = [];
+    const set = (col, val) => { params.push(val); sets.push(`${col}=$${params.length}`); };
+    if (full_name !== undefined) set('full_name', full_name);
+    if (role !== undefined)      set('role', role);
+    if (email !== undefined)     set('email', email || null);
+    if (is_active !== undefined) set('is_active', is_active ?? true);
     if (userId !== undefined && userId !== '') {
-      params.push(userId);
-      sets.push(`user_id=$${params.length}`);
-      params.push(userId);
-      sets.push(`username=$${params.length}`);
+      set('user_id', userId);
+      set('username', userId);
     }
     if (password) {
       const hash = await bcrypt.hash(password, 10);
-      params.push(hash);
-      sets.push(`password_hash=$${params.length}`);
+      set('password_hash', hash);
       sets.push('must_change_password=TRUE');
     }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
     params.push(req.params.id);
     const r = await query(
       `UPDATE users SET ${sets.join(', ')}
