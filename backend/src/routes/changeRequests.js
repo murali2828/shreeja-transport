@@ -18,6 +18,10 @@ const { applyExecutionData } = require('../services/executionData');
 const { executionSnapshot, diffSnapshots, logChanges } = require('../services/changeTracker');
 
 const APPROVER_ID = () => process.env.CHANGE_APPROVER_ID || 'PP01';
+// Stakeholders copied on every approval email (comma-separated, overridable via env).
+const APPROVER_CC = () => (process.env.CHANGE_APPROVER_CC
+  || 'billing1@shreejamilk.com,billing2@shreejamilk.com,rajesh.k@shreejamilk.com')
+  .split(',').map(s => s.trim()).filter(Boolean);
 
 function createTransport() {
   return nodemailer.createTransport({
@@ -164,6 +168,7 @@ async function sendApprovalEmail(cr, execInfo, approver) {
   await transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: approver.email,
+    cc: APPROVER_CC().join(', ') || undefined,
     subject: `Approval needed — changes to closed Trip #${execInfo.trip_no} (${String(execInfo.execution_date).slice(0, 10)})`,
     html,
   });

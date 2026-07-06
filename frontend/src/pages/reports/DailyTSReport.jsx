@@ -83,13 +83,14 @@ export default function DailyTSReport() {
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto max-h-[68vh]">
-          <table className="text-xs" style={{ minWidth: 1700 }}>
+          <table className="text-xs" style={{ minWidth: 1800 }}>
             <thead className="sticky top-0 bg-gray-50 z-10">
               <tr className="border-b">
                 <th className="table-th" rowSpan={2}>Tanker Number</th>
                 <th className="table-th" rowSpan={2}>Milk Lifting Date</th>
                 <th className="table-th" rowSpan={2}>Ack. Date</th>
                 <th className="table-th" rowSpan={2}>Route Name</th>
+                <th className="table-th" rowSpan={2}>Starting Point</th>
                 <th className="table-th" rowSpan={2}>Unloading Point</th>
                 {GROUPS.map(g => (
                   <th key={g.prefix} colSpan={4}
@@ -106,7 +107,7 @@ export default function DailyTSReport() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={25}><div className="empty-state">No trips planned for this date.</div></td></tr>
+                <tr><td colSpan={26}><div className="empty-state">No trips planned for this date.</div></td></tr>
               )}
               {rows.map((r, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
@@ -114,6 +115,7 @@ export default function DailyTSReport() {
                   <td className="table-td whitespace-nowrap">{fmtD(r.lifting_date)}</td>
                   <td className="table-td whitespace-nowrap">{fmtD(r.ack_date)}</td>
                   <td className="table-td whitespace-nowrap">{r.route_name || '—'}</td>
+                  <td className="table-td whitespace-nowrap">{r.starting_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.unloading_point || '—'}</td>
                   {GROUPS.map(g => MEASURES.map((m, mi) => {
                     const key = `${g.prefix}_${m}`;
@@ -128,7 +130,7 @@ export default function DailyTSReport() {
             {rows.length > 0 && (
               <tfoot className="bg-blue-50 border-t font-semibold sticky bottom-0">
                 <tr>
-                  <td className="table-td" colSpan={5}>TOTAL — {rows.length} trips</td>
+                  <td className="table-td" colSpan={6}>TOTAL — {rows.length} trips</td>
                   {GROUPS.map(g => MEASURES.map((m, mi) => {
                     const total = sum(`${g.prefix}_${m}`);
                     const fmt = m === 'litres' ? n2 : n4;

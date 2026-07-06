@@ -101,16 +101,16 @@ export default function Dashboard() {
           label={isToday ? "Today's Plans" : `Plans — ${selectedDate.split('-').reverse().join('/')}`}
           value={todayPlans.length}
           sub={`${published} published · ${drafts} draft`}
-          colorClass="stat-card-blue"  onClick={() => navigate('/planning')}/>
+          colorClass="stat-card-blue"  onClick={() => navigate(`/planning?date=${selectedDate}`)}/>
         <StatCard icon={Play}         label="In Progress"       value={inProg}
           sub="active executions"
-          colorClass="stat-card-teal"  onClick={() => navigate('/execution')}/>
+          colorClass="stat-card-teal"  onClick={() => navigate(`/execution?date=${selectedDate}`)}/>
         <StatCard icon={CheckSquare}  label="Pending Ack"       value={pendAck}
           sub="awaiting acknowledgement"
-          colorClass="stat-card-amber" onClick={() => navigate('/execution')}/>
+          colorClass="stat-card-amber" onClick={() => navigate(`/execution?date=${selectedDate}`)}/>
         <StatCard icon={TrendingUp}   label={isToday ? 'Closed Today' : 'Closed'} value={closed}
           sub="trips completed"
-          colorClass="stat-card-green"/>
+          colorClass="stat-card-green" onClick={() => navigate(`/execution/closed?date=${selectedDate}`)}/>
       </div>
 
       {/* Quick actions */}

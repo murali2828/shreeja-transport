@@ -1,6 +1,6 @@
 // frontend/src/pages/planning/TripPlanList.jsx
 import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Download, Upload, Send, Trash2, Edit2, Zap, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -9,7 +9,9 @@ import { getPlans, deletePlan, publishPlans, uploadPlans, downloadPlanTemplate, 
 export default function TripPlanList() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [dateFilter, setDateFilter] = useState(new Date().toISOString().slice(0,10));
+  const [searchParams] = useSearchParams();
+  const urlDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('date') || '') ? searchParams.get('date') : null;
+  const [dateFilter, setDateFilter] = useState(urlDate || new Date().toISOString().slice(0,10));
   const [statusFilter, setStatusFilter] = useState('');
   const [showDeleted, setShowDeleted] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null); // { plan, force }

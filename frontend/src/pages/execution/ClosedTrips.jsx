@@ -1,13 +1,15 @@
 // frontend/src/pages/execution/ClosedTrips.jsx
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getExecutions } from '../../api/index';
 
 export default function ClosedTrips() {
   const today = new Date().toISOString().slice(0,10);
-  const [from, setFrom] = useState(today);
-  const [to,   setTo]   = useState(today);
+  const [searchParams] = useSearchParams();
+  const urlDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('date') || '') ? searchParams.get('date') : null;
+  const [from, setFrom] = useState(urlDate || today);
+  const [to,   setTo]   = useState(urlDate || today);
   const navigate = useNavigate();
 
   const { data: execs = [], isLoading } = useQuery({

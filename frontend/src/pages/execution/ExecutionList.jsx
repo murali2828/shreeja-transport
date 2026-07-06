@@ -1,6 +1,6 @@
 // frontend/src/pages/execution/ExecutionList.jsx
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -93,7 +93,9 @@ export default function ExecutionList() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const [date, setDate] = useState(new Date().toISOString().slice(0,10));
+  const [searchParams] = useSearchParams();
+  const urlDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('date') || '') ? searchParams.get('date') : null;
+  const [date, setDate] = useState(urlDate || new Date().toISOString().slice(0,10));
   const [search, setSearch] = useState('');
   const [cancelReason, setCancelReason] = useState('');
   const [cancelTarget, setCancelTarget] = useState(null); // { execId, planId, tripNo }

@@ -32,7 +32,7 @@ async function buildTsReport(reportDate) {
   const r = await query(`
     SELECT
       tp.id AS plan_id, tp.trip_no, tp.shifts_milk,
-      t.tanker_number, rm.route_name, dp.name AS unloading_point,
+      t.tanker_number, rm.route_name, sp.name AS starting_point, dp.name AS unloading_point,
       te.id AS execution_id, te.status AS execution_status, te.dc_number, te.actual_km,
 
       (SELECT MIN(teb.milk_date) FROM trip_execution_bmcus teb
@@ -65,6 +65,7 @@ async function buildTsReport(reportDate) {
     ) te ON TRUE
     LEFT JOIN tankers t         ON t.id=tp.tanker_id
     LEFT JOIN route_masters rm  ON rm.id=tp.route_id
+    LEFT JOIN starting_points sp ON sp.id=tp.start_point_id
     LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
     WHERE tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
     ORDER BY tp.trip_no`, [reportDate]);
@@ -143,6 +144,7 @@ async function buildTsReport(reportDate) {
       lifting_date: row.lifting_date,
       ack_date: row.ack_date,
       route_name: row.route_name,
+      starting_point: row.starting_point,
       unloading_point: row.unloading_point,
       execution_status: row.execution_status,
       shifts_milk: row.shifts_milk,
@@ -179,7 +181,7 @@ const TS_GROUPS = [
   { title: 'Difference RMRD Vs Ack',     fill: 'FFFEF3C7', keys: ['diff_rmrd_litres','diff_rmrd_kgs','diff_rmrd_kg_fat','diff_rmrd_kg_snf'], diff: true },
   { title: 'Difference Dispatch Vs Ack', fill: 'FFFFE4E6', keys: ['diff_disp_litres','diff_disp_kgs','diff_disp_kg_fat','diff_disp_kg_snf'], diff: true },
 ];
-const INFO_HEADERS = ['Tanker Number', 'Milk Lifting Date', 'Ack.Date', 'Route Name', 'Unloading Point'];
+const INFO_HEADERS = ['Tanker Number', 'Milk Lifting Date', 'Ack.Date', 'Route Name', 'Starting Point', 'Unloading Point'];
 const RED = 'FFC0392B', GREEN = 'FF1E8449', HEADER_TEXT = 'FF1F2937';
 const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
 const BORDER = { top: thin, bottom: thin, left: thin, right: thin };
@@ -187,16 +189,17 @@ const fillOf = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } }
 
 function buildTsWorkbook(rows, reportDate) {
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('TS Report', { views: [{ state: 'frozen', xSplit: 5, ySplit: 3 }] });
+  const NINFO = INFO_HEADERS.length;
+  const ws = wb.addWorksheet('TS Report', { views: [{ state: 'frozen', xSplit: NINFO, ySplit: 3 }] });
 
   // Column widths: 5 info + 20 numeric
   ws.columns = [
-    { width: 16 }, { width: 14 }, { width: 12 }, { width: 20 }, { width: 18 },
+    { width: 16 }, { width: 14 }, { width: 12 }, { width: 20 }, { width: 18 }, { width: 18 },
     ...Array(20).fill({ width: 12 }),
   ];
 
   // Row 1 — title
-  ws.mergeCells(1, 1, 1, 25);
+  ws.mergeCells(1, 1, 1, NINFO + 20);
   const title = ws.getCell(1, 1);
   title.value = `Daily TS Report — ${reportDate}`;
   title.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
@@ -215,7 +218,7 @@ function buildTsWorkbook(rows, reportDate) {
     ws.getCell(3, i + 1).border = BORDER;
   });
   TS_GROUPS.forEach((g, gi) => {
-    const startCol = 6 + gi * 4;
+    const startCol = NINFO + 1 + gi * 4;
     ws.mergeCells(2, startCol, 2, startCol + 3);
     const gc = ws.getCell(2, startCol);
     gc.value = g.title;
@@ -238,7 +241,7 @@ function buildTsWorkbook(rows, reportDate) {
   const numFmt = () => '#,##0.00'; // all measures 2dp
   rows.forEach((x, ri) => {
     const row = ws.getRow(4 + ri);
-    const info = [x.tanker_number, fmtDate(x.lifting_date), fmtDate(x.ack_date), x.route_name, x.unloading_point];
+    const info = [x.tanker_number, fmtDate(x.lifting_date), fmtDate(x.ack_date), x.route_name, x.starting_point, x.unloading_point];
     info.forEach((v, i) => {
       const c = row.getCell(i + 1);
       c.value = v ?? '';
@@ -248,7 +251,7 @@ function buildTsWorkbook(rows, reportDate) {
     });
     TS_GROUPS.forEach((g, gi) => {
       g.keys.forEach((key, ki) => {
-        const c = row.getCell(6 + gi * 4 + ki);
+        const c = row.getCell(NINFO + 1 + gi * 4 + ki);
         const v = x[key];
         c.value = v == null ? null : parseFloat(v);
         c.numFmt = numFmt(ki);
@@ -265,7 +268,7 @@ function buildTsWorkbook(rows, reportDate) {
   // Totals row
   const totRowIdx = 4 + rows.length;
   const tr = ws.getRow(totRowIdx);
-  ws.mergeCells(totRowIdx, 1, totRowIdx, 5);
+  ws.mergeCells(totRowIdx, 1, totRowIdx, NINFO);
   const tl = tr.getCell(1);
   tl.value = `TOTAL — ${rows.length} trips`;
   tl.font = { bold: true, color: { argb: 'FF003A6B' } };
@@ -274,7 +277,7 @@ function buildTsWorkbook(rows, reportDate) {
   const sumCol = key => rN(rows.reduce((s, x) => s + (parseFloat(x[key]) || 0), 0), 2);
   TS_GROUPS.forEach((g, gi) => {
     g.keys.forEach((key, ki) => {
-      const c = tr.getCell(6 + gi * 4 + ki);
+      const c = tr.getCell(NINFO + 1 + gi * 4 + ki);
       const v = sumCol(key);
       c.value = v;
       c.numFmt = numFmt(ki);
