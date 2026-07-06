@@ -11,7 +11,7 @@ import { getDailyTSReport, downloadTSExcel, sendDailyReport } from '../../api/in
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtD  = d => d ? String(d).slice(0, 10) : '—';
 const n2 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
-const n4 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 4 });
+const n4 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
 const MEASURES = ['litres', 'kgs', 'kg_fat', 'kg_snf'];
 const GROUPS = [

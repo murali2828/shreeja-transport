@@ -136,7 +136,7 @@ async function buildTsReport(reportDate) {
   return r.rows.map(row => {
     const rmrd = rmrdByExec[row.execution_id] || { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
     const hasAck = row.ack_count > 0;
-    const diff = (ack, other) => hasAck ? rN(parseFloat(ack) - parseFloat(other), 4) : null;
+    const diff = (ack, other) => hasAck ? rN(parseFloat(ack) - parseFloat(other), 2) : null;
     return {
       trip_no: row.trip_no,
       tanker_number: row.tanker_number,
@@ -147,14 +147,14 @@ async function buildTsReport(reportDate) {
       execution_status: row.execution_status,
       shifts_milk: row.shifts_milk,
       has_ack: hasAck,
-      rmrd_litres: rN(rmrd.litres), rmrd_kgs: rN(rmrd.kgs, 4),
-      rmrd_kg_fat: rN(rmrd.kg_fat, 4), rmrd_kg_snf: rN(rmrd.kg_snf, 4),
-      disp_litres: rN(row.disp_litres), disp_kgs: rN(row.disp_kgs, 4),
-      disp_kg_fat: rN(row.disp_kg_fat, 4), disp_kg_snf: rN(row.disp_kg_snf, 4),
+      rmrd_litres: rN(rmrd.litres), rmrd_kgs: rN(rmrd.kgs, 2),
+      rmrd_kg_fat: rN(rmrd.kg_fat, 2), rmrd_kg_snf: rN(rmrd.kg_snf, 2),
+      disp_litres: rN(row.disp_litres), disp_kgs: rN(row.disp_kgs, 2),
+      disp_kg_fat: rN(row.disp_kg_fat, 2), disp_kg_snf: rN(row.disp_kg_snf, 2),
       ack_litres: hasAck ? rN(row.ack_litres) : null,
-      ack_kgs: hasAck ? rN(row.ack_kgs, 4) : null,
-      ack_kg_fat: hasAck ? rN(row.ack_kg_fat, 4) : null,
-      ack_kg_snf: hasAck ? rN(row.ack_kg_snf, 4) : null,
+      ack_kgs: hasAck ? rN(row.ack_kgs, 2) : null,
+      ack_kg_fat: hasAck ? rN(row.ack_kg_fat, 2) : null,
+      ack_kg_snf: hasAck ? rN(row.ack_kg_snf, 2) : null,
       diff_rmrd_litres: diff(row.ack_litres, rmrd.litres),
       diff_rmrd_kgs:    diff(row.ack_kgs, rmrd.kgs),
       diff_rmrd_kg_fat: diff(row.ack_kg_fat, rmrd.kg_fat),
@@ -235,7 +235,7 @@ function buildTsWorkbook(rows, reportDate) {
   ws.getRow(2).height = 20;
 
   // Data rows
-  const numFmt = i => (i % 4 === 0 ? '#,##0.00' : '#,##0.0000'); // litres 2dp, others 4dp
+  const numFmt = () => '#,##0.00'; // all measures 2dp
   rows.forEach((x, ri) => {
     const row = ws.getRow(4 + ri);
     const info = [x.tanker_number, fmtDate(x.lifting_date), fmtDate(x.ack_date), x.route_name, x.unloading_point];
@@ -271,7 +271,7 @@ function buildTsWorkbook(rows, reportDate) {
   tl.font = { bold: true, color: { argb: 'FF003A6B' } };
   tl.fill = fillOf('FFDBEAFE');
   tl.border = BORDER;
-  const sumCol = key => rN(rows.reduce((s, x) => s + (parseFloat(x[key]) || 0), 0), 4);
+  const sumCol = key => rN(rows.reduce((s, x) => s + (parseFloat(x[key]) || 0), 0), 2);
   TS_GROUPS.forEach((g, gi) => {
     g.keys.forEach((key, ki) => {
       const c = tr.getCell(6 + gi * 4 + ki);
