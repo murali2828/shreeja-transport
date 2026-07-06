@@ -133,6 +133,14 @@ export const decideChangeRequest  = (id, decision, note) => api.post(`/change-re
 
 // ── Audit / User Activity ─────────────────────────────────────────────────────
 export const getAuditLogs    = (p) => api.get('/audit', { params: p });
+export const getChangeLogs   = (p) => api.get('/audit/changes', { params: p });
+export const exportChangeLogs = (p) =>
+  api.get('/audit/changes/export', { params: p, responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'change_history_report.xlsx'; a.click();
+    URL.revokeObjectURL(url);
+  });
 export const getAuditFilters = ()  => api.get('/audit/filters');
 export const exportAuditLogs = (p) =>
   api.get('/audit/export', { params: p, responseType: 'blob' }).then(r => {

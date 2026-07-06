@@ -110,4 +110,88 @@ router.get('/export', authenticate, authorize('admin'), async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ═════════════════════════════════════════════════════════════════════════════
+// FIELD-LEVEL CHANGE HISTORY (data_change_logs) — one row per changed field
+// ═════════════════════════════════════════════════════════════════════════════
+function buildChangesWhere(q) {
+  const where = [];
+  const params = [];
+  const add = (sql, val) => { params.push(val); where.push(sql.replace('$X', `$${params.length}`)); };
+  if (q.from_date) add('created_at >= $X::date', q.from_date);
+  if (q.to_date)   add("created_at < ($X::date + INTERVAL '1 day')", q.to_date);
+  if (q.user_id)   add('user_id = $X', parseInt(q.user_id));
+  if (q.module)    add('module = $X', q.module);
+  if (q.entity_id) add('entity_id = $X', String(q.entity_id));
+  if (q.q) {
+    params.push(`%${q.q}%`);
+    const n = params.length;
+    where.push(`(field ILIKE $${n} OR row_label ILIKE $${n} OR old_value ILIKE $${n} OR new_value ILIKE $${n} OR user_name ILIKE $${n} OR entity_id ILIKE $${n})`);
+  }
+  return { whereSql: where.length ? 'WHERE ' + where.join(' AND ') : '', params };
+}
+
+// GET /api/audit/changes — paginated field-level change rows
+router.get('/changes', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const page  = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(10, parseInt(req.query.limit) || 50));
+    const { whereSql, params } = buildChangesWhere(req.query);
+
+    const totalRes = await pool.query(`SELECT COUNT(*)::int AS n FROM data_change_logs ${whereSql}`, params);
+    const rows = await pool.query(
+      `SELECT id, module, entity_id, row_label, field, old_value, new_value,
+              action, user_id, user_name, user_login, created_at
+       FROM data_change_logs ${whereSql}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ${limit} OFFSET ${(page - 1) * limit}`, params);
+
+    res.json({ rows: rows.rows, total: totalRes.rows[0].n, page,
+               pages: Math.max(1, Math.ceil(totalRes.rows[0].n / limit)) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/audit/changes/export — styled Excel (capped)
+router.get('/changes/export', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const { whereSql, params } = buildChangesWhere(req.query);
+    const rows = await pool.query(
+      `SELECT created_at, user_name, user_login, module, entity_id, row_label,
+              field, old_value, new_value, action
+       FROM data_change_logs ${whereSql}
+       ORDER BY created_at DESC, id DESC LIMIT 20000`, params);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Change History', { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = [
+      { header: 'Timestamp', key: 'ts', width: 22 },
+      { header: 'User',      key: 'user', width: 20 },
+      { header: 'User ID',   key: 'login', width: 14 },
+      { header: 'Module',    key: 'module', width: 16 },
+      { header: 'Record #',  key: 'entity', width: 10 },
+      { header: 'Row',       key: 'row', width: 28 },
+      { header: 'Field',     key: 'field', width: 18 },
+      { header: 'Old Value', key: 'old', width: 30 },
+      { header: 'New Value', key: 'new', width: 30 },
+      { header: 'Action',    key: 'action', width: 10 },
+    ];
+    const head = ws.getRow(1);
+    head.font = { bold: true };
+    head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+    for (const r of rows.rows) {
+      const row = ws.addRow({
+        ts: new Date(r.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+        user: r.user_name || '—', login: r.user_login || '',
+        module: r.module, entity: r.entity_id, row: r.row_label,
+        field: r.field, old: r.old_value ?? '', new: r.new_value ?? '', action: r.action,
+      });
+      row.getCell('old').font = { color: { argb: 'FFC0392B' } };
+      row.getCell('new').font = { color: { argb: 'FF1E8449' } };
+    }
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Disposition', 'attachment; filename=change_history_report.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(Buffer.from(buf));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

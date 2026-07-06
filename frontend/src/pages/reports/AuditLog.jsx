@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, ChevronLeft, ChevronRight, Search, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getAuditLogs, getAuditFilters, exportAuditLogs } from '../../api/index';
+import { getAuditLogs, getAuditFilters, exportAuditLogs, getChangeLogs, exportChangeLogs } from '../../api/index';
 
 const ACTION_STYLE = {
   create:       'bg-green-100 text-green-700',
@@ -38,7 +38,121 @@ function DetailsCell({ details }) {
   );
 }
 
+// ── Tab 2: field-level Change History (old value → new value per row) ─────────
+function ChangeHistory({ filters }) {
+  const [fromDate, setFromDate] = useState(daysAgo(7));
+  const [toDate,   setToDate]   = useState(daysAgo(0));
+  const [userId,   setUserId]   = useState('');
+  const [module,   setModule]   = useState('');
+  const [q,        setQ]        = useState('');
+  const [page,     setPage]     = useState(1);
+
+  const params = {
+    from_date: fromDate || undefined, to_date: toDate || undefined,
+    user_id: userId || undefined, module: module || undefined,
+    q: q || undefined, page,
+  };
+  const { data, isFetching } = useQuery({
+    queryKey: ['change-logs', params],
+    queryFn:  () => getChangeLogs(params).then(r => r.data),
+    keepPreviousData: true,
+  });
+  const rows  = data?.rows || [];
+  const pages = data?.pages || 1;
+  const setF  = setter => e => { setter(e.target.value); setPage(1); };
+
+  return (
+    <>
+      <div className="card p-3 flex flex-wrap gap-3 items-end">
+        <div><label className="label text-xs">From</label>
+          <input type="date" className="input py-1.5 text-sm" value={fromDate} onChange={setF(setFromDate)}/></div>
+        <div><label className="label text-xs">To</label>
+          <input type="date" className="input py-1.5 text-sm" value={toDate} onChange={setF(setToDate)}/></div>
+        <div><label className="label text-xs">User</label>
+          <select className="input py-1.5 text-sm w-44" value={userId} onChange={setF(setUserId)}>
+            <option value="">All users</option>
+            {(filters?.users || []).map(u => <option key={u.user_id} value={u.user_id}>{u.user_name}</option>)}
+          </select></div>
+        <div><label className="label text-xs">Module</label>
+          <select className="input py-1.5 text-sm w-40" value={module} onChange={setF(setModule)}>
+            <option value="">All modules</option>
+            {(filters?.modules || []).map(m => <option key={m} value={m}>{m}</option>)}
+          </select></div>
+        <div><label className="label text-xs">Search</label>
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"/>
+            <input className="input pl-8 py-1.5 text-sm w-56" placeholder="Field, value, record…"
+              value={q} onChange={setF(setQ)}/>
+          </div></div>
+        <button onClick={() => exportChangeLogs({ ...params, page: undefined })
+            .then(() => toast.success('Report downloaded')).catch(() => toast.error('Export failed'))}
+          className="btn-secondary flex items-center gap-1.5 text-sm ml-auto">
+          <Download size={14}/> Export Excel
+        </button>
+        <span className="text-xs text-gray-400 pb-2">
+          {isFetching ? <RefreshCw size={12} className="inline animate-spin"/> : `${(data?.total || 0).toLocaleString()} changes`}
+        </span>
+      </div>
+
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto max-h-[60vh]">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-gray-50 border-b">
+              <tr>
+                <th className="table-th">Timestamp</th>
+                <th className="table-th">User</th>
+                <th className="table-th">Module</th>
+                <th className="table-th">Record #</th>
+                <th className="table-th">Row</th>
+                <th className="table-th">Field</th>
+                <th className="table-th">Old Value</th>
+                <th className="table-th">New Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr><td colSpan={8}><div className="empty-state">No changes in this range.</div></td></tr>
+              )}
+              {rows.map(r => (
+                <tr key={r.id} className="hover:bg-gray-50 border-b border-gray-50 align-top">
+                  <td className="table-td whitespace-nowrap text-xs text-gray-600">
+                    {new Date(r.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                  </td>
+                  <td className="table-td font-medium whitespace-nowrap">
+                    {r.user_name || '—'}
+                    {r.user_login && <span className="text-xs text-gray-400 block">{r.user_login}</span>}
+                  </td>
+                  <td className="table-td text-gray-700 whitespace-nowrap">{r.module}</td>
+                  <td className="table-td font-mono text-xs">{r.entity_id || '—'}</td>
+                  <td className="table-td text-xs text-gray-600">{r.row_label}</td>
+                  <td className="table-td text-xs font-medium">{r.field}</td>
+                  <td className="table-td text-xs">
+                    <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-700">{r.old_value ?? '—'}</span>
+                  </td>
+                  <td className="table-td text-xs">
+                    <span className="px-1.5 py-0.5 rounded bg-green-50 text-green-700">{r.new_value ?? '—'}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-center justify-between px-3 py-2 border-t text-sm">
+          <span className="text-xs text-gray-500">Page {page} of {pages}</span>
+          <div className="flex gap-1">
+            <button className="btn-secondary btn-sm p-1.5" disabled={page <= 1}
+              onClick={() => setPage(p => p - 1)}><ChevronLeft size={14}/></button>
+            <button className="btn-secondary btn-sm p-1.5" disabled={page >= pages}
+              onClick={() => setPage(p => p + 1)}><ChevronRight size={14}/></button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function AuditLog() {
+  const [tab, setTab] = useState('changes'); // 'changes' (business) | 'requests' (IT)
   const [fromDate, setFromDate] = useState(daysAgo(7));
   const [toDate,   setToDate]   = useState(daysAgo(0));
   const [userId,   setUserId]   = useState('');
@@ -57,6 +171,7 @@ export default function AuditLog() {
     queryKey: ['audit', params],
     queryFn:  () => getAuditLogs(params).then(r => r.data),
     keepPreviousData: true,
+    enabled: tab === 'requests',
   });
   const { data: filters } = useQuery({
     queryKey: ['audit-filters'],
@@ -72,17 +187,39 @@ export default function AuditLog() {
     .then(() => toast.success('Report downloaded'))
     .catch(() => toast.error('Export failed'));
 
+  const tabBtn = (key, label) => (
+    <button onClick={() => setTab(key)}
+      className={`px-4 py-1.5 text-sm rounded-full font-medium transition-colors
+        ${tab === key ? 'bg-[#0078d4] text-white' : 'bg-white/60 text-gray-600 hover:bg-white'}`}>
+      {label}
+    </button>
+  );
+
   return (
     <div className="space-y-4 w-full">
       <div className="page-header">
         <div>
           <div className="page-title">User Activity</div>
-          <div className="page-sub">Every transaction — who did what, and when</div>
+          <div className="page-sub">
+            {tab === 'changes'
+              ? 'Change history — every field changed: old value, new value, user, timestamp'
+              : 'Request log — every API transaction (IT support view)'}
+          </div>
         </div>
-        <button onClick={doExport} className="btn-primary flex items-center gap-1.5 text-sm">
-          <Download size={14}/> Export Excel
-        </button>
+        <div className="flex items-center gap-2">
+          {tabBtn('changes', 'Change History')}
+          {tabBtn('requests', 'Requests (IT)')}
+          {tab === 'requests' && (
+            <button onClick={doExport} className="btn-primary flex items-center gap-1.5 text-sm">
+              <Download size={14}/> Export Excel
+            </button>
+          )}
+        </div>
       </div>
+
+      {tab === 'changes' && <ChangeHistory filters={filters}/>}
+
+      {tab === 'requests' && (<>
 
       {/* Filters */}
       <div className="card p-3 flex flex-wrap gap-3 items-end">
@@ -184,6 +321,7 @@ export default function AuditLog() {
           </div>
         </div>
       </div>
+      </>)}
     </div>
   );
 }

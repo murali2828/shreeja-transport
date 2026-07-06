@@ -6,6 +6,7 @@
 // final status code are known. Fire-and-forget — auditing never breaks a request.
 
 const { pool } = require('../config/db');
+const { snapshotterFor, diffSnapshots, logChanges } = require('../services/changeTracker');
 
 const SKIP_PREFIXES = ['/audit', '/health'];
 const SECRET_KEYS = new Set([
@@ -83,7 +84,7 @@ function detailsOf(body) {
   } catch { return null; }
 }
 
-function auditLog(req, res, next) {
+async function auditLog(req, res, next) {
   const method = req.method.toUpperCase();
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return next();
   const path = req.path; // relative to /api mount
@@ -91,6 +92,20 @@ function auditLog(req, res, next) {
 
   const details = detailsOf(req.body); // capture before handlers may mutate it
   const startedAt = new Date();
+
+  // ── Field-level change tracking: BEFORE snapshot ──────────────────────────
+  const snap = snapshotterFor(path);
+  const pathEntityId = entityIdOf(path);
+  let beforeSnap = null;
+  if (snap && pathEntityId) {
+    try { beforeSnap = await snap.read(pool, pathEntityId); } catch (e) { /* never block */ }
+  }
+  // Capture the created record's id from the response body (POST-create case).
+  let createdId = null;
+  if (snap && !pathEntityId && method === 'POST') {
+    const origJson = res.json.bind(res);
+    res.json = (body) => { try { createdId = body?.id ?? null; } catch {} return origJson(body); };
+  }
 
   res.on('finish', () => {
     try {
@@ -121,6 +136,29 @@ function auditLog(req, res, next) {
           startedAt,
         ]
       ).catch(err => console.error('[audit] insert failed:', err.message));
+
+      // ── Field-level change tracking: AFTER snapshot + diff (async, detached) ─
+      if (snap && success) {
+        const targetId = pathEntityId || createdId;
+        if (targetId) {
+          (async () => {
+            try {
+              const afterSnap = method === 'DELETE' ? await snap.read(pool, targetId) : await snap.read(pool, targetId);
+              const rows = diffSnapshots(beforeSnap, afterSnap);
+              const action = !beforeSnap && afterSnap ? 'create'
+                : (beforeSnap && !afterSnap) || method === 'DELETE' ? 'delete'
+                : 'update';
+              logChanges({
+                module: snap.module, entityId: targetId, action,
+                userId: user.id || null, userName: user.full_name || null,
+                userLogin: user.user_id || null, path: '/api' + path,
+              }, rows);
+            } catch (e) {
+              console.error('[changeTracker] capture failed:', e.message);
+            }
+          })();
+        }
+      }
     } catch (err) {
       console.error('[audit] error:', err.message);
     }

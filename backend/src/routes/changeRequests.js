@@ -15,6 +15,7 @@ const nodemailer = require('nodemailer');
 const { pool, query } = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { applyExecutionData } = require('../services/executionData');
+const { executionSnapshot, diffSnapshots, logChanges } = require('../services/changeTracker');
 
 const APPROVER_ID = () => process.env.CHANGE_APPROVER_ID || 'PP01';
 
@@ -180,7 +181,18 @@ async function decideRequest(crId, decision, decider, note) {
 
     if (decision === 'approve') {
       // Apply via the shared write path; closed status stays closed.
+      // Snapshot before/after inside the transaction for the field-level change log.
+      let beforeSnap = null;
+      try { beforeSnap = await executionSnapshot(client, cr.execution_id); } catch {}
       await applyExecutionData(client, cr.execution_id, cr.changes, decider.id || null);
+      try {
+        const afterSnap = await executionSnapshot(client, cr.execution_id);
+        logChanges({
+          module: 'Executions', entityId: cr.execution_id, action: 'update',
+          userId: decider.id || null, userName: decider.full_name || null,
+          userLogin: null, path: `/api/change-requests/${crId}/approve`,
+        }, diffSnapshots(beforeSnap, afterSnap));
+      } catch {}
     }
 
     await client.query(
