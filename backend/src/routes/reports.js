@@ -1,7 +1,7 @@
 // backend/src/routes/reports.js
 const express    = require('express');
 const router     = express.Router();
-const XLSX       = require('xlsx');
+const ExcelJS    = require('exceljs');
 const nodemailer = require('nodemailer');
 const { query }  = require('../config/db');
 const { authenticate } = require('../middleware/auth');
@@ -91,26 +91,45 @@ async function buildTsReport(reportDate) {
     // RMRD adjustments from sub-entries (user rules):
     //   Left Over milk    → DEDUCT from RMRD (milk left behind at the BMCU)
     //   Lifted milk       → ADD to RMRD (extra milk lifted)
-    //   Internal shifting → ADD to RMRD (milk received from a source plant)
+    //   Internal shifting → ADD to the receiving trip's RMRD, and DEDUCT the same
+    //                       qty/kg fat/kg snf from the trip containing the SOURCE
+    //                       plant (milk moved out of that BMCU's RMRD)
     //   New MPP           → ADD to RMRD (new MPP milk collected on the trip)
+    // Map BMCU → executions of this report date (to locate the source plant's trip).
+    const bm2exec = {};
+    const bmRes = await query(`
+      SELECT DISTINCT execution_id, bmcu_id FROM trip_execution_bmcus
+      WHERE execution_id = ANY($1) AND is_deleted=FALSE`, [execIds]);
+    for (const b of bmRes.rows) (bm2exec[b.bmcu_id] ||= []).push(b.execution_id);
+
+    const applyAdj = (execId, sign, qty, fat, snf) => {
+      const acc = rmrdByExec[execId] ||= { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
+      const kgs = calcKgs(qty);
+      acc.litres += sign * (parseFloat(qty) || 0);
+      acc.kgs    += sign * kgs;
+      acc.kg_fat += sign * calcKgFat(kgs, fat);
+      acc.kg_snf += sign * calcKgSnf(kgs, snf);
+    };
+
     const er = await query(`
-      SELECT execution_id, kind, category, qty_litres, fat_pct, snf_pct
+      SELECT execution_id, kind, category, qty_litres, fat_pct, snf_pct, source_bmcu_id
       FROM trip_execution_bmcu_entries
       WHERE execution_id = ANY($1)`, [execIds]);
     for (const e of er.rows) {
-      let sign = 0;
-      if (e.kind === 'balance_milk' && e.category === 'Left Over milk') sign = -1;
-      else if (e.kind === 'balance_milk' && e.category === 'Lifted milk') sign = 1;
-      else if (e.kind === 'internal_shifting') sign = 1;
-      else if (e.kind === 'new_mpp') sign = 1;
-      if (!sign || !e.qty_litres) continue;
-
-      const acc = rmrdByExec[e.execution_id] ||= { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
-      const kgs = calcKgs(e.qty_litres);
-      acc.litres += sign * (parseFloat(e.qty_litres) || 0);
-      acc.kgs    += sign * kgs;
-      acc.kg_fat += sign * calcKgFat(kgs, e.fat_pct);
-      acc.kg_snf += sign * calcKgSnf(kgs, e.snf_pct);
+      if (!e.qty_litres) continue;
+      if (e.kind === 'balance_milk' && e.category === 'Left Over milk') {
+        applyAdj(e.execution_id, -1, e.qty_litres, e.fat_pct, e.snf_pct);
+      } else if (e.kind === 'balance_milk' && e.category === 'Lifted milk') {
+        applyAdj(e.execution_id, 1, e.qty_litres, e.fat_pct, e.snf_pct);
+      } else if (e.kind === 'new_mpp') {
+        applyAdj(e.execution_id, 1, e.qty_litres, e.fat_pct, e.snf_pct);
+      } else if (e.kind === 'internal_shifting') {
+        applyAdj(e.execution_id, 1, e.qty_litres, e.fat_pct, e.snf_pct); // receiving trip
+        // Deduct from the trip that carries the source plant (prefer the same trip).
+        const srcExecs = bm2exec[e.source_bmcu_id] || [];
+        const target = srcExecs.includes(e.execution_id) ? e.execution_id : srcExecs[0];
+        if (target) applyAdj(target, -1, e.qty_litres, e.fat_pct, e.snf_pct);
+      }
     }
   }
 
@@ -150,49 +169,124 @@ async function buildTsReport(reportDate) {
 
 const fmtDate = d => !d ? '' : (d.toISOString ? d.toISOString().slice(0, 10) : String(d).slice(0, 10));
 
-// Workbook in the exact Report_TMS.xlsx layout (grouped two-row header, 25 columns).
+// Styled workbook (ExcelJS) matching the on-screen layout:
+// title row, grouped two-row colored header, section fills, red/green
+// differences, frozen panes, Indian number formats, bold totals.
+const TS_GROUPS = [
+  { title: 'As per RMRD',                fill: 'FFE0F2FE', keys: ['rmrd_litres','rmrd_kgs','rmrd_kg_fat','rmrd_kg_snf'] },
+  { title: 'As per Dispatch',            fill: 'FFDCFCE7', keys: ['disp_litres','disp_kgs','disp_kg_fat','disp_kg_snf'] },
+  { title: 'As per Acknowledgement',     fill: 'FFEDE9FE', keys: ['ack_litres','ack_kgs','ack_kg_fat','ack_kg_snf'] },
+  { title: 'Difference RMRD Vs Ack',     fill: 'FFFEF3C7', keys: ['diff_rmrd_litres','diff_rmrd_kgs','diff_rmrd_kg_fat','diff_rmrd_kg_snf'], diff: true },
+  { title: 'Difference Dispatch Vs Ack', fill: 'FFFFE4E6', keys: ['diff_disp_litres','diff_disp_kgs','diff_disp_kg_fat','diff_disp_kg_snf'], diff: true },
+];
+const INFO_HEADERS = ['Tanker Number', 'Milk Lifting Date', 'Ack.Date', 'Route Name', 'Unloading Point'];
+const RED = 'FFC0392B', GREEN = 'FF1E8449', HEADER_TEXT = 'FF1F2937';
+const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
+const BORDER = { top: thin, bottom: thin, left: thin, right: thin };
+const fillOf = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+
 function buildTsWorkbook(rows, reportDate) {
-  const groupHeader = [
-    'Tanker Number', 'Milk Lifting Date', 'Ack.Date', 'Route Name', 'Unloading Point',
-    'As per RMRD', null, null, null,
-    'As per Dispatch', null, null, null,
-    'As per Acknowledgement', null, null, null,
-    'Difference RMRD Vs Ack', null, null, null,
-    'Difference Dispatch Vs Ack', null, null, null,
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('TS Report', { views: [{ state: 'frozen', xSplit: 5, ySplit: 3 }] });
+
+  // Column widths: 5 info + 20 numeric
+  ws.columns = [
+    { width: 16 }, { width: 14 }, { width: 12 }, { width: 20 }, { width: 18 },
+    ...Array(20).fill({ width: 12 }),
   ];
-  const subHeader = [
-    null, null, null, null, null,
-    ...Array(5).fill(['Qty Ltrs', 'Qty Kgs', 'Kg.Fat', 'Kg.SNF']).flat(),
-  ];
-  const dataRows = rows.map(x => [
-    x.tanker_number, fmtDate(x.lifting_date), fmtDate(x.ack_date), x.route_name, x.unloading_point,
-    x.rmrd_litres, x.rmrd_kgs, x.rmrd_kg_fat, x.rmrd_kg_snf,
-    x.disp_litres, x.disp_kgs, x.disp_kg_fat, x.disp_kg_snf,
-    x.ack_litres, x.ack_kgs, x.ack_kg_fat, x.ack_kg_snf,
-    x.diff_rmrd_litres, x.diff_rmrd_kgs, x.diff_rmrd_kg_fat, x.diff_rmrd_kg_snf,
-    x.diff_disp_litres, x.diff_disp_kgs, x.diff_disp_kg_fat, x.diff_disp_kg_snf,
-  ]);
+
+  // Row 1 — title
+  ws.mergeCells(1, 1, 1, 25);
+  const title = ws.getCell(1, 1);
+  title.value = `Daily TS Report — ${reportDate}`;
+  title.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
+  title.alignment = { vertical: 'middle', horizontal: 'left' };
+  ws.getRow(1).height = 24;
+
+  // Rows 2-3 — grouped header
+  INFO_HEADERS.forEach((h, i) => {
+    ws.mergeCells(2, i + 1, 3, i + 1);
+    const c = ws.getCell(2, i + 1);
+    c.value = h;
+    c.font = { bold: true, color: { argb: HEADER_TEXT } };
+    c.fill = fillOf('FFF3F4F6');
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    c.border = BORDER;
+    ws.getCell(3, i + 1).border = BORDER;
+  });
+  TS_GROUPS.forEach((g, gi) => {
+    const startCol = 6 + gi * 4;
+    ws.mergeCells(2, startCol, 2, startCol + 3);
+    const gc = ws.getCell(2, startCol);
+    gc.value = g.title;
+    gc.font = { bold: true, color: { argb: HEADER_TEXT } };
+    gc.fill = fillOf(g.fill);
+    gc.alignment = { vertical: 'middle', horizontal: 'center' };
+    ['Qty Ltrs', 'Qty Kgs', 'Kg.Fat', 'Kg.SNF'].forEach((h, i) => {
+      const c = ws.getCell(3, startCol + i);
+      c.value = h;
+      c.font = { bold: true, size: 10, color: { argb: HEADER_TEXT } };
+      c.fill = fillOf(g.fill);
+      c.alignment = { vertical: 'middle', horizontal: 'center' };
+      c.border = BORDER;
+    });
+    for (let i = 0; i < 4; i++) ws.getCell(2, startCol + i).border = BORDER;
+  });
+  ws.getRow(2).height = 20;
+
+  // Data rows
+  const numFmt = i => (i % 4 === 0 ? '#,##0.00' : '#,##0.0000'); // litres 2dp, others 4dp
+  rows.forEach((x, ri) => {
+    const row = ws.getRow(4 + ri);
+    const info = [x.tanker_number, fmtDate(x.lifting_date), fmtDate(x.ack_date), x.route_name, x.unloading_point];
+    info.forEach((v, i) => {
+      const c = row.getCell(i + 1);
+      c.value = v ?? '';
+      c.border = BORDER;
+      c.alignment = { vertical: 'middle', horizontal: i === 0 ? 'left' : 'left' };
+      if (i === 0) c.font = { bold: true, color: { argb: 'FF005BA3' } };
+    });
+    TS_GROUPS.forEach((g, gi) => {
+      g.keys.forEach((key, ki) => {
+        const c = row.getCell(6 + gi * 4 + ki);
+        const v = x[key];
+        c.value = v == null ? null : parseFloat(v);
+        c.numFmt = numFmt(ki);
+        c.alignment = { horizontal: 'right' };
+        c.border = BORDER;
+        c.fill = fillOf(g.fill);
+        if (g.diff && v != null) {
+          c.font = { color: { argb: parseFloat(v) < 0 ? RED : GREEN }, bold: true };
+        }
+      });
+    });
+  });
+
   // Totals row
+  const totRowIdx = 4 + rows.length;
+  const tr = ws.getRow(totRowIdx);
+  ws.mergeCells(totRowIdx, 1, totRowIdx, 5);
+  const tl = tr.getCell(1);
+  tl.value = `TOTAL — ${rows.length} trips`;
+  tl.font = { bold: true, color: { argb: 'FF003A6B' } };
+  tl.fill = fillOf('FFDBEAFE');
+  tl.border = BORDER;
   const sumCol = key => rN(rows.reduce((s, x) => s + (parseFloat(x[key]) || 0), 0), 4);
-  const totalRow = [
-    'TOTAL', '', '', '', '',
-    sumCol('rmrd_litres'), sumCol('rmrd_kgs'), sumCol('rmrd_kg_fat'), sumCol('rmrd_kg_snf'),
-    sumCol('disp_litres'), sumCol('disp_kgs'), sumCol('disp_kg_fat'), sumCol('disp_kg_snf'),
-    sumCol('ack_litres'), sumCol('ack_kgs'), sumCol('ack_kg_fat'), sumCol('ack_kg_snf'),
-    sumCol('diff_rmrd_litres'), sumCol('diff_rmrd_kgs'), sumCol('diff_rmrd_kg_fat'), sumCol('diff_rmrd_kg_snf'),
-    sumCol('diff_disp_litres'), sumCol('diff_disp_kgs'), sumCol('diff_disp_kg_fat'), sumCol('diff_disp_kg_snf'),
-  ];
+  TS_GROUPS.forEach((g, gi) => {
+    g.keys.forEach((key, ki) => {
+      const c = tr.getCell(6 + gi * 4 + ki);
+      const v = sumCol(key);
+      c.value = v;
+      c.numFmt = numFmt(ki);
+      c.alignment = { horizontal: 'right' };
+      c.fill = fillOf('FFDBEAFE');
+      c.border = { ...BORDER, top: { style: 'double', color: { argb: 'FF94A3B8' } } };
+      c.font = g.diff
+        ? { bold: true, color: { argb: v < 0 ? RED : GREEN } }
+        : { bold: true, color: { argb: 'FF003A6B' } };
+    });
+  });
 
-  const ws = XLSX.utils.aoa_to_sheet([groupHeader, subHeader, ...dataRows, totalRow]);
-  // Merges: info columns span both header rows; each group title spans its 4 columns.
-  ws['!merges'] = [
-    ...[0, 1, 2, 3, 4].map(c => ({ s: { r: 0, c }, e: { r: 1, c } })),
-    ...[5, 9, 13, 17, 21].map(c => ({ s: { r: 0, c }, e: { r: 0, c: c + 3 } })),
-  ];
-  ws['!cols'] = groupHeader.map((_, i) => ({ wch: i < 5 ? 16 : 11 }));
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, `TS Report ${reportDate}`);
   return wb;
 }
 
@@ -250,7 +344,7 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
   try {
     const rows = await buildTsReport(report_date);
     const wb   = buildTsWorkbook(rows, report_date);
-    const buf  = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const buf  = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=ts_report_${report_date}.xlsx`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
@@ -272,7 +366,7 @@ router.post('/send-email', authenticate, async (req, res) => {
 
     const rows = await buildTsReport(report_date);
     const wb   = buildTsWorkbook(rows, report_date);
-    const buf  = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const buf  = Buffer.from(await wb.xlsx.writeBuffer());
 
     const acked = rows.filter(r => r.has_ack).length;
     const transporter = createTransport();
