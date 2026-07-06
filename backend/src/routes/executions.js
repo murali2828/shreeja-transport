@@ -66,6 +66,85 @@ router.get('/', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/executions/coverage?date=YYYY-MM-DD
+// Execution-truth coverage for the date's plans: trip status split, BMCUs with
+// milk actually recorded (dispatch qty > 0 or RMRD > 0), and the missed list
+// split into planned-but-not-collected vs not-planned.
+// NOTE: must be registered before GET /:id.
+router.get('/coverage', authenticate, async (req, res) => {
+  const date = req.query.date;
+  if (!date) return res.status(400).json({ error: 'date required' });
+  try {
+    // Trip counts by (latest non-cancelled) execution status.
+    const tripsRes = await query(`
+      SELECT COALESCE(te.status, 'not_started') AS status, COUNT(*)::int AS n
+      FROM trip_plans tp
+      LEFT JOIN LATERAL (
+        SELECT status FROM trip_executions x
+        WHERE x.trip_plan_id=tp.id AND x.status != 'cancelled'
+        ORDER BY x.id DESC LIMIT 1
+      ) te ON TRUE
+      WHERE tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
+      GROUP BY 1`, [date]);
+    const trips = { planned: 0, not_started: 0, in_progress: 0, saved: 0, pending_ack: 0, closed: 0 };
+    for (const r of tripsRes.rows) { trips[r.status] = r.n; trips.planned += r.n; }
+
+    // BMCUs with milk actually recorded on the date's executions.
+    const collectedRes = await query(`
+      SELECT DISTINCT teb.bmcu_id
+      FROM trip_execution_bmcus teb
+      JOIN trip_executions te ON te.id=teb.execution_id AND te.status != 'cancelled'
+      JOIN trip_plans tp      ON tp.id=te.trip_plan_id
+      WHERE tp.plan_for_date=$1 AND teb.is_deleted=FALSE
+        AND (COALESCE(teb.qty_litres,0) > 0 OR EXISTS (
+          SELECT 1 FROM trip_execution_bmcu_shifts s
+          WHERE s.execution_id=teb.execution_id AND s.bmcu_seq_no=teb.seq_no
+            AND COALESCE(s.rmrd_qty,0) > 0))`, [date]);
+    const collected = new Set(collectedRes.rows.map(r => r.bmcu_id));
+
+    // All active BMCUs, annotated with the trip they were planned on (if any).
+    const bmcusRes = await query(`
+      SELECT b.id, b.bmcu_code, b.bmcu_name, b.district,
+             pl.trip_no, pl.tanker_number, pl.exec_status
+      FROM bmcus b
+      LEFT JOIN LATERAL (
+        SELECT tp.trip_no, t.tanker_number, COALESCE(te.status, 'not started') AS exec_status
+        FROM trip_plan_bmcus tpb
+        JOIN trip_plans tp ON tp.id=tpb.trip_plan_id
+          AND tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
+        LEFT JOIN tankers t ON t.id=tp.tanker_id
+        LEFT JOIN LATERAL (
+          SELECT status FROM trip_executions x
+          WHERE x.trip_plan_id=tp.id AND x.status != 'cancelled'
+          ORDER BY x.id DESC LIMIT 1
+        ) te ON TRUE
+        WHERE tpb.bmcu_id=b.id
+        LIMIT 1
+      ) pl ON TRUE
+      WHERE b.is_active=TRUE
+      ORDER BY (pl.trip_no IS NULL), b.bmcu_code`, [date]);
+
+    const missed = bmcusRes.rows
+      .filter(b => !collected.has(b.id))
+      .map(b => ({
+        bmcu_code: b.bmcu_code, bmcu_name: b.bmcu_name, district: b.district,
+        planned: b.trip_no != null, trip_no: b.trip_no,
+        tanker_number: b.tanker_number, exec_status: b.exec_status,
+      }));
+
+    const totalActive = bmcusRes.rows.length;
+    res.json({
+      date, trips,
+      bmcus_collected: collected.size,
+      total_active_bmcus: totalActive,
+      coverage_pct: totalActive > 0 ? Math.round(collected.size / totalActive * 1000) / 10 : 0,
+      missed_planned: missed.filter(m => m.planned).length,
+      missed_unplanned: missed.filter(m => !m.planned).length,
+      missed,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/executions/:id
 router.get('/:id', authenticate, async (req, res) => {
   try {

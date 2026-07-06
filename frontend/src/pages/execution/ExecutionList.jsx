@@ -2,10 +2,91 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, Eye, RefreshCw, XCircle } from 'lucide-react';
+import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getPlans, getExecutions, createExecution, cancelExecution } from '../../api/index';
+import { getPlans, getExecutions, createExecution, cancelExecution, getExecutionCoverage } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
+
+// Coverage panel: trips status split, BMCUs collected, BMCUs missed (expandable).
+function CoveragePanel({ date }) {
+  const [open, setOpen] = useState(false);
+  const { data: cov } = useQuery({
+    queryKey: ['exec-coverage', date],
+    queryFn:  () => getExecutionCoverage(date).then(r => r.data),
+    refetchInterval: 60_000, // live tracker during the day
+  });
+  if (!cov) return null;
+  const t = cov.trips || {};
+  const missedCount = (cov.missed || []).length;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="card p-4 text-center border-2" style={{ borderColor: '#3b82f6' }}>
+          <div className="text-3xl font-bold text-blue-600">{t.planned || 0}</div>
+          <div className="text-sm font-medium text-gray-700">Trips Planned</div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            {t.in_progress || 0} in progress · {t.saved || 0} saved · {t.pending_ack || 0} pending ack · {t.closed || 0} closed
+            {t.not_started ? ` · ${t.not_started} not started` : ''}
+          </div>
+        </div>
+        <div className="card p-4 text-center border-2" style={{ borderColor: '#22c55e' }}>
+          <div className="text-3xl font-bold text-green-600">{cov.bmcus_collected}</div>
+          <div className="text-sm font-medium text-gray-700">BMCUs Collected</div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            of {cov.total_active_bmcus} active ({cov.coverage_pct}%) — milk qty recorded
+          </div>
+        </div>
+        <div className="card p-4 text-center border-2 cursor-pointer select-none"
+          style={{ borderColor: missedCount ? '#ef4444' : '#d1d5db' }}
+          onClick={() => setOpen(o => !o)}>
+          <div className={`text-3xl font-bold ${missedCount ? 'text-red-600' : 'text-gray-400'}`}>{missedCount}</div>
+          <div className="text-sm font-medium text-gray-700 flex items-center justify-center gap-1">
+            BMCUs Missed {open ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
+          </div>
+          <div className="text-xs mt-0.5">
+            <span className="text-amber-600 font-medium">{cov.missed_planned} planned — not collected</span>
+            {' · '}
+            <span className="text-red-600 font-medium">{cov.missed_unplanned} not planned</span>
+          </div>
+        </div>
+      </div>
+
+      {open && missedCount > 0 && (
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto max-h-72 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-gray-50 border-b">
+                <tr>
+                  <th className="table-th">BMCU</th>
+                  <th className="table-th">Name</th>
+                  <th className="table-th">District</th>
+                  <th className="table-th">Planned on</th>
+                  <th className="table-th">Trip Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cov.missed.map((m, i) => (
+                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="table-td font-mono font-semibold text-[#005ba3]">{m.bmcu_code}</td>
+                    <td className="table-td">{m.bmcu_name}</td>
+                    <td className="table-td text-gray-600">{m.district || '—'}</td>
+                    <td className="table-td">
+                      {m.planned
+                        ? <span className="text-amber-700">Trip #{m.trip_no} — {m.tanker_number || ''}</span>
+                        : <span className="text-red-600 font-medium">not planned</span>}
+                    </td>
+                    <td className="table-td text-gray-600">{m.planned ? (m.exec_status || '').replace('_', ' ') : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ExecutionList() {
   const navigate = useNavigate();
@@ -79,6 +160,9 @@ export default function ExecutionList() {
             onChange={e => setDate(e.target.value)}/>
         </div>
       </div>
+
+      {/* Collection coverage — live tracker for the selected date */}
+      <CoveragePanel date={date}/>
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
