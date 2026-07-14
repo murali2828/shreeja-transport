@@ -106,6 +106,16 @@ export const printTripDoc     = (planId, doc_type) => api.post(`/trip-docs/${pla
 export const getTripDocStatus = (date)   => api.get('/trip-docs/status', { params: { plan_for_date: date } });
 export const getTripDocPlan   = (planId) => api.get(`/trip-docs/${planId}`);
 
+// ── Day wise Tanker Utilisation ───────────────────────────────────────────────
+export const getDayUtilisation = (p) => api.get('/reports/day-utilisation', { params: p });
+export const downloadDayUtilisationExcel = (from, to, threshold) =>
+  api.get(`/reports/day-utilisation/excel?from_date=${from}&to_date=${to}&threshold=${threshold}`, { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `day_utilisation_${from}_${to}.xlsx`; a.click();
+    URL.revokeObjectURL(url);
+  });
+
 // ── Trip Durations report ─────────────────────────────────────────────────────
 export const getTripDurations = (p) => api.get('/reports/trip-durations', { params: p });
 export const downloadTripDurationsExcel = (from, to) =>

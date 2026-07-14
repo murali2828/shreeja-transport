@@ -759,6 +759,144 @@ router.get('/bmcu-breakup/excel', authenticate, async (req, res) => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// DAY WISE TANKER UTILISATION — per acknowledged trip, by ack date.
+// Utilization % = Ack Qty Ltrs / tanker capacity × 100; remark ABOVE/BELOW threshold.
+// ═════════════════════════════════════════════════════════════════════════════
+async function buildDayUtilisation(fromDate, toDate, threshold) {
+  const r = await query(`
+    SELECT tp.trip_no, t.tanker_number, t.capacity_litres,
+           rm.route_name, sp.name AS starting_point, dp.name AS delivery_point,
+           MIN(ta.ack_date)      AS ack_date,
+           SUM(ta.qty_litres)    AS ack_litres,
+           SUM(ta.qty_kgs)       AS ack_kgs,
+           SUM(ta.kg_fat)        AS ack_kg_fat,
+           SUM(ta.kg_snf)        AS ack_kg_snf
+    FROM trip_executions te
+    JOIN trip_plans tp           ON tp.id=te.trip_plan_id
+    JOIN trip_acknowledgements ta ON ta.execution_id=te.id
+    LEFT JOIN tankers t          ON t.id=tp.tanker_id
+    LEFT JOIN route_masters rm   ON rm.id=tp.route_id
+    LEFT JOIN starting_points sp ON sp.id=tp.start_point_id
+    LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
+    WHERE te.status != 'cancelled' AND tp.status NOT IN ('cancelled','deleted')
+    GROUP BY tp.id, tp.trip_no, t.tanker_number, t.capacity_litres,
+             rm.route_name, sp.name, dp.name, te.id
+    HAVING MIN(ta.ack_date) BETWEEN $1 AND $2
+    ORDER BY MIN(ta.ack_date), tp.trip_no`, [fromDate, toDate]);
+
+  return r.rows.map((x, i) => {
+    const litres = parseFloat(x.ack_litres) || 0;
+    const kgs    = parseFloat(x.ack_kgs) || 0;
+    const cap    = parseFloat(x.capacity_litres) || 0;
+    const util   = cap ? rN(litres / cap * 100) : null;
+    return {
+      s_no: i + 1,
+      starting_point: x.starting_point, delivery_point: x.delivery_point,
+      ack_date: fmtDate(x.ack_date),
+      tanker_number: x.tanker_number, route_name: x.route_name, trip_no: x.trip_no,
+      ack_litres: rN(litres), ack_kgs: rN(kgs),
+      fat: kgs ? rN(parseFloat(x.ack_kg_fat) / kgs * 100) : null,
+      snf: kgs ? rN(parseFloat(x.ack_kg_snf) / kgs * 100) : null,
+      kg_fat: rN(x.ack_kg_fat), kg_snf: rN(x.ack_kg_snf),
+      capacity: cap || null,
+      utilization: util,
+      remarks: util == null ? '' : util >= threshold ? `ABOVE ${threshold}` : `BELOW ${threshold}`,
+    };
+  });
+}
+
+const UTIL_HEADERS = [
+  { title: 'S.NO', key: 's_no', width: 6 },
+  { title: 'Started Point', key: 'starting_point', width: 16 },
+  { title: 'Delivery Point', key: 'delivery_point', width: 16 },
+  { title: 'Ack date', key: 'ack_date', width: 12 },
+  { title: 'Tanker Number', key: 'tanker_number', width: 15 },
+  { title: 'Route Name', key: 'route_name', width: 18 },
+  { title: 'Ack Qty Ltrs', key: 'ack_litres', width: 12, num: true },
+  { title: 'Ack Qty Kgs', key: 'ack_kgs', width: 12, num: true },
+  { title: 'Fat', key: 'fat', width: 8, num: true },
+  { title: 'SNF', key: 'snf', width: 8, num: true },
+  { title: 'KG Fat', key: 'kg_fat', width: 10, num: true },
+  { title: 'Kg SNF', key: 'kg_snf', width: 10, num: true },
+  { title: 'Tanker Capacity', key: 'capacity', width: 13, num: true },
+  { title: 'Utilization %', key: 'utilization', width: 12, num: true },
+  { title: 'Remarks', key: 'remarks', width: 12 },
+];
+
+function buildDayUtilisationWorkbook(rows, fromDate, toDate, threshold) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Day wise Utilisation', { views: [{ state: 'frozen', ySplit: 2 }] });
+  ws.columns = UTIL_HEADERS.map(h => ({ width: h.width }));
+
+  ws.mergeCells(1, 1, 1, UTIL_HEADERS.length);
+  const title = ws.getCell(1, 1);
+  title.value = `Day wise Tanker Utilisation — ${fromDate}${toDate !== fromDate ? ` to ${toDate}` : ''} (threshold ${threshold}%)`;
+  title.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
+  ws.getRow(1).height = 24;
+
+  UTIL_HEADERS.forEach((h, i) => {
+    const c = ws.getCell(2, i + 1);
+    c.value = h.title;
+    c.font = { bold: true, color: { argb: HEADER_TEXT } };
+    c.fill = fillOf('FFE0F2FE');
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    c.border = BORDER;
+  });
+
+  rows.forEach((x, ri) => {
+    const row = ws.getRow(3 + ri);
+    UTIL_HEADERS.forEach((h, i) => {
+      const c = row.getCell(i + 1);
+      const v = x[h.key];
+      c.border = BORDER;
+      if (h.num) {
+        c.value = v == null ? null : parseFloat(v);
+        c.numFmt = '#,##0.00';
+        c.alignment = { horizontal: 'right' };
+      } else c.value = v ?? '';
+      if (h.key === 'remarks' && v) {
+        c.font = { bold: true, color: { argb: v.startsWith('ABOVE') ? GREEN : RED } };
+        c.alignment = { horizontal: 'center' };
+      }
+      if (h.key === 'utilization' && v != null) {
+        c.font = { bold: true, color: { argb: parseFloat(v) >= threshold ? GREEN : RED } };
+      }
+    });
+  });
+  return wb;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/reports/day-utilisation?from_date=&to_date=&threshold=95
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/day-utilisation', authenticate, async (req, res) => {
+  const { from_date, to_date } = req.query;
+  const threshold = parseFloat(req.query.threshold) || 95;
+  if (!from_date) return res.status(400).json({ error: 'from_date required' });
+  try {
+    res.json(await buildDayUtilisation(from_date, to_date || from_date, threshold));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/reports/day-utilisation/excel?from_date=&to_date=&threshold=95
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/day-utilisation/excel', authenticate, async (req, res) => {
+  const { from_date, to_date } = req.query;
+  const threshold = parseFloat(req.query.threshold) || 95;
+  if (!from_date) return res.status(400).json({ error: 'from_date required' });
+  try {
+    const to = to_date || from_date;
+    const rows = await buildDayUtilisation(from_date, to, threshold);
+    const wb   = buildDayUtilisationWorkbook(rows, from_date, to, threshold);
+    const buf  = Buffer.from(await wb.xlsx.writeBuffer());
+    res.setHeader('Content-Disposition', `attachment; filename=day_utilisation_${from_date}_${to}.xlsx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 // TRIP DURATIONS REPORT — derived from Gate Pass / COA first-print timestamps.
 //   Round Trip: gate_pass first print (trip start) → coa first print (arrived).
 //   Delivery Turnaround: per tanker, coa first print → SAME tanker's next trip
