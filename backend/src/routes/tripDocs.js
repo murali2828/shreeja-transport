@@ -85,7 +85,7 @@ router.post('/:planId(\\d+)/print', authenticate, async (req, res) => {
     const ins = await client.query(`
       INSERT INTO trip_document_prints (trip_plan_id, doc_type, print_no, printed_by, printed_by_name)
       VALUES ($1, $2,
-        COALESCE((SELECT MAX(print_no) FROM trip_document_prints WHERE trip_plan_id=$1 AND doc_type=$2), 0) + 1,
+        COALESCE((SELECT MAX(print_no) FROM trip_document_prints WHERE trip_plan_id=$1::int AND doc_type=$2::varchar), 0) + 1,
         $3, $4)
       RETURNING print_no, printed_at`, [planId, doc_type, req.user.id, req.user.full_name]);
     await client.query('COMMIT');
