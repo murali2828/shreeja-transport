@@ -758,4 +758,171 @@ router.get('/bmcu-breakup/excel', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ═════════════════════════════════════════════════════════════════════════════
+// TRIP DURATIONS REPORT — derived from Gate Pass / COA first-print timestamps.
+//   Round Trip: gate_pass first print (trip start) → coa first print (arrived).
+//   Delivery Turnaround: per tanker, coa first print → SAME tanker's next trip
+//   gate_pass first print (time spent inside the delivery point).
+// ═════════════════════════════════════════════════════════════════════════════
+const durationParts = mins => {
+  if (mins == null) return { minutes: null, days: null, label: null };
+  const m = Math.max(0, Math.round(mins));
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+  return {
+    minutes: m,
+    days: rN(m / 1440, 2),
+    label: `${d}d ${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`,
+  };
+};
+
+async function buildTripDurations(fromDate, toDate) {
+  // First prints per trip in the plan-date window, plus tanker id for pairing.
+  const r = await query(`
+    SELECT tp.id AS plan_id, tp.trip_no, tp.plan_for_date, tp.tanker_id,
+           t.tanker_number, rm.route_name,
+           sp.name AS starting_point, dp.name AS delivery_point,
+           (SELECT MIN(printed_at) FROM trip_document_prints
+             WHERE trip_plan_id=tp.id AND doc_type='gate_pass') AS gate_pass_at,
+           (SELECT MIN(printed_at) FROM trip_document_prints
+             WHERE trip_plan_id=tp.id AND doc_type='coa')       AS coa_at
+    FROM trip_plans tp
+    LEFT JOIN tankers t          ON t.id=tp.tanker_id
+    LEFT JOIN route_masters rm   ON rm.id=tp.route_id
+    LEFT JOIN starting_points sp ON sp.id=tp.start_point_id
+    LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
+    WHERE tp.plan_for_date BETWEEN $1 AND $2
+      AND tp.status NOT IN ('cancelled','deleted')
+    ORDER BY tp.plan_for_date, tp.trip_no`, [fromDate, toDate]);
+
+  const round_trips = r.rows.map(x => {
+    const started = !!x.gate_pass_at;
+    const arrived = !!x.coa_at;
+    const mins = started && arrived
+      ? (new Date(x.coa_at) - new Date(x.gate_pass_at)) / 60000 : null;
+    return {
+      trip_no: x.trip_no, plan_for_date: fmtDate(x.plan_for_date),
+      tanker_number: x.tanker_number, route_name: x.route_name,
+      starting_point: x.starting_point, delivery_point: x.delivery_point,
+      trip_start_at: x.gate_pass_at, arrived_at: x.coa_at,
+      status: arrived ? 'Completed' : started ? 'On trip' : 'Not started',
+      duration: durationParts(mins),
+    };
+  });
+
+  // Turnaround: pair each COA with the same tanker's NEXT gate-pass first print
+  // (any plan date — look ahead beyond the window so recent COAs pair correctly).
+  const gp = await query(`
+    SELECT tp.tanker_id, tp.trip_no, MIN(p.printed_at) AS first_at
+    FROM trip_document_prints p
+    JOIN trip_plans tp ON tp.id=p.trip_plan_id
+    WHERE p.doc_type='gate_pass' AND tp.tanker_id IS NOT NULL
+      AND tp.status NOT IN ('cancelled','deleted')
+    GROUP BY tp.tanker_id, tp.trip_no, tp.id`);
+  const gpByTanker = {};
+  for (const g of gp.rows) (gpByTanker[g.tanker_id] ||= []).push(g);
+  for (const list of Object.values(gpByTanker)) list.sort((a, b) => new Date(a.first_at) - new Date(b.first_at));
+
+  const turnarounds = [];
+  for (const x of r.rows) {
+    if (!x.coa_at || !x.tanker_id) continue;
+    const next = (gpByTanker[x.tanker_id] || [])
+      .find(g => new Date(g.first_at) > new Date(x.coa_at));
+    const mins = next ? (new Date(next.first_at) - new Date(x.coa_at)) / 60000 : null;
+    turnarounds.push({
+      tanker_number: x.tanker_number,
+      arrived_trip_no: x.trip_no, plan_for_date: fmtDate(x.plan_for_date),
+      delivery_point: x.delivery_point,
+      arrived_at: x.coa_at,
+      next_trip_no: next ? next.trip_no : null,
+      next_gate_pass_at: next ? next.first_at : null,
+      status: next ? 'Departed' : 'In plant',
+      duration: durationParts(mins),
+    });
+  }
+
+  return { from_date: fromDate, to_date: toDate, round_trips, turnarounds };
+}
+
+const fmtTs = ts => {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+function buildTripDurationsWorkbook(data) {
+  const wb = new ExcelJS.Workbook();
+  const header = (ws, cols) => {
+    ws.getRow(1).height = 22;
+    cols.forEach((h, i) => {
+      const c = ws.getCell(1, i + 1);
+      c.value = h.title;
+      c.font = { bold: true, color: { argb: HEADER_TEXT } };
+      c.fill = fillOf('FFE0F2FE');
+      c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      c.border = BORDER;
+      ws.getColumn(i + 1).width = h.width;
+    });
+  };
+  const put = (ws, rIdx, vals, numCols = []) => vals.forEach((v, i) => {
+    const c = ws.getCell(rIdx, i + 1);
+    c.value = v ?? '';
+    c.border = BORDER;
+    if (numCols.includes(i)) { c.numFmt = '#,##0.00'; c.alignment = { horizontal: 'right' }; }
+  });
+
+  const ws1 = wb.addWorksheet('Round Trips');
+  header(ws1, [
+    { title: 'Trip #', width: 8 }, { title: 'Plan Date', width: 12 }, { title: 'Tanker', width: 15 },
+    { title: 'Route', width: 20 }, { title: 'Starting Point', width: 16 }, { title: 'Delivery Point', width: 16 },
+    { title: 'Trip Start (Gate Pass)', width: 18 }, { title: 'Arrived (COA)', width: 18 },
+    { title: 'Round Trip (d hh:mm)', width: 16 }, { title: 'Days (decimal)', width: 13 }, { title: 'Status', width: 12 },
+  ]);
+  data.round_trips.forEach((x, i) => put(ws1, i + 2, [
+    x.trip_no, x.plan_for_date, x.tanker_number, x.route_name, x.starting_point, x.delivery_point,
+    fmtTs(x.trip_start_at), fmtTs(x.arrived_at), x.duration.label, x.duration.days, x.status,
+  ], [9]));
+
+  const ws2 = wb.addWorksheet('Delivery Turnaround');
+  header(ws2, [
+    { title: 'Tanker', width: 15 }, { title: 'Arrived Trip #', width: 12 }, { title: 'Plan Date', width: 12 },
+    { title: 'Delivery Point', width: 16 }, { title: 'Arrived (COA)', width: 18 },
+    { title: 'Next Trip #', width: 10 }, { title: 'Next Gate Pass', width: 18 },
+    { title: 'In-Plant (d hh:mm)', width: 16 }, { title: 'Days (decimal)', width: 13 }, { title: 'Status', width: 12 },
+  ]);
+  data.turnarounds.forEach((x, i) => put(ws2, i + 2, [
+    x.tanker_number, x.arrived_trip_no, x.plan_for_date, x.delivery_point, fmtTs(x.arrived_at),
+    x.next_trip_no, fmtTs(x.next_gate_pass_at), x.duration.label, x.duration.days, x.status,
+  ], [8]));
+
+  return wb;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/reports/trip-durations?from_date=&to_date=
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/trip-durations', authenticate, async (req, res) => {
+  const { from_date, to_date } = req.query;
+  if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date required' });
+  try {
+    res.json(await buildTripDurations(from_date, to_date));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/reports/trip-durations/excel?from_date=&to_date=
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/trip-durations/excel', authenticate, async (req, res) => {
+  const { from_date, to_date } = req.query;
+  if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date required' });
+  try {
+    const data = await buildTripDurations(from_date, to_date);
+    const wb   = buildTripDurationsWorkbook(data);
+    const buf  = Buffer.from(await wb.xlsx.writeBuffer());
+    res.setHeader('Content-Disposition', `attachment; filename=trip_durations_${from_date}_${to_date}.xlsx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

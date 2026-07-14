@@ -2,9 +2,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle, GripVertical, Navigation, AlertTriangle, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle, GripVertical, Navigation, AlertTriangle, ChevronDown, Printer } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, getStartingPoints, cancelExecution, getExecutionDistance, getChangeRequests, createChangeRequest } from '../../api/index';
+import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, getStartingPoints, cancelExecution, getExecutionDistance, getChangeRequests, createChangeRequest, getTripDocPlan, printTripDoc } from '../../api/index';
+import { printGatePass, printCoa } from '../../utils/printDocs';
 import { useAuth } from '../../hooks/useAuth';
 
 const KG = 1.0285;
@@ -574,6 +575,22 @@ export default function ExecutionForm() {
     enabled:  !!id && exec?.status === 'closed',
   });
 
+  // Gate Pass / COA print status + printing (first print = trip start / arrival)
+  const { data: docStatus = {} } = useQuery({
+    queryKey: ['trip-doc-plan', exec?.trip_plan_id],
+    queryFn:  () => getTripDocPlan(exec.trip_plan_id).then(r => r.data),
+    enabled:  !!exec?.trip_plan_id,
+  });
+  const printMut = useMutation({
+    mutationFn: ({ docType }) => printTripDoc(exec.trip_plan_id, docType),
+    onSuccess: (res, { docType }) => {
+      qc.invalidateQueries(['trip-doc-plan']);
+      if (docType === 'gate_pass') printGatePass(res.data); else printCoa(res.data);
+      if (res.data.is_duplicate) toast('Duplicate print — original timestamp kept', { icon: 'ℹ️' });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'Print failed'),
+  });
+
   const startStaging = () => {
     setAckRows((exec.acknowledgements || []).map(a => ({ ...a })));
     setStagingReason('');
@@ -851,6 +868,25 @@ export default function ExecutionForm() {
             ✏ Request Changes
           </button>
         )}
+        {(() => {
+          const gpDone = !!docStatus.gate_pass;
+          const coaDone = !!docStatus.coa;
+          const fmt = ts => ts ? new Date(ts).toLocaleString('en-IN') : '';
+          return (<>
+            <button onClick={() => printMut.mutate({ docType: 'gate_pass' })}
+              disabled={printMut.isPending}
+              title={gpDone ? `Trip started — first printed ${fmt(docStatus.gate_pass.first_printed_at)} (reprint = duplicate)` : 'Print Gate Pass (starts the trip clock)'}
+              className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg font-medium ${gpDone ? 'bg-green-100 text-green-700' : 'btn-secondary'}`}>
+              <Printer size={12}/> Gate Pass{gpDone ? ' ✓' : ''}
+            </button>
+            <button onClick={() => printMut.mutate({ docType: 'coa' })}
+              disabled={printMut.isPending || !gpDone}
+              title={!gpDone ? 'Print the Gate Pass first' : coaDone ? `Arrived — first printed ${fmt(docStatus.coa.first_printed_at)} (reprint = duplicate)` : 'Print COA (marks arrival at delivery point)'}
+              className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg font-medium ${coaDone ? 'bg-green-100 text-green-700' : 'btn-secondary'} ${!gpDone ? 'opacity-40 cursor-not-allowed' : ''}`}>
+              <Printer size={12}/> COA{coaDone ? ' ✓' : ''}
+            </button>
+          </>);
+        })()}
       </div>
 
       {/* Pending change-request banner */}

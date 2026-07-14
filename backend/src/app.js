@@ -42,6 +42,7 @@ app.use('/api/vendors',    require('./routes/vendors'));
 app.use('/api/documents',  require('./routes/documents'));
 app.use('/api/audit',      require('./routes/audit'));
 app.use('/api/change-requests', require('./routes/changeRequests'));
+app.use('/api/trip-docs', require('./routes/tripDocs'));
 
 // ─── Global error handler ─────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {

@@ -101,6 +101,21 @@ export const submitForAck       = (id)    => api.post(`/executions/${id}/submit-
 export const saveAcknowledgements = (id, d) => api.post(`/executions/${id}/acknowledgements`, d);
 export const cancelExecution      = (id, reason) => api.post(`/executions/${id}/cancel`, { reason });
 
+// ── Trip Documents (Gate Pass / COA prints) ──────────────────────────────────
+export const printTripDoc     = (planId, doc_type) => api.post(`/trip-docs/${planId}/print`, { doc_type });
+export const getTripDocStatus = (date)   => api.get('/trip-docs/status', { params: { plan_for_date: date } });
+export const getTripDocPlan   = (planId) => api.get(`/trip-docs/${planId}`);
+
+// ── Trip Durations report ─────────────────────────────────────────────────────
+export const getTripDurations = (p) => api.get('/reports/trip-durations', { params: p });
+export const downloadTripDurationsExcel = (from, to) =>
+  api.get(`/reports/trip-durations/excel?from_date=${from}&to_date=${to}`, { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `trip_durations_${from}_${to}.xlsx`; a.click();
+    URL.revokeObjectURL(url);
+  });
+
 // ── Vendors ───────────────────────────────────────────────────────────────────
 export const getVendors    = (params) => api.get('/vendors', { params });
 export const createVendor  = (d)     => api.post('/vendors', d);

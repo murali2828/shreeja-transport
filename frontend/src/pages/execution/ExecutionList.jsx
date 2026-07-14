@@ -2,10 +2,11 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight, Printer } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getPlans, getExecutions, createExecution, cancelExecution, getExecutionCoverage } from '../../api/index';
+import { getPlans, getExecutions, createExecution, cancelExecution, getExecutionCoverage, getTripDocStatus, printTripDoc } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
+import { printGatePass, printCoa } from '../../utils/printDocs';
 
 // Coverage panel: trips status split, BMCUs collected, BMCUs missed (expandable).
 function CoveragePanel({ date }) {
@@ -108,6 +109,22 @@ export default function ExecutionList() {
   const { data: execs = [] } = useQuery({
     queryKey: ['executions', date],
     queryFn:  () => getExecutions({ execution_date: date }).then(r => r.data)
+  });
+
+  // Gate Pass / COA print status per plan (first print = trip start / arrival time)
+  const { data: docStatus = {} } = useQuery({
+    queryKey: ['trip-doc-status', date],
+    queryFn:  () => getTripDocStatus(date).then(r => r.data),
+  });
+
+  const printMut = useMutation({
+    mutationFn: ({ planId, docType }) => printTripDoc(planId, docType),
+    onSuccess: (res, { docType }) => {
+      qc.invalidateQueries(['trip-doc-status']);
+      if (docType === 'gate_pass') printGatePass(res.data); else printCoa(res.data);
+      if (res.data.is_duplicate) toast('Duplicate print — original timestamp kept', { icon: 'ℹ️' });
+    },
+    onError: (e) => toast.error(e.response?.data?.error || 'Print failed'),
   });
 
   const startMut = useMutation({
@@ -226,6 +243,26 @@ export default function ExecutionList() {
                             Start
                           </button>
                         )}
+                        {(() => {
+                          const ds = docStatus[p.id] || {};
+                          const gpDone = !!ds.gate_pass;
+                          const coaDone = !!ds.coa;
+                          const fmt = ts => ts ? new Date(ts).toLocaleString('en-IN') : '';
+                          return (<>
+                            <button onClick={() => printMut.mutate({ planId: p.id, docType: 'gate_pass' })}
+                              disabled={printMut.isPending}
+                              title={gpDone ? `Trip started — first printed ${fmt(ds.gate_pass.first_printed_at)} (reprint = duplicate)` : 'Print Gate Pass (starts the trip clock)'}
+                              className={`btn-sm flex items-center gap-1 ${gpDone ? 'bg-green-100 text-green-700 rounded-lg px-2 py-1 text-xs font-medium' : 'btn-secondary'}`}>
+                              <Printer size={12}/> GP{gpDone ? ' ✓' : ''}
+                            </button>
+                            <button onClick={() => printMut.mutate({ planId: p.id, docType: 'coa' })}
+                              disabled={printMut.isPending || !gpDone}
+                              title={!gpDone ? 'Print the Gate Pass first' : coaDone ? `Arrived — first printed ${fmt(ds.coa.first_printed_at)} (reprint = duplicate)` : 'Print COA (marks arrival at delivery point)'}
+                              className={`btn-sm flex items-center gap-1 ${coaDone ? 'bg-green-100 text-green-700 rounded-lg px-2 py-1 text-xs font-medium' : 'btn-secondary'} ${!gpDone ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                              <Printer size={12}/> COA{coaDone ? ' ✓' : ''}
+                            </button>
+                          </>);
+                        })()}
                         {isAdmin && exec && exec.status !== 'closed' && (
                           <button
                             onClick={() => setCancelTarget({ execId: exec.id, planId: p.id, tripNo: p.trip_no })}
