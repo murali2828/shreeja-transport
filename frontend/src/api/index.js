@@ -154,6 +154,14 @@ export const exportAuditLogs = (p) =>
 // ── Reports ───────────────────────────────────────────────────────────────────
 export const getDailyTSReport   = (p)    => api.get('/reports/daily-ts', { params: p });
 export const getBmcuWiseReport  = (p)    => api.get('/reports/bmcu-wise', { params: p });
+export const getBmcuBreakup     = (p)    => api.get('/reports/bmcu-breakup', { params: p });
+export const downloadBmcuBreakupExcel = (date) =>
+  api.get(`/reports/bmcu-breakup/excel?report_date=${date}`, { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `bmcu_breakup_${date}.xlsx`; a.click();
+    URL.revokeObjectURL(url);
+  });
 export const sendDailyReport    = (date) => api.post('/reports/send-email', { report_date: date });
 export const downloadTSExcel    = (date) =>
   api.get(`/reports/daily-ts/excel?report_date=${date}`, { responseType: 'blob' }).then(r => {

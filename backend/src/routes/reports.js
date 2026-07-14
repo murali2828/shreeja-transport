@@ -395,4 +395,367 @@ router.post('/send-email', authenticate, async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════════
+// BMCU BREAK UP REPORT — per-BMCU dispatch vs RMRD reconciliation
+// (per sample BMCU_Break_Up.xlsx). One block per BMCU per trip:
+//   dispatch entry (with compartment) vs RMRD shift rows + signed adjustments
+//   (Balance Milk Leftover −, Balance milk lifted +, New MPP +,
+//    Milk Shifting + at receiver / − at source plant),
+//   Gross Total per BMCU with difference = RMRD − Dispatch.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Shift label per sample: day-of-month + E (evening/PM) or M (morning/AM), e.g. 07E.
+const shiftLabel = (milkDate, shift) => {
+  const dd = fmtDate(milkDate).slice(8, 10);
+  return `${dd}${shift === 'PM' ? 'E' : 'M'}`;
+};
+
+async function buildBmcuBreakup(reportDate) {
+  // Trips planned for the date with their latest non-cancelled execution.
+  const tr = await query(`
+    SELECT
+      tp.id AS plan_id, tp.trip_no,
+      t.tanker_number, rm.route_name,
+      te.id AS execution_id,
+      (SELECT MIN(teb.milk_date) FROM trip_execution_bmcus teb
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE) AS lifting_date
+    FROM trip_plans tp
+    LEFT JOIN LATERAL (
+      SELECT * FROM trip_executions x
+      WHERE x.trip_plan_id=tp.id AND x.status != 'cancelled'
+      ORDER BY x.id DESC LIMIT 1
+    ) te ON TRUE
+    LEFT JOIN tankers t        ON t.id=tp.tanker_id
+    LEFT JOIN route_masters rm ON rm.id=tp.route_id
+    WHERE tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
+    ORDER BY tp.trip_no`, [reportDate]);
+
+  const execIds = tr.rows.filter(x => x.execution_id).map(x => x.execution_id);
+  const notes = [];
+  if (!execIds.length) return { report_date: reportDate, trips: [], notes };
+
+  // Dispatch rows per BMCU (same convention as TS report: exclude Balance Milk rows).
+  const dr = await query(`
+    SELECT teb.execution_id, teb.seq_no, teb.bmcu_id, teb.chamber,
+           teb.qty_litres, teb.qty_kgs, teb.fat_pct, teb.snf_pct, teb.kg_fat, teb.kg_snf,
+           b.bmcu_code, b.bmcu_name
+    FROM trip_execution_bmcus teb
+    JOIN bmcus b ON b.id=teb.bmcu_id
+    WHERE teb.execution_id = ANY($1) AND teb.is_deleted=FALSE AND teb.description!='Balance Milk'
+    ORDER BY teb.execution_id, teb.seq_no`, [execIds]);
+
+  // RMRD shift rows keyed to their BMCU block.
+  const sr = await query(`
+    SELECT tebs.execution_id, tebs.bmcu_seq_no, tebs.milk_date, tebs.shift,
+           tebs.rmrd_qty, tebs.rmrd_fat_pct, tebs.rmrd_snf_pct
+    FROM trip_execution_bmcu_shifts tebs
+    JOIN trip_execution_bmcus teb
+      ON teb.execution_id=tebs.execution_id AND teb.seq_no=tebs.bmcu_seq_no AND teb.is_deleted=FALSE
+    WHERE tebs.execution_id = ANY($1)
+    ORDER BY tebs.milk_date, tebs.shift`, [execIds]);
+
+  // Adjustment entries (balance/lifted/new MPP/shifting) with source plant info.
+  const er = await query(`
+    SELECT e.execution_id, e.bmcu_seq_no, e.kind, e.category,
+           e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id,
+           sb.bmcu_code AS source_bmcu_code, sb.bmcu_name AS source_bmcu_name
+    FROM trip_execution_bmcu_entries e
+    LEFT JOIN bmcus sb ON sb.id=e.source_bmcu_id
+    WHERE e.execution_id = ANY($1)
+    ORDER BY e.id`, [execIds]);
+
+  // Block index: (execId, seqNo) → block, plus bmcuId → blocks (to place source-side
+  // deduction rows for internal shifting, preferring the same trip).
+  const blocks = {}; const byExec = {}; const byBmcu = {};
+  const key = (e, s) => `${e}:${s}`;
+  for (const d of dr.rows) {
+    const b = {
+      execution_id: d.execution_id, seq_no: d.seq_no,
+      bmcu_code: d.bmcu_code, bmcu_name: d.bmcu_name,
+      compartment: String(d.chamber || '').split(',').map(s => s.trim()).filter(Boolean).join('/'),
+      dispatch: {
+        litres: rN(d.qty_litres) || 0, kgs: rN(d.qty_kgs) || 0,
+        fat: rN(d.fat_pct), snf: rN(d.snf_pct),
+        kg_fat: rN(d.kg_fat) || 0, kg_snf: rN(d.kg_snf) || 0,
+      },
+      rows: [],
+    };
+    blocks[key(d.execution_id, d.seq_no)] = b;
+    (byExec[d.execution_id] ||= []).push(b);
+    (byBmcu[d.bmcu_id] ||= []).push(b);
+  }
+
+  // Measures helper: qty (may be negative) + fat/snf % → 6 values.
+  const measures = (qty, fat, snf) => {
+    const litres = parseFloat(qty) || 0;
+    const kgs = calcKgs(litres);
+    return {
+      litres: rN(litres), kgs: rN(kgs),
+      fat: fat != null ? rN(fat) : null, snf: snf != null ? rN(snf) : null,
+      kg_fat: rN(calcKgFat(kgs, fat)) || 0, kg_snf: rN(calcKgSnf(kgs, snf)) || 0,
+    };
+  };
+
+  for (const s of sr.rows) {
+    const b = blocks[key(s.execution_id, s.bmcu_seq_no)];
+    if (!b) continue;
+    b.rows.push({
+      type: 'shift', label: b.bmcu_name, shift: shiftLabel(s.milk_date, s.shift),
+      ...measures(s.rmrd_qty, s.rmrd_fat_pct, s.rmrd_snf_pct),
+    });
+  }
+
+  for (const e of er.rows) {
+    if (!e.qty_litres) continue;
+    const b = blocks[key(e.execution_id, e.bmcu_seq_no)];
+    if (e.kind === 'balance_milk' && e.category === 'Left Over milk') {
+      if (b) b.rows.push({ type: 'adjustment', label: 'Balance Milk Leftover', shift: '',
+        ...measures(-e.qty_litres, e.fat_pct, e.snf_pct) });
+    } else if (e.kind === 'balance_milk' && e.category === 'Lifted milk') {
+      if (b) b.rows.push({ type: 'adjustment', label: 'Balance milk lifted', shift: '',
+        ...measures(e.qty_litres, e.fat_pct, e.snf_pct) });
+    } else if (e.kind === 'new_mpp') {
+      if (b) b.rows.push({ type: 'adjustment', label: 'New MPP', shift: '',
+        ...measures(e.qty_litres, e.fat_pct, e.snf_pct) });
+    } else if (e.kind === 'internal_shifting') {
+      if (b) b.rows.push({ type: 'adjustment',
+        label: `Milk Shifting${e.source_bmcu_code ? ` (from ${e.source_bmcu_code})` : ''}`,
+        shift: '', ...measures(e.qty_litres, e.fat_pct, e.snf_pct) });
+      // Source plant's block gets the matching deduction (prefer the same trip).
+      const cands = byBmcu[e.source_bmcu_id] || [];
+      const src = cands.find(c => c.execution_id === e.execution_id) || cands[0];
+      if (src) {
+        src.rows.push({ type: 'adjustment',
+          label: `Milk Shifting (to ${b ? b.bmcu_code : '—'})`, shift: '',
+          ...measures(-e.qty_litres, e.fat_pct, e.snf_pct) });
+      } else if (e.source_bmcu_code) {
+        notes.push(`Milk Shifting source ${e.source_bmcu_code} — ${e.source_bmcu_name || ''} is not on any trip of ${reportDate}; deduction not shown.`);
+      }
+    }
+  }
+
+  // Gross total per block, grand total per trip. Fat/SNF are weighted averages.
+  const wAvg = (kgPart, kgs) => kgs ? rN(kgPart / kgs * 100) : null;
+  const sum6 = rows => rows.reduce((a, r) => ({
+    litres: a.litres + (parseFloat(r.litres) || 0), kgs: a.kgs + (parseFloat(r.kgs) || 0),
+    kg_fat: a.kg_fat + (parseFloat(r.kg_fat) || 0), kg_snf: a.kg_snf + (parseFloat(r.kg_snf) || 0),
+  }), { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 });
+
+  const trips = tr.rows.filter(x => x.execution_id && (byExec[x.execution_id] || []).length)
+    .map(x => {
+      const bmcus = (byExec[x.execution_id] || []).map(b => {
+        const rm = sum6(b.rows);
+        const rmrd = {
+          litres: rN(rm.litres), kgs: rN(rm.kgs),
+          fat: wAvg(rm.kg_fat, rm.kgs), snf: wAvg(rm.kg_snf, rm.kgs),
+          kg_fat: rN(rm.kg_fat), kg_snf: rN(rm.kg_snf),
+        };
+        return {
+          bmcu_code: b.bmcu_code, bmcu_name: b.bmcu_name, compartment: b.compartment,
+          dispatch: b.dispatch, rows: b.rows, rmrd,
+          diff: { // Truck sheet (RMRD) Vs Dispatch = RMRD − Dispatch
+            kgs:    rN(rm.kgs    - b.dispatch.kgs),
+            litres: rN(rm.litres - b.dispatch.litres),
+            kg_fat: rN(rm.kg_fat - b.dispatch.kg_fat),
+            kg_snf: rN(rm.kg_snf - b.dispatch.kg_snf),
+          },
+        };
+      });
+      const gd = sum6(bmcus.map(b => b.dispatch));
+      const gr = sum6(bmcus.map(b => b.rmrd));
+      return {
+        trip_no: x.trip_no, tanker_number: x.tanker_number, route_name: x.route_name,
+        lifting_date: fmtDate(x.lifting_date), bmcus,
+        grand: {
+          dispatch: { litres: rN(gd.litres), kgs: rN(gd.kgs),
+            fat: wAvg(gd.kg_fat, gd.kgs), snf: wAvg(gd.kg_snf, gd.kgs),
+            kg_fat: rN(gd.kg_fat), kg_snf: rN(gd.kg_snf) },
+          rmrd: { litres: rN(gr.litres), kgs: rN(gr.kgs),
+            fat: wAvg(gr.kg_fat, gr.kgs), snf: wAvg(gr.kg_snf, gr.kgs),
+            kg_fat: rN(gr.kg_fat), kg_snf: rN(gr.kg_snf) },
+          diff: { kgs: rN(gr.kgs - gd.kgs), litres: rN(gr.litres - gd.litres),
+            kg_fat: rN(gr.kg_fat - gd.kg_fat), kg_snf: rN(gr.kg_snf - gd.kg_snf) },
+        },
+      };
+    });
+
+  return { report_date: reportDate, trips, notes };
+}
+
+// Styled workbook per sample layout: 23 columns, two-row grouped header, one
+// BMCU block per plant (dispatch on first row, RMRD shift/adjustment rows,
+// bold Gross Total with red/green diff), Grand Total per trip.
+const BK_MEASURES = ['Qty Lts', 'Qty Kgs', 'Fat', 'SNF', 'KG Fat', 'KG SNF'];
+const M6 = m => [m.litres, m.kgs, m.fat, m.snf, m.kg_fat, m.kg_snf];
+const D4 = d => [d.kgs, d.litres, d.kg_fat, d.kg_snf];
+
+function buildBmcuBreakupWorkbook(data) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('BMCU breakup', { views: [{ state: 'frozen', xSplit: 5, ySplit: 3 }] });
+  // Cols: 1 Route, 2 Lifting Date, 3 Tanker, 4 BMCU Code, 5 BMCU Name, 6 Compartment,
+  //       7-12 dispatch, 13 Shift, 14-19 RMRD, 20-23 diff
+  ws.columns = [
+    { width: 16 }, { width: 13 }, { width: 14 }, { width: 11 }, { width: 22 }, { width: 12 },
+    ...Array(6).fill({ width: 10 }), { width: 8 }, ...Array(6).fill({ width: 10 }),
+    ...Array(4).fill({ width: 10 }),
+  ];
+
+  ws.mergeCells(1, 1, 1, 23);
+  const title = ws.getCell(1, 1);
+  title.value = `BMCU Break Up Report — ${data.report_date}`;
+  title.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
+  title.alignment = { vertical: 'middle', horizontal: 'left' };
+  ws.getRow(1).height = 24;
+
+  // Header rows 2-3
+  const infoHeaders = ['Route Name', 'Milk Lifting Date', 'Tanker NO', 'BMCU Code', 'BMCUs Name', 'Compartment'];
+  infoHeaders.forEach((h, i) => {
+    ws.mergeCells(2, i + 1, 3, i + 1);
+    const c = ws.getCell(2, i + 1);
+    c.value = h;
+    c.font = { bold: true, color: { argb: HEADER_TEXT } };
+    c.fill = fillOf('FFF3F4F6');
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    c.border = BORDER;
+    ws.getCell(3, i + 1).border = BORDER;
+  });
+  const groups = [
+    { title: 'As per the Tanker Dispatch Quantity', fill: 'FFDCFCE7', start: 7,  heads: BK_MEASURES },
+    { title: 'Shift',                               fill: 'FFF3F4F6', start: 13, heads: null },
+    { title: 'As Per RMRD',                         fill: 'FFE0F2FE', start: 14, heads: BK_MEASURES },
+    { title: 'Truck sheet(RMRD) Vs Dispatch',       fill: 'FFFEF3C7', start: 20, heads: ['Qty Kgs', 'Qty Lts', 'KG Fat', 'KG SNF'] },
+  ];
+  for (const g of groups) {
+    if (!g.heads) { // single Shift column spans both header rows
+      ws.mergeCells(2, g.start, 3, g.start);
+      const c = ws.getCell(2, g.start);
+      c.value = g.title;
+      c.font = { bold: true, color: { argb: HEADER_TEXT } };
+      c.fill = fillOf(g.fill);
+      c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      c.border = BORDER; ws.getCell(3, g.start).border = BORDER;
+      continue;
+    }
+    ws.mergeCells(2, g.start, 2, g.start + g.heads.length - 1);
+    const gc = ws.getCell(2, g.start);
+    gc.value = g.title;
+    gc.font = { bold: true, color: { argb: HEADER_TEXT } };
+    gc.fill = fillOf(g.fill);
+    gc.alignment = { vertical: 'middle', horizontal: 'center' };
+    g.heads.forEach((h, i) => {
+      const c = ws.getCell(3, g.start + i);
+      c.value = h;
+      c.font = { bold: true, size: 10, color: { argb: HEADER_TEXT } };
+      c.fill = fillOf(g.fill);
+      c.alignment = { vertical: 'middle', horizontal: 'center' };
+      c.border = BORDER;
+    });
+    for (let i = 0; i < g.heads.length; i++) ws.getCell(2, g.start + i).border = BORDER;
+  }
+  ws.getRow(2).height = 22;
+
+  const setNum = (cell, v, { diff = false, bold = false, fill = null } = {}) => {
+    cell.value = v == null ? null : parseFloat(v);
+    cell.numFmt = '#,##0.00';
+    cell.alignment = { horizontal: 'right' };
+    cell.border = BORDER;
+    if (fill) cell.fill = fillOf(fill);
+    if (diff && v != null) cell.font = { bold: true, color: { argb: parseFloat(v) < 0 ? RED : GREEN } };
+    else if (bold) cell.font = { bold: true, color: { argb: 'FF003A6B' } };
+  };
+  const setTxt = (cell, v, { bold = false, fill = null, color = null } = {}) => {
+    cell.value = v ?? '';
+    cell.border = BORDER;
+    cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    if (fill) cell.fill = fillOf(fill);
+    if (bold || color) cell.font = { bold, color: { argb: color || HEADER_TEXT } };
+  };
+
+  let rIdx = 4;
+  for (const trip of data.trips) {
+    for (const b of trip.bmcus) {
+      const blockRows = b.rows.length ? b.rows : [{ type: 'shift', label: b.bmcu_name, shift: '',
+        litres: null, kgs: null, fat: null, snf: null, kg_fat: null, kg_snf: null }];
+      blockRows.forEach((r, i) => {
+        const row = ws.getRow(rIdx);
+        setTxt(row.getCell(1), trip.route_name);
+        setTxt(row.getCell(2), trip.lifting_date);
+        setTxt(row.getCell(3), trip.tanker_number, { color: 'FF005BA3', bold: true });
+        setTxt(row.getCell(4), b.bmcu_code);
+        setTxt(row.getCell(5), r.type === 'adjustment' ? r.label : b.bmcu_name,
+          { color: r.type === 'adjustment' ? 'FF92400E' : null, bold: r.type === 'adjustment' });
+        setTxt(row.getCell(6), i === 0 ? b.compartment : '');
+        M6(i === 0 ? b.dispatch : {}).forEach((v, k) => setNum(row.getCell(7 + k), i === 0 ? v : null, { fill: 'FFF0FDF4' }));
+        setTxt(row.getCell(13), r.shift || '');
+        row.getCell(13).alignment = { horizontal: 'center' };
+        M6(r).forEach((v, k) => setNum(row.getCell(14 + k), v, { fill: 'FFF0F9FF' }));
+        for (let k = 0; k < 4; k++) setNum(row.getCell(20 + k), null);
+        rIdx++;
+      });
+      // Gross Total per BMCU
+      const row = ws.getRow(rIdx);
+      setTxt(row.getCell(1), trip.route_name, { fill: 'FFF8FAFC' });
+      setTxt(row.getCell(2), trip.lifting_date, { fill: 'FFF8FAFC' });
+      setTxt(row.getCell(3), trip.tanker_number, { fill: 'FFF8FAFC' });
+      setTxt(row.getCell(4), b.bmcu_code, { fill: 'FFF8FAFC' });
+      setTxt(row.getCell(5), 'Gross Total', { bold: true, fill: 'FFF8FAFC' });
+      setTxt(row.getCell(6), '', { fill: 'FFF8FAFC' });
+      M6(b.dispatch).forEach((v, k) => setNum(row.getCell(7 + k), v, { bold: true, fill: 'FFF8FAFC' }));
+      setTxt(row.getCell(13), '', { fill: 'FFF8FAFC' });
+      M6(b.rmrd).forEach((v, k) => setNum(row.getCell(14 + k), v, { bold: true, fill: 'FFF8FAFC' }));
+      D4(b.diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFFEF3C7' }));
+      rIdx++;
+    }
+    // Grand Total per trip
+    const row = ws.getRow(rIdx);
+    for (let k = 1; k <= 4; k++) setTxt(row.getCell(k), '', { fill: 'FFDBEAFE' });
+    setTxt(row.getCell(5), 'Grand Total', { bold: true, fill: 'FFDBEAFE' });
+    setTxt(row.getCell(6), '', { fill: 'FFDBEAFE' });
+    M6(trip.grand.dispatch).forEach((v, k) => setNum(row.getCell(7 + k), v, { bold: true, fill: 'FFDBEAFE' }));
+    setTxt(row.getCell(13), 'E & M', { bold: true, fill: 'FFDBEAFE' });
+    row.getCell(13).alignment = { horizontal: 'center' };
+    M6(trip.grand.rmrd).forEach((v, k) => setNum(row.getCell(14 + k), v, { bold: true, fill: 'FFDBEAFE' }));
+    D4(trip.grand.diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFDBEAFE' }));
+    rIdx += 2; // blank spacer row between trips
+  }
+
+  if (data.notes.length) {
+    for (const n of data.notes) {
+      ws.mergeCells(rIdx, 1, rIdx, 23);
+      const c = ws.getCell(rIdx, 1);
+      c.value = `Note: ${n}`;
+      c.font = { italic: true, size: 10, color: { argb: 'FF92400E' } };
+      rIdx++;
+    }
+  }
+  return wb;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/reports/bmcu-breakup?report_date=YYYY-MM-DD   (planning date)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/bmcu-breakup', authenticate, async (req, res) => {
+  const { report_date } = req.query;
+  if (!report_date) return res.status(400).json({ error: 'report_date required' });
+  try {
+    res.json(await buildBmcuBreakup(report_date));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/reports/bmcu-breakup/excel?report_date=YYYY-MM-DD
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/bmcu-breakup/excel', authenticate, async (req, res) => {
+  const { report_date } = req.query;
+  if (!report_date) return res.status(400).json({ error: 'report_date required' });
+  try {
+    const data = await buildBmcuBreakup(report_date);
+    const wb   = buildBmcuBreakupWorkbook(data);
+    const buf  = Buffer.from(await wb.xlsx.writeBuffer());
+    res.setHeader('Content-Disposition', `attachment; filename=bmcu_breakup_${report_date}.xlsx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

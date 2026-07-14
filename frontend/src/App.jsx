@@ -39,6 +39,7 @@ import Approvals            from './pages/execution/Approvals';
 // Reports
 import DailyTSReport   from './pages/reports/DailyTSReport';
 import AuditLog        from './pages/reports/AuditLog';
+import BmcuBreakup     from './pages/reports/BmcuBreakup';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } }
@@ -129,6 +130,7 @@ function AppRoutes() {
 
         {/* Reports — all roles */}
         <Route path="reports" element={<DailyTSReport/>}/>
+        <Route path="reports/bmcu-breakup" element={<BmcuBreakup/>}/>
         <Route path="reports/audit" element={
           <ProtectedRoute roles={['admin']}><AuditLog/></ProtectedRoute>
         }/>
