@@ -24,7 +24,14 @@ const BASE_CSS = `
   .dup { color: #c0392b; border: 2px solid #c0392b; padding: 6px 10px;
          text-align: center; font-weight: bold; margin-bottom: 10px; font-size: 12px; }
   .small { font-size: 10px; }
-  @media print { body { margin: 8mm; } .dup { -webkit-print-color-adjust: exact; } }
+  .small td, .small th { padding: 3px 5px; }
+  @page { size: A4; margin: 8mm; }
+  @media print {
+    body { margin: 0; }
+    .dup { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    table { page-break-inside: auto; }
+    tr { page-break-inside: avoid; }
+  }
 `;
 
 function openPrintWindow(title, bodyHtml) {

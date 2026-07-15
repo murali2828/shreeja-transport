@@ -173,6 +173,56 @@ async function sendApprovalEmail(cr, execInfo, approver) {
   });
 }
 
+// Compact diff for the stakeholder FYI email: only genuinely changed fields
+// (rows present on both sides); added/removed rows collapse to one summary line.
+function compactDiffHtml(snapshot, changes) {
+  const SECTIONS = [
+    ['BMCU Data Entry', snapshot.bmcus, changes.bmcus, r => `${r.seq_no}`,
+      r => `#${r?.seq_no} ${r?.bmcu_code || r?.bmcu_id || ''}`,
+      [['qty_litres','Dispatch Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%'],['chamber','Chamber'],['milk_date','Date'],['shift','Shift']]],
+    ['Shift Rows', snapshot.shift_rows, changes.shift_rows, r => `${r.bmcu_seq_no}|${r.shift || ''}`,
+      r => `BMCU #${r?.bmcu_seq_no} ${r?.shift || ''}`,
+      [['rmrd_qty','RMRD Qty'],['rmrd_fat_pct','RMRD Fat%'],['rmrd_snf_pct','RMRD SNF%']]],
+    ['Balance / MPP / Shifting Entries', snapshot.entries, changes.entries, r => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`,
+      r => `BMCU #${r?.bmcu_seq_no} ${r?.kind || ''}`,
+      [['category','Category'],['qty_litres','Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%']]],
+    ['Acknowledgement', snapshot.acknowledgements, changes.acknowledgements, r => r.chamber,
+      r => `Chamber ${r?.chamber}`,
+      [['qty_litres','Qty Litres'],['fat_pct','Fat%'],['snf_pct','SNF%'],['temperature','Temp']]],
+  ];
+  const td = (v, extra = '') => `<td style="padding:4px 8px;border:1px solid #e5e7eb;${extra}">${v}</td>`;
+  let rows = '';
+  for (const [section, oldRows, newRows, keyFn, labelFn, fields] of SECTIONS) {
+    const oldBy = new Map((oldRows || []).map(r => [keyFn(r), r]));
+    const newBy = new Map((newRows || []).map(r => [keyFn(r), r]));
+    for (const k of new Set([...oldBy.keys(), ...newBy.keys()])) {
+      const o = oldBy.get(k), n = newBy.get(k);
+      if (!o || !n) { // added/removed row → single summary line
+        const r = o || n;
+        rows += `<tr>${td(esc(section))}${td(esc(labelFn(r)))}${td(o ? 'row removed' : 'row added', 'font-style:italic;')}${td(cell(r.qty_litres), 'background:#fef3c7;')}</tr>`;
+        continue;
+      }
+      for (const [key, label] of fields) {
+        const ov = o[key], nv = n[key];
+        const oNum = parseFloat(ov), nNum = parseFloat(nv);
+        const same = (ov ?? '') === (nv ?? '') || (Number.isFinite(oNum) && Number.isFinite(nNum) && oNum === nNum);
+        if (same) continue;
+        rows += `<tr>${td(esc(section))}${td(esc(labelFn(o)) + ' — ' + esc(label))}${td(cell(ov), 'color:#6b7280;')}${td(cell(nv), 'background:#fef3c7;font-weight:600;')}</tr>`;
+      }
+    }
+  }
+  const kmO = parseFloat(snapshot.actual_km) || 0, kmN = parseFloat(changes.actual_km) || 0;
+  if (kmO !== kmN) rows = `<tr>${td('Trip')}${td('Actual KM')}${td(cell(snapshot.actual_km), 'color:#6b7280;')}${td(cell(changes.actual_km), 'background:#fef3c7;font-weight:600;')}</tr>` + rows;
+  if (!rows) return '<p style="font-family:sans-serif;font-size:13px;color:#6b7280;">(No field-level differences.)</p>';
+  return `<table style="border-collapse:collapse;font-family:sans-serif;font-size:12px;">
+    <tr style="background:#f3f4f6;">
+      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Section</th>
+      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Row / Field</th>
+      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Old Value</th>
+      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">New Value</th>
+    </tr>${rows}</table>`;
+}
+
 // Information-only email to stakeholders AFTER changes are applied (no action
 // links — only the approver receives the actionable email, to avoid accidental
 // approvals from CC recipients). Fire-and-forget.
@@ -181,7 +231,7 @@ async function sendAppliedInfoEmail(cr, deciderName) {
   if (!recipients.length) return;
   try {
     const info = await query(`
-      SELECT tp.trip_no, t.tanker_number, te.execution_date
+      SELECT tp.trip_no, tp.shifts_milk, t.tanker_number, te.execution_date
       FROM trip_executions te
       JOIN trip_plans tp ON tp.id=te.trip_plan_id
       LEFT JOIN tankers t ON t.id=tp.tanker_id
@@ -190,16 +240,19 @@ async function sendAppliedInfoEmail(cr, deciderName) {
     const html = `
       <p style="font-family:sans-serif;font-size:14px;">Dear Team,</p>
       <p style="font-family:sans-serif;font-size:13px;">
-        This is for your information only — no action is required.<br/><br/>
-        The change request for the CLOSED trip
-        <b>Trip #${esc(x.trip_no ?? '')} — ${esc(x.tanker_number || '')}</b>
-        (${esc(String(x.execution_date || '').slice(0, 10))}), requested by
-        <b>${esc(cr.requested_by_name || '')}</b>
-        (Reason: <i>${esc(cr.reason || '—')}</i>), has been
-        <b style="color:#16a34a;">APPROVED</b> by <b>${esc(deciderName || '')}</b>
-        and the changes are now applied. All reports reflect the updated data.
+        For your information only — approved changes have been applied to a closed trip.
       </p>
-      ${buildDiffHtml(cr.snapshot, cr.changes)}
+      <table style="border-collapse:collapse;font-family:sans-serif;font-size:12px;margin-bottom:10px;">
+        <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Tanker Number</td>
+            <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(x.tanker_number || '—')}</td></tr>
+        <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Date</td>
+            <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(String(x.execution_date || '').slice(0, 10))}</td></tr>
+        <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Shift</td>
+            <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(x.shifts_milk || '—')}</td></tr>
+        <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Approved by</td>
+            <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(deciderName || '')}</td></tr>
+      </table>
+      ${compactDiffHtml(cr.snapshot, cr.changes)}
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/>
       <p style="font-family:sans-serif;font-size:12px;color:#9ca3af;">Shreeja TMS · change request #${cr.id} · automated notification</p>`;
     const transporter = createTransport();
