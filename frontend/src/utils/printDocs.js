@@ -136,7 +136,7 @@ export function printCoa(r) {
       <tr><td>Seal Number</td><td style="height:22px"></td><td></td><td></td></tr>
     </table>
 
-    <table class="small" style="margin-bottom:6px;">
+    <table class="small" style="margin-top:22px; margin-bottom:6px;">
       <tr>
         <td colspan="2" class="bold">Delivery Challan Date:</td>
         <td colspan="2">${fmtD(d.plan_for_date)}</td>
