@@ -15,16 +15,16 @@ const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 const BASE_CSS = `
   * { box-sizing: border-box; font-family: 'Times New Roman', serif; }
-  body { margin: 24px; color: #000; font-size: 13px; }
+  body { margin: 24px; color: #000; font-size: 12px; }
   table { border-collapse: collapse; width: 100%; }
-  td, th { border: 1px solid #000; padding: 4px 6px; vertical-align: top; }
+  td, th { border: 1px solid #000; padding: 3px 5px; vertical-align: top; }
   .noborder td, .noborder th { border: none; }
   .center { text-align: center; }
   .bold { font-weight: bold; }
   .dup { color: #c0392b; border: 2px solid #c0392b; padding: 6px 10px;
          text-align: center; font-weight: bold; margin-bottom: 10px; font-size: 12px; }
-  .small { font-size: 11px; }
-  @media print { body { margin: 10mm; } .dup { -webkit-print-color-adjust: exact; } }
+  .small { font-size: 10px; }
+  @media print { body { margin: 8mm; } .dup { -webkit-print-color-adjust: exact; } }
 `;
 
 function openPrintWindow(title, bodyHtml) {
@@ -136,7 +136,7 @@ export function printCoa(r) {
       <tr><td>Seal Number</td><td style="height:22px"></td><td></td><td></td></tr>
     </table>
 
-    <table class="small" style="margin-top:22px; margin-bottom:6px;">
+    <table class="small" style="margin-top:14px; margin-bottom:6px;">
       <tr>
         <td colspan="2" class="bold">Delivery Challan Date:</td>
         <td colspan="2">${fmtD(d.plan_for_date)}</td>
@@ -187,6 +187,6 @@ export function printCoa(r) {
       3. This document is to be prepared in duplicate; one to be sent as annexure to main copy of challan,
       and second to be preserved by the dispatch location.
     </div>
-    <p style="text-align:right; margin-top:36px;" class="bold">Signature of Despatcher<br/>(In-charge MCC/ QA)</p>
+    <p style="text-align:right; margin-top:20px;" class="bold">Signature of Despatcher<br/>(In-charge MCC/ QA)</p>
     <div class="small" style="color:#444;">Trip #${esc(d.trip_no)} · Printed ${fmtTs(r.printed_at)} (print #${r.print_no})</div>`);
 }
