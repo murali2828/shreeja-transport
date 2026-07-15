@@ -17,7 +17,7 @@ const BASE_CSS = `
   * { box-sizing: border-box; font-family: 'Times New Roman', serif; }
   body { margin: 24px; color: #000; font-size: 12px; }
   table { border-collapse: collapse; width: 100%; }
-  td, th { border: 1px solid #000; padding: 3px 5px; vertical-align: top; }
+  td, th { border: 1px solid #000; padding: 4px 6px; vertical-align: top; }
   .noborder td, .noborder th { border: none; }
   .center { text-align: center; }
   .bold { font-weight: bold; }
@@ -136,7 +136,7 @@ export function printCoa(r) {
       <tr><td>Seal Number</td><td style="height:22px"></td><td></td><td></td></tr>
     </table>
 
-    <table class="small" style="margin-top:14px; margin-bottom:6px;">
+    <table class="small" style="margin-top:30px; margin-bottom:6px;">
       <tr>
         <td colspan="2" class="bold">Delivery Challan Date:</td>
         <td colspan="2">${fmtD(d.plan_for_date)}</td>
