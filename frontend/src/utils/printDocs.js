@@ -109,6 +109,10 @@ export function printCoa(r) {
   const d = r.data;
   const blank = (label, value = '') =>
     `<tr><td class="bold" style="width:34%">${label}</td><td>${value}</td></tr>`;
+  // One combined bordered grid (12-col base): left challan details, Bill-to,
+  // Ship-to — matching the physical Word format (2 tables total on the page).
+  const L = (label, value = '') => `<td colspan="2" class="bold" style="width:16%">${label}</td><td colspan="2" style="width:17%">${value}</td>`;
+  const partyRow = (a, av, b, bv, c, cv) => `<tr>${L(a, av)}${L(b, bv)}${L(c, cv)}</tr>`;
   openPrintWindow(`COA — Trip #${d.trip_no}`, `
     ${dupBanner(r)}
     <table style="margin-bottom:8px;">
@@ -132,54 +136,25 @@ export function printCoa(r) {
       <tr><td>Seal Number</td><td style="height:22px"></td><td></td><td></td></tr>
     </table>
 
-    <table style="margin-bottom:10px;" class="small">
-      <tr>
-        <td style="width:33%">
-          <table class="noborder small">
-            ${blank('Delivery Challan Date:', fmtD(d.plan_for_date))}
-            ${blank('Delivery Challan No.:')}
-            ${blank('Name of Route:', esc(d.route_name || ''))}
-            ${blank('Dispatch Center Code:')}
-            ${blank('Address:')}
-            ${blank('Name of Transporter:')}
-            ${blank('Name of Driver:')}
-            ${blank('Vehicle No.:', esc(d.tanker_number || ''))}
-            ${blank('LR No./LR Date:')}
-          </table>
-        </td>
-        <td style="width:33%">
-          <div class="bold center">Details of (Bill to Party)</div>
-          <table class="noborder small">
-            ${blank('Name of Bill to Party:', 'NDDB Dairy Services')}
-            ${blank('Customer Code:')}
-            ${blank('Address:', 'NDDB House, Safdarjung Enclave, South West Delhi, New Delhi 110029')}
-            ${blank('GSTIN/Unique ID:', '07AADCN1059J1ZG')}
-            ${blank('State:', 'Delhi')}
-            ${blank('State Code:', '07')}
-            ${blank('Date of PO:')}
-          </table>
-        </td>
-        <td style="width:34%">
-          <div class="bold center">Details of (Ship to Party)</div>
-          <table class="noborder small">
-            ${blank('SAP Vendor Code (MD):', '4024119')}
-            ${blank('Name of Ship to Party:', 'Mother Dairy Fruit and Vegetable Private Limited (c/o Balaji Dairy)')}
-            ${blank('Customer Code:')}
-            ${blank('Address of Delivery:')}
-            ${blank('Place of Supply:', 'TIRUPATI')}
-            ${blank('GSTIN/Unique ID:', '37AACCM3174A1ZU')}
-            ${blank('State:', 'ANDHRA PRADESH')}
-            ${blank('State Code:', '37')}
-          </table>
-        </td>
-      </tr>
-    </table>
-
     <table class="small" style="margin-bottom:6px;">
+      <tr>
+        <td colspan="2" class="bold">Delivery Challan Date:</td>
+        <td colspan="2">${fmtD(d.plan_for_date)}</td>
+        <td colspan="4" class="bold center">Details of (Bill to Party)</td>
+        <td colspan="4" class="bold center">Details of (Ship to Party)</td>
+      </tr>
+      ${partyRow('Delivery Challan No.:', '', 'Name of Bill to Party:', 'NDDB Dairy Services', 'SAP Vendor Code (MD):', '4024119')}
+      ${partyRow('Name of Route:', esc(d.route_name || ''), 'Customer Code:', '', 'Name of Ship to Party:', 'Mother Dairy Fruit and Vegetable Private Limited (c/o Balaji Dairy)')}
+      ${partyRow('Dispatch Center Code:', '', 'Address:', 'NDDB House, Safdarjung Enclave, South West Delhi, New Delhi 110029', 'Customer Code:', '')}
+      ${partyRow('Address:', '', 'GSTIN/Unique ID:', '07AADCN1059J1ZG', 'Address of Delivery:', '')}
+      ${partyRow('Name of Transporter:', '', 'State:', 'Delhi', 'Place of Supply:', 'TIRUPATI')}
+      ${partyRow('Name of Driver:', '', 'State Code:', '07', 'GSTIN/Unique ID:', '37AACCM3174A1ZU')}
+      ${partyRow('Vehicle No.:', esc(d.tanker_number || ''), 'Address:', '', 'State:', 'ANDHRA PRADESH')}
+      ${partyRow('LR No./LR Date:', '', 'Date of PO:', '', 'State Code:', '37')}
       <tr class="bold center">
         <td rowspan="2">Sr. No.</td><td rowspan="2">HSN/SAC Code</td><td rowspan="2">Batch</td>
         <td rowspan="2">Quantity</td><td rowspan="2">Value</td>
-        <td colspan="2">Central Tax</td><td colspan="2">State Tax/UT Tax</td><td colspan="2">Integrated Tax</td>
+        <td colspan="2">Central Tax</td><td colspan="2">State Tax/Union Territory Tax</td><td colspan="2">Integrated Tax</td>
         <td rowspan="2">Total</td>
       </tr>
       <tr class="bold center"><td>Rate</td><td>Amt.</td><td>Rate</td><td>Amt.</td><td>Rate</td><td>Amt.</td></tr>
