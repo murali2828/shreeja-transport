@@ -13,14 +13,17 @@ const fmtD  = d => d ? String(d).slice(0, 10) : '—';
 const n2 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const n4 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
-const MEASURES = ['litres', 'kgs', 'kg_fat', 'kg_snf'];
+const M6 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['fat','Fat%'], ['snf','SNF%'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF']];
+const M4 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF']];
 const GROUPS = [
-  { title: 'As per RMRD',                prefix: 'rmrd',      cls: 'bg-sky-50' },
-  { title: 'As per Dispatch',            prefix: 'disp',      cls: 'bg-emerald-50' },
-  { title: 'As per Acknowledgement',     prefix: 'ack',       cls: 'bg-violet-50' },
-  { title: 'Difference RMRD Vs Ack',     prefix: 'diff_rmrd', cls: 'bg-amber-50', diff: true },
-  { title: 'Difference Dispatch Vs Ack', prefix: 'diff_disp', cls: 'bg-rose-50',  diff: true },
+  { title: 'As per RMRD',                prefix: 'rmrd',      cls: 'bg-sky-50',     measures: M6 },
+  { title: 'As per Dispatch',            prefix: 'disp',      cls: 'bg-emerald-50', measures: M6 },
+  { title: 'As per Acknowledgement',     prefix: 'ack',       cls: 'bg-violet-50',  measures: M6 },
+  { title: 'Difference RMRD Vs Ack',     prefix: 'diff_rmrd', cls: 'bg-amber-50',   measures: M4, diff: true },
+  { title: 'Difference Dispatch Vs Ack', prefix: 'diff_disp', cls: 'bg-rose-50',    measures: M4, diff: true },
 ];
+// Fat%/SNF% totals are weighted: Σ kg-part / Σ kgs × 100
+const PCT_MEASURES = ['fat', 'snf'];
 
 function DiffCell({ value, fmt }) {
   if (value == null) return <td className="table-td text-right text-gray-300">—</td>;
@@ -83,7 +86,7 @@ export default function DailyTSReport() {
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto max-h-[68vh]">
-          <table className="text-xs" style={{ minWidth: 1800 }}>
+          <table className="text-xs" style={{ minWidth: 2150 }}>
             <thead className="sticky top-0 bg-gray-50 z-10">
               <tr className="border-b">
                 <th className="table-th" rowSpan={2}>Tanker Number</th>
@@ -93,13 +96,13 @@ export default function DailyTSReport() {
                 <th className="table-th" rowSpan={2}>Starting Point</th>
                 <th className="table-th" rowSpan={2}>Unloading Point</th>
                 {GROUPS.map(g => (
-                  <th key={g.prefix} colSpan={4}
+                  <th key={g.prefix} colSpan={g.measures.length}
                     className={`table-th text-center border-l ${g.cls}`}>{g.title}</th>
                 ))}
               </tr>
               <tr className="border-b">
                 {GROUPS.map(g => (
-                  ['Qty Ltrs', 'Qty Kgs', 'Kg.Fat', 'Kg.SNF'].map((h, i) => (
+                  g.measures.map(([, h], i) => (
                     <th key={g.prefix + h} className={`table-th text-right ${g.cls} ${i === 0 ? 'border-l' : ''}`}>{h}</th>
                   ))
                 ))}
@@ -107,7 +110,7 @@ export default function DailyTSReport() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={26}><div className="empty-state">No trips planned for this date.</div></td></tr>
+                <tr><td colSpan={32}><div className="empty-state">No trips planned for this date.</div></td></tr>
               )}
               {rows.map((r, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
@@ -117,7 +120,7 @@ export default function DailyTSReport() {
                   <td className="table-td whitespace-nowrap">{r.route_name || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.starting_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.unloading_point || '—'}</td>
-                  {GROUPS.map(g => MEASURES.map((m, mi) => {
+                  {GROUPS.map(g => g.measures.map(([m], mi) => {
                     const key = `${g.prefix}_${m}`;
                     const fmt = m === 'litres' ? n2 : n4;
                     return g.diff
@@ -131,13 +134,18 @@ export default function DailyTSReport() {
               <tfoot className="bg-blue-50 border-t font-semibold sticky bottom-0">
                 <tr>
                   <td className="table-td" colSpan={6}>TOTAL — {rows.length} trips</td>
-                  {GROUPS.map(g => MEASURES.map((m, mi) => {
-                    const total = sum(`${g.prefix}_${m}`);
+                  {GROUPS.map(g => g.measures.map(([m], mi) => {
+                    // Fat%/SNF% totals are weighted: Σ kg-part / Σ kgs × 100
+                    const total = PCT_MEASURES.includes(m)
+                      ? (sum(`${g.prefix}_kgs`) > 0
+                          ? sum(`${g.prefix}_kg_${m === 'fat' ? 'fat' : 'snf'}`) / sum(`${g.prefix}_kgs`) * 100
+                          : null)
+                      : sum(`${g.prefix}_${m}`);
                     const fmt = m === 'litres' ? n2 : n4;
                     return (
                       <td key={g.prefix + m}
                         className={`table-td text-right ${g.diff ? (total < 0 ? 'text-red-600' : 'text-green-700') : 'text-[#003a6b]'} ${mi === 0 ? 'border-l' : ''}`}>
-                        {fmt(total)}
+                        {total == null ? '—' : fmt(total)}
                       </td>
                     );
                   }))}

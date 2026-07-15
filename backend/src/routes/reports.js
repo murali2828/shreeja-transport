@@ -138,6 +138,8 @@ async function buildTsReport(reportDate) {
     const rmrd = rmrdByExec[row.execution_id] || { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
     const hasAck = row.ack_count > 0;
     const diff = (ack, other) => hasAck ? rN(parseFloat(ack) - parseFloat(other), 2) : null;
+    // Weighted Fat% / SNF% per section = Kg.Fat / Qty Kgs × 100 (same for SNF)
+    const pct = (kgPart, kgs) => (parseFloat(kgs) > 0) ? rN(parseFloat(kgPart) / parseFloat(kgs) * 100) : null;
     return {
       trip_no: row.trip_no,
       tanker_number: row.tanker_number,
@@ -150,11 +152,15 @@ async function buildTsReport(reportDate) {
       shifts_milk: row.shifts_milk,
       has_ack: hasAck,
       rmrd_litres: rN(rmrd.litres), rmrd_kgs: rN(rmrd.kgs, 2),
+      rmrd_fat: pct(rmrd.kg_fat, rmrd.kgs), rmrd_snf: pct(rmrd.kg_snf, rmrd.kgs),
       rmrd_kg_fat: rN(rmrd.kg_fat, 2), rmrd_kg_snf: rN(rmrd.kg_snf, 2),
       disp_litres: rN(row.disp_litres), disp_kgs: rN(row.disp_kgs, 2),
+      disp_fat: pct(row.disp_kg_fat, row.disp_kgs), disp_snf: pct(row.disp_kg_snf, row.disp_kgs),
       disp_kg_fat: rN(row.disp_kg_fat, 2), disp_kg_snf: rN(row.disp_kg_snf, 2),
       ack_litres: hasAck ? rN(row.ack_litres) : null,
       ack_kgs: hasAck ? rN(row.ack_kgs, 2) : null,
+      ack_fat: hasAck ? pct(row.ack_kg_fat, row.ack_kgs) : null,
+      ack_snf: hasAck ? pct(row.ack_kg_snf, row.ack_kgs) : null,
       ack_kg_fat: hasAck ? rN(row.ack_kg_fat, 2) : null,
       ack_kg_snf: hasAck ? rN(row.ack_kg_snf, 2) : null,
       diff_rmrd_litres: diff(row.ack_litres, rmrd.litres),
@@ -174,13 +180,25 @@ const fmtDate = d => !d ? '' : (d.toISOString ? d.toISOString().slice(0, 10) : S
 // Styled workbook (ExcelJS) matching the on-screen layout:
 // title row, grouped two-row colored header, section fills, red/green
 // differences, frozen panes, Indian number formats, bold totals.
+const MEAS6 = ['Qty Ltrs', 'Qty Kgs', 'Fat%', 'SNF%', 'Kg.Fat', 'Kg.SNF'];
+const MEAS4 = ['Qty Ltrs', 'Qty Kgs', 'Kg.Fat', 'Kg.SNF'];
 const TS_GROUPS = [
-  { title: 'As per RMRD',                fill: 'FFE0F2FE', keys: ['rmrd_litres','rmrd_kgs','rmrd_kg_fat','rmrd_kg_snf'] },
-  { title: 'As per Dispatch',            fill: 'FFDCFCE7', keys: ['disp_litres','disp_kgs','disp_kg_fat','disp_kg_snf'] },
-  { title: 'As per Acknowledgement',     fill: 'FFEDE9FE', keys: ['ack_litres','ack_kgs','ack_kg_fat','ack_kg_snf'] },
-  { title: 'Difference RMRD Vs Ack',     fill: 'FFFEF3C7', keys: ['diff_rmrd_litres','diff_rmrd_kgs','diff_rmrd_kg_fat','diff_rmrd_kg_snf'], diff: true },
-  { title: 'Difference Dispatch Vs Ack', fill: 'FFFFE4E6', keys: ['diff_disp_litres','diff_disp_kgs','diff_disp_kg_fat','diff_disp_kg_snf'], diff: true },
+  { title: 'As per RMRD',                fill: 'FFE0F2FE', heads: MEAS6, keys: ['rmrd_litres','rmrd_kgs','rmrd_fat','rmrd_snf','rmrd_kg_fat','rmrd_kg_snf'] },
+  { title: 'As per Dispatch',            fill: 'FFDCFCE7', heads: MEAS6, keys: ['disp_litres','disp_kgs','disp_fat','disp_snf','disp_kg_fat','disp_kg_snf'] },
+  { title: 'As per Acknowledgement',     fill: 'FFEDE9FE', heads: MEAS6, keys: ['ack_litres','ack_kgs','ack_fat','ack_snf','ack_kg_fat','ack_kg_snf'] },
+  { title: 'Difference RMRD Vs Ack',     fill: 'FFFEF3C7', heads: MEAS4, keys: ['diff_rmrd_litres','diff_rmrd_kgs','diff_rmrd_kg_fat','diff_rmrd_kg_snf'], diff: true },
+  { title: 'Difference Dispatch Vs Ack', fill: 'FFFFE4E6', heads: MEAS4, keys: ['diff_disp_litres','diff_disp_kgs','diff_disp_kg_fat','diff_disp_kg_snf'], diff: true },
 ];
+// Cumulative start offset of each group within the numeric columns
+let _off = 0;
+for (const g of TS_GROUPS) { g.offset = _off; _off += g.keys.length; }
+const TS_NMEAS = _off;
+// Weighted Fat%/SNF% totals: pct key → [kg-part key, kgs key]
+const TS_PCT_KEYS = {
+  rmrd_fat: ['rmrd_kg_fat', 'rmrd_kgs'], rmrd_snf: ['rmrd_kg_snf', 'rmrd_kgs'],
+  disp_fat: ['disp_kg_fat', 'disp_kgs'], disp_snf: ['disp_kg_snf', 'disp_kgs'],
+  ack_fat:  ['ack_kg_fat',  'ack_kgs'],  ack_snf:  ['ack_kg_snf',  'ack_kgs'],
+};
 const INFO_HEADERS = ['Tanker Number', 'Milk Lifting Date', 'Ack.Date', 'Route Name', 'Starting Point', 'Unloading Point'];
 const RED = 'FFC0392B', GREEN = 'FF1E8449', HEADER_TEXT = 'FF1F2937';
 const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
@@ -192,14 +210,14 @@ function buildTsWorkbook(rows, reportDate) {
   const NINFO = INFO_HEADERS.length;
   const ws = wb.addWorksheet('TS Report', { views: [{ state: 'frozen', xSplit: NINFO, ySplit: 3 }] });
 
-  // Column widths: 5 info + 20 numeric
+  // Column widths: 6 info + numeric measures
   ws.columns = [
     { width: 16 }, { width: 14 }, { width: 12 }, { width: 20 }, { width: 18 }, { width: 18 },
-    ...Array(20).fill({ width: 12 }),
+    ...Array(TS_NMEAS).fill({ width: 11 }),
   ];
 
   // Row 1 — title
-  ws.mergeCells(1, 1, 1, NINFO + 20);
+  ws.mergeCells(1, 1, 1, NINFO + TS_NMEAS);
   const title = ws.getCell(1, 1);
   title.value = `Daily TS Report — ${reportDate}`;
   title.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
@@ -217,15 +235,15 @@ function buildTsWorkbook(rows, reportDate) {
     c.border = BORDER;
     ws.getCell(3, i + 1).border = BORDER;
   });
-  TS_GROUPS.forEach((g, gi) => {
-    const startCol = NINFO + 1 + gi * 4;
-    ws.mergeCells(2, startCol, 2, startCol + 3);
+  TS_GROUPS.forEach(g => {
+    const startCol = NINFO + 1 + g.offset;
+    ws.mergeCells(2, startCol, 2, startCol + g.keys.length - 1);
     const gc = ws.getCell(2, startCol);
     gc.value = g.title;
     gc.font = { bold: true, color: { argb: HEADER_TEXT } };
     gc.fill = fillOf(g.fill);
     gc.alignment = { vertical: 'middle', horizontal: 'center' };
-    ['Qty Ltrs', 'Qty Kgs', 'Kg.Fat', 'Kg.SNF'].forEach((h, i) => {
+    g.heads.forEach((h, i) => {
       const c = ws.getCell(3, startCol + i);
       c.value = h;
       c.font = { bold: true, size: 10, color: { argb: HEADER_TEXT } };
@@ -233,7 +251,7 @@ function buildTsWorkbook(rows, reportDate) {
       c.alignment = { vertical: 'middle', horizontal: 'center' };
       c.border = BORDER;
     });
-    for (let i = 0; i < 4; i++) ws.getCell(2, startCol + i).border = BORDER;
+    for (let i = 0; i < g.keys.length; i++) ws.getCell(2, startCol + i).border = BORDER;
   });
   ws.getRow(2).height = 20;
 
@@ -249,9 +267,9 @@ function buildTsWorkbook(rows, reportDate) {
       c.alignment = { vertical: 'middle', horizontal: i === 0 ? 'left' : 'left' };
       if (i === 0) c.font = { bold: true, color: { argb: 'FF005BA3' } };
     });
-    TS_GROUPS.forEach((g, gi) => {
+    TS_GROUPS.forEach(g => {
       g.keys.forEach((key, ki) => {
-        const c = row.getCell(NINFO + 1 + gi * 4 + ki);
+        const c = row.getCell(NINFO + 1 + g.offset + ki);
         const v = x[key];
         c.value = v == null ? null : parseFloat(v);
         c.numFmt = numFmt(ki);
@@ -275,10 +293,18 @@ function buildTsWorkbook(rows, reportDate) {
   tl.fill = fillOf('FFDBEAFE');
   tl.border = BORDER;
   const sumCol = key => rN(rows.reduce((s, x) => s + (parseFloat(x[key]) || 0), 0), 2);
-  TS_GROUPS.forEach((g, gi) => {
+  // Fat%/SNF% totals are weighted (Σkg-part / Σkgs × 100), not summed
+  const totCol = key => {
+    const pk = TS_PCT_KEYS[key];
+    if (!pk) return sumCol(key);
+    const kgPart = rows.reduce((s, x) => s + (parseFloat(x[pk[0]]) || 0), 0);
+    const kgs    = rows.reduce((s, x) => s + (parseFloat(x[pk[1]]) || 0), 0);
+    return kgs > 0 ? rN(kgPart / kgs * 100, 2) : null;
+  };
+  TS_GROUPS.forEach(g => {
     g.keys.forEach((key, ki) => {
-      const c = tr.getCell(NINFO + 1 + gi * 4 + ki);
-      const v = sumCol(key);
+      const c = tr.getCell(NINFO + 1 + g.offset + ki);
+      const v = totCol(key);
       c.value = v;
       c.numFmt = numFmt(ki);
       c.alignment = { horizontal: 'right' };

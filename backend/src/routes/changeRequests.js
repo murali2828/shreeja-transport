@@ -168,10 +168,48 @@ async function sendApprovalEmail(cr, execInfo, approver) {
   await transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: approver.email,
-    cc: APPROVER_CC().join(', ') || undefined,
     subject: `Approval needed — changes to closed Trip #${execInfo.trip_no} (${String(execInfo.execution_date).slice(0, 10)})`,
     html,
   });
+}
+
+// Information-only email to stakeholders AFTER changes are applied (no action
+// links — only the approver receives the actionable email, to avoid accidental
+// approvals from CC recipients). Fire-and-forget.
+async function sendAppliedInfoEmail(cr, deciderName) {
+  const recipients = APPROVER_CC();
+  if (!recipients.length) return;
+  try {
+    const info = await query(`
+      SELECT tp.trip_no, t.tanker_number, te.execution_date
+      FROM trip_executions te
+      JOIN trip_plans tp ON tp.id=te.trip_plan_id
+      LEFT JOIN tankers t ON t.id=tp.tanker_id
+      WHERE te.id=$1`, [cr.execution_id]);
+    const x = info.rows[0] || {};
+    const html = `
+      <p style="font-family:sans-serif;font-size:14px;">Dear Team,</p>
+      <p style="font-family:sans-serif;font-size:13px;">
+        This is for your information only — no action is required.<br/><br/>
+        The change request for the CLOSED trip
+        <b>Trip #${esc(x.trip_no ?? '')} — ${esc(x.tanker_number || '')}</b>
+        (${esc(String(x.execution_date || '').slice(0, 10))}), requested by
+        <b>${esc(cr.requested_by_name || '')}</b>
+        (Reason: <i>${esc(cr.reason || '—')}</i>), has been
+        <b style="color:#16a34a;">APPROVED</b> by <b>${esc(deciderName || '')}</b>
+        and the changes are now applied. All reports reflect the updated data.
+      </p>
+      ${buildDiffHtml(cr.snapshot, cr.changes)}
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/>
+      <p style="font-family:sans-serif;font-size:12px;color:#9ca3af;">Shreeja TMS · change request #${cr.id} · automated notification</p>`;
+    const transporter = createTransport();
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: recipients.join(', '),
+      subject: `FYI — approved changes applied to closed Trip #${x.trip_no ?? ''} (${String(x.execution_date || '').slice(0, 10)})`,
+      html,
+    });
+  } catch (e) { console.error('Change-applied info email failed:', e.message); }
 }
 
 // ─── Apply / decide helpers ───────────────────────────────────────────────────
@@ -210,6 +248,10 @@ async function decideRequest(crId, decision, decider, note) {
        note || null, crId]
     );
     await client.query('COMMIT');
+    if (decision === 'approve') {
+      // Stakeholders get an information-only copy once the changes are live.
+      sendAppliedInfoEmail(cr, decider.full_name || decider.name || 'approver').catch(() => {});
+    }
     return cr;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
