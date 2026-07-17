@@ -460,14 +460,16 @@ async function buildBmcuBreakup(reportDate) {
   const notes = [];
   if (!execIds.length) return { report_date: reportDate, trips: [], notes };
 
-  // Dispatch rows per BMCU (same convention as TS report: exclude Balance Milk rows).
+  // Dispatch rows per BMCU — ALL non-deleted rows, including those marked
+  // 'Balance Milk' / 'Internal Shifting' (their RMRD shifts must count too;
+  // the row type is shown next to the BMCU name instead).
   const dr = await query(`
-    SELECT teb.execution_id, teb.seq_no, teb.bmcu_id, teb.chamber,
+    SELECT teb.execution_id, teb.seq_no, teb.bmcu_id, teb.chamber, teb.description,
            teb.qty_litres, teb.qty_kgs, teb.fat_pct, teb.snf_pct, teb.kg_fat, teb.kg_snf,
            b.bmcu_code, b.bmcu_name
     FROM trip_execution_bmcus teb
     JOIN bmcus b ON b.id=teb.bmcu_id
-    WHERE teb.execution_id = ANY($1) AND teb.is_deleted=FALSE AND teb.description!='Balance Milk'
+    WHERE teb.execution_id = ANY($1) AND teb.is_deleted=FALSE
     ORDER BY teb.execution_id, teb.seq_no`, [execIds]);
 
   // RMRD shift rows keyed to their BMCU block.
@@ -497,7 +499,8 @@ async function buildBmcuBreakup(reportDate) {
   for (const d of dr.rows) {
     const b = {
       execution_id: d.execution_id, seq_no: d.seq_no,
-      bmcu_code: d.bmcu_code, bmcu_name: d.bmcu_name,
+      bmcu_code: d.bmcu_code,
+      bmcu_name: d.bmcu_name + (d.description && d.description !== 'RMRD' ? ` (${d.description})` : ''),
       compartment: String(d.chamber || '').split(',').map(s => s.trim()).filter(Boolean).join('/'),
       dispatch: {
         litres: rN(d.qty_litres) || 0, kgs: rN(d.qty_kgs) || 0,
