@@ -42,15 +42,16 @@ async function buildTsReport(reportDate) {
       (SELECT COUNT(*) FROM trip_acknowledgements ta
         WHERE ta.execution_id=te.id)::int                               AS ack_count,
 
-      -- Dispatch totals (existing TS convention: exclude Balance Milk / deleted)
+      -- Dispatch totals: ALL non-deleted execution rows (incl. Balance Milk /
+      -- Internal Shifting rows — nothing entered in execution is dropped)
       COALESCE((SELECT SUM(teb.qty_litres) FROM trip_execution_bmcus teb
-        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS disp_litres,
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE),0) AS disp_litres,
       COALESCE((SELECT SUM(teb.qty_kgs) FROM trip_execution_bmcus teb
-        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS disp_kgs,
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE),0) AS disp_kgs,
       COALESCE((SELECT SUM(teb.kg_fat) FROM trip_execution_bmcus teb
-        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS disp_kg_fat,
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE),0) AS disp_kg_fat,
       COALESCE((SELECT SUM(teb.kg_snf) FROM trip_execution_bmcus teb
-        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE AND teb.description!='Balance Milk'),0) AS disp_kg_snf,
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE),0) AS disp_kg_snf,
 
       -- Acknowledgement totals
       COALESCE((SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_litres,
