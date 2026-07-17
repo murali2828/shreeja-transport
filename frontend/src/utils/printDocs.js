@@ -81,6 +81,49 @@ export function printGatePass(r) {
     </div>`);
 }
 
+// ─── NON-TRIP GATE PASS (maintenance / hot water / RMT / etc.) ───────────────
+export function printNonTripGatePass(rec, { duplicate = false } = {}) {
+  const issued = rec.issued_at ? new Date(rec.issued_at) : new Date();
+  const reasonLabel = rec.reason === 'Others' ? `Others — ${rec.other_text || ''}` : rec.reason;
+  const rmtBlock = rec.reason === 'RMT' ? `
+    <table style="margin:12px 0;" class="small">
+      <tr class="bold"><td>Billing</td><td>KM</td><td>Tanker Vendor Rate</td><td>Balaji Dairy Rate</td><td>Remarks</td></tr>
+      <tr><td>${esc(rec.billing || '')}</td><td>${esc(rec.km || '')}</td>
+          <td>${esc(rec.tanker_vendor_rate || '')}</td><td>${esc(rec.balaji_dairy_rate || '')}</td>
+          <td>${esc(rec.remarks || '')}</td></tr>
+    </table>` : '';
+  const rows = Array.from({ length: 4 }, () =>
+    `<tr><td style="height:26px;width:10%"></td><td style="width:40%"></td><td style="width:25%"></td><td style="width:25%"></td></tr>`).join('');
+  openPrintWindow(`Gate Pass — ${rec.tanker_number || ''} (${rec.reason})`, `
+    ${duplicate ? `<div class="dup">DUPLICATE — original issued on ${fmtTs(rec.issued_at)}</div>` : ''}
+    <div class="center bold" style="font-size:16px;">SHREEJA MAHILA MILK PRODUCER COMPANY LIMITED.</div>
+    <div class="center bold" style="font-size:15px; margin:14px 0; text-decoration:underline;">GATE PASS</div>
+    <table class="noborder" style="margin-bottom:14px;">
+      <tr>
+        <td><span class="bold">Sl.No:</span> NT-${esc(rec.id)}</td>
+        <td style="text-align:right;"><span class="bold">Date:</span> ${fmtTs(rec.issued_at)}</td>
+      </tr>
+    </table>
+    <p style="line-height:2;">The following goods taken by Sri……………………………………………………… May be<br/>
+    Allowed pass out of premises by hand / Vehicle No: <span class="bold">${esc(rec.tanker_number || '')}</span><br/>
+    <span class="bold">Purpose:</span> ${esc(reasonLabel)}</p>
+    ${rmtBlock}
+    <table style="margin:12px 0;">
+      <tr class="bold"><td>SL.No.</td><td>Material</td><td>Quantity/No/weight</td><td>Remarks</td></tr>
+      ${rows}
+    </table>
+    <table class="noborder" style="margin-top:56px;">
+      <tr class="bold">
+        <td>Sign. of Receiver</td>
+        <td class="center">Check Security Sign</td>
+        <td style="text-align:right;">Issuing authority/Designation</td>
+      </tr>
+    </table>
+    <div class="small" style="margin-top:26px; color:#444;">
+      Non-trip gate pass NT-${esc(rec.id)} · Issued by ${esc(rec.issued_by_name || '')} · ${fmtTs(rec.issued_at)}
+    </div>`);
+}
+
 // ─── COA / MILK DISPATCH VOUCHER ─────────────────────────────────────────────
 const COA_TESTS = [
   ['Seal of Integrity', 'OK/Not', 'Ok'],

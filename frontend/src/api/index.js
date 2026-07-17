@@ -105,6 +105,8 @@ export const cancelExecution      = (id, reason) => api.post(`/executions/${id}/
 export const printTripDoc     = (planId, doc_type) => api.post(`/trip-docs/${planId}/print`, { doc_type });
 export const getTripDocStatus = (date)   => api.get('/trip-docs/status', { params: { plan_for_date: date } });
 export const getTripDocPlan   = (planId) => api.get(`/trip-docs/${planId}`);
+export const getNonTripGatePasses  = (p) => api.get('/trip-docs/non-trip', { params: p });
+export const createNonTripGatePass = (d) => api.post('/trip-docs/non-trip', d);
 
 // ── Day wise Tanker Utilisation ───────────────────────────────────────────────
 export const getDayUtilisation = (p) => api.get('/reports/day-utilisation', { params: p });

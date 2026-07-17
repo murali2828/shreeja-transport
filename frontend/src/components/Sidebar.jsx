@@ -83,6 +83,7 @@ export default function Sidebar({ collapsed = false }) {
         <NavSection label={collapsed ? '' : 'Execution'}>
           {ni('/execution',        <Play size={15}/>,        'Active Trips')}
           {ni('/execution/closed', <CheckSquare size={15}/>, 'Closed Trips')}
+          {ni('/execution/gate-pass', <Play size={15}/>, 'Other Gate Pass')}
           {ni('/approvals', <CheckSquare size={15}/>, 'Approvals')}
         </NavSection>
       )}

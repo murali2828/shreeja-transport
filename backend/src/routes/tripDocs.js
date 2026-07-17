@@ -121,4 +121,52 @@ router.post('/:planId(\\d+)/print', authenticate, async (req, res) => {
   } finally { client.release(); }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Non-trip gate passes — tanker goes out WITHOUT a planned trip.
+// Reasons: Maintainance / Hot water / RMT / Tankers without driver / Others.
+// RMT carries billing data (reimbursed from Balaji vendor, paid to tanker
+// vendor at different rates).
+// ─────────────────────────────────────────────────────────────────────────────
+const NTGP_REASONS = ['Maintainance', 'Hot water', 'RMT', 'Tankers without driver', 'Others'];
+
+// GET /api/trip-docs/non-trip?from_date=&to_date=
+router.get('/non-trip', authenticate, async (req, res) => {
+  const { from_date, to_date } = req.query;
+  if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date required' });
+  try {
+    const r = await query(`
+      SELECT g.*, t.tanker_number, t.vendor_name
+      FROM non_trip_gate_passes g
+      JOIN tankers t ON t.id=g.tanker_id
+      WHERE g.issued_at::date BETWEEN $1 AND $2
+      ORDER BY g.issued_at DESC`, [from_date, to_date]);
+    res.json(r.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/trip-docs/non-trip
+router.post('/non-trip', authenticate, async (req, res) => {
+  const { tanker_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate } = req.body;
+  if (!tanker_id) return res.status(400).json({ error: 'tanker_id required' });
+  if (!NTGP_REASONS.includes(reason)) return res.status(400).json({ error: 'Invalid reason' });
+  if (reason === 'Others' && !String(other_text || '').trim())
+    return res.status(400).json({ error: 'Please describe the reason (Others)' });
+  if (reason === 'RMT' && (!km || !tanker_vendor_rate || !balaji_dairy_rate))
+    return res.status(400).json({ error: 'RMT requires KM, Tanker Vendor Rate and Balaji Dairy Rate' });
+  try {
+    const isRmt = reason === 'RMT';
+    const r = await query(`
+      INSERT INTO non_trip_gate_passes
+        (tanker_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate, issued_by, issued_by_name)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      RETURNING *`,
+      [tanker_id, reason, reason === 'Others' ? other_text.trim() : null,
+       isRmt ? billing || null : null, isRmt ? remarks || null : null,
+       isRmt ? km : null, isRmt ? tanker_vendor_rate : null, isRmt ? balaji_dairy_rate : null,
+       req.user.id, req.user.full_name]);
+    const t = await query('SELECT tanker_number, vendor_name FROM tankers WHERE id=$1', [tanker_id]);
+    res.json({ ...r.rows[0], ...t.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
