@@ -87,8 +87,8 @@ export function printNonTripGatePass(rec, { duplicate = false } = {}) {
   const reasonLabel = rec.reason === 'Others' ? `Others — ${rec.other_text || ''}` : rec.reason;
   const rmtBlock = rec.reason === 'RMT' ? `
     <table style="margin:12px 0;" class="small">
-      <tr class="bold"><td>Billing</td><td>KM</td><td>Tanker Vendor Rate</td><td>Balaji Dairy Rate</td><td>Remarks</td></tr>
-      <tr><td>${esc(rec.billing || '')}</td><td>${esc(rec.km || '')}</td>
+      <tr class="bold"><td>KM</td><td>Tanker Vendor Rate</td><td>Balaji Dairy Rate</td><td>Remarks</td></tr>
+      <tr><td>${esc(rec.km || '')}</td>
           <td>${esc(rec.tanker_vendor_rate || '')}</td><td>${esc(rec.balaji_dairy_rate || '')}</td>
           <td>${esc(rec.remarks || '')}</td></tr>
     </table>` : '';

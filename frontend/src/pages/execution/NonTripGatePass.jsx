@@ -16,7 +16,7 @@ const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 
 const fmtTs = ts => ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 const n2 = v => v == null || v === '' ? '—' : parseFloat(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const EMPTY = { tanker_id: '', reason: 'Maintainance', other_text: '', billing: '', remarks: '', km: '', tanker_vendor_rate: '', balaji_dairy_rate: '' };
+const EMPTY = { tanker_no: '', reason: 'Maintainance', other_text: '', remarks: '', km: '', tanker_vendor_rate: '', balaji_dairy_rate: '' };
 
 export default function NonTripGatePass() {
   const qc = useQueryClient();
@@ -36,8 +36,11 @@ export default function NonTripGatePass() {
     queryFn:  () => getNonTripGatePasses({ from_date: from, to_date: to }).then(r => r.data),
   });
 
+  const matchedTanker = tankers.find(
+    t => t.tanker_number.toLowerCase() === form.tanker_no.trim().toLowerCase());
+
   const createMut = useMutation({
-    mutationFn: () => createNonTripGatePass(form),
+    mutationFn: () => createNonTripGatePass({ ...form, tanker_id: matchedTanker?.id }),
     onSuccess: (res) => {
       toast.success(`Gate pass NT-${res.data.id} issued`);
       qc.invalidateQueries(['non-trip-gp']);
@@ -48,7 +51,7 @@ export default function NonTripGatePass() {
   });
 
   const submit = () => {
-    if (!form.tanker_id) return toast.error('Select a tanker');
+    if (!matchedTanker) return toast.error('Select a valid tanker number from the list');
     if (form.reason === 'Others' && !form.other_text.trim()) return toast.error('Describe the reason');
     if (isRmt && (!form.km || !form.tanker_vendor_rate || !form.balaji_dairy_rate))
       return toast.error('RMT requires KM, Tanker Vendor Rate and Balaji Dairy Rate');
@@ -72,10 +75,11 @@ export default function NonTripGatePass() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
             <label className="label">Tanker *</label>
-            <select className="input" value={form.tanker_id} onChange={e => set('tanker_id', e.target.value)}>
-              <option value="">— select —</option>
-              {tankers.map(t => <option key={t.id} value={t.id}>{t.tanker_number}</option>)}
-            </select>
+            <input className="input" list="ntgp-tankers" placeholder="Type part of tanker number…"
+              value={form.tanker_no} onChange={e => set('tanker_no', e.target.value)}/>
+            <datalist id="ntgp-tankers">
+              {tankers.map(t => <option key={t.id} value={t.tanker_number}/>)}
+            </datalist>
           </div>
           <div>
             <label className="label">Reason *</label>
@@ -94,12 +98,7 @@ export default function NonTripGatePass() {
 
         {isRmt && (
           <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-2">
-            <div className="text-xs font-semibold text-amber-800">
-              RMT details — reimbursed from Balaji vendor, paid to tanker vendor (rates differ)
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-              <div><label className="label">Billing</label>
-                <input className="input" value={form.billing} onChange={e => set('billing', e.target.value)}/></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div><label className="label">KM *</label>
                 <input type="number" min="0" className="input" value={form.km} onChange={e => set('km', e.target.value)}/></div>
               <div><label className="label">Tanker Vendor Rate (₹/km) *</label>
@@ -149,7 +148,7 @@ export default function NonTripGatePass() {
                 <th className="table-th text-right">Balaji Rate</th>
                 <th className="table-th text-right">Pay Vendor (₹)</th>
                 <th className="table-th text-right">Reimburse (₹)</th>
-                <th className="table-th">Billing / Remarks</th>
+                <th className="table-th">Remarks</th>
                 <th className="table-th">Issued By</th>
                 <th className="table-th">Print</th>
               </tr>
@@ -172,7 +171,7 @@ export default function NonTripGatePass() {
                   <td className="table-td text-right">{g.balaji_dairy_rate != null ? n2(g.balaji_dairy_rate) : '—'}</td>
                   <td className="table-td text-right">{g.km && g.tanker_vendor_rate ? n2(g.km * g.tanker_vendor_rate) : '—'}</td>
                   <td className="table-td text-right">{g.km && g.balaji_dairy_rate ? n2(g.km * g.balaji_dairy_rate) : '—'}</td>
-                  <td className="table-td text-gray-600">{[g.billing, g.remarks].filter(Boolean).join(' / ') || '—'}</td>
+                  <td className="table-td text-gray-600">{g.remarks || '—'}</td>
                   <td className="table-td text-gray-600">{g.issued_by_name || '—'}</td>
                   <td className="table-td">
                     <button onClick={() => printNonTripGatePass(g, { duplicate: true })}
