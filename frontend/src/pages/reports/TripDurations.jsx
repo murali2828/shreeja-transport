@@ -102,7 +102,7 @@ export default function TripDurations() {
       {/* Report 2 — Delivery point turnaround */}
       <div className="card overflow-hidden">
         <div className="px-4 py-2.5 bg-gray-50 border-b text-sm font-semibold text-gray-700">
-          Delivery Point Turnaround — arrival (COA) to next trip's Gate Pass, per tanker
+          Delivery Point Turnaround — arrival (COA) → unloading → cleaning → next trip's Gate Pass, per tanker
         </div>
         <div className="overflow-x-auto max-h-[45vh]">
           <table className="w-full text-xs">
@@ -113,16 +113,19 @@ export default function TripDurations() {
                 <th className="table-th">Plan Date</th>
                 <th className="table-th">Delivery Point</th>
                 <th className="table-th">Arrived (COA)</th>
+                <th className="table-th">Unloading Done</th>
+                <th className="table-th text-right">Unloading Time</th>
                 <th className="table-th">Next Trip</th>
                 <th className="table-th">Next Gate Pass</th>
-                <th className="table-th text-right">In-Plant Time</th>
+                <th className="table-th text-right">Cleaning Time</th>
+                <th className="table-th text-right">In-Plant Total</th>
                 <th className="table-th text-right">Days</th>
                 <th className="table-th">Status</th>
               </tr>
             </thead>
             <tbody>
               {ta.length === 0 && (
-                <tr><td colSpan={10}><div className="empty-state">No arrivals (COA prints) in this date range.</div></td></tr>
+                <tr><td colSpan={13}><div className="empty-state">No arrivals (COA prints) in this date range.</div></td></tr>
               )}
               {ta.map((x, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
@@ -131,8 +134,11 @@ export default function TripDurations() {
                   <td className="table-td whitespace-nowrap">{x.plan_for_date}</td>
                   <td className="table-td">{x.delivery_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{fmtTs(x.arrived_at)}</td>
+                  <td className="table-td whitespace-nowrap">{fmtTs(x.unloading_done_at)}</td>
+                  <td className="table-td text-right whitespace-nowrap"><Dur d={x.unloading}/></td>
                   <td className="table-td">{x.next_trip_no ? `#${x.next_trip_no}` : '—'}</td>
                   <td className="table-td whitespace-nowrap">{fmtTs(x.next_gate_pass_at)}</td>
+                  <td className="table-td text-right whitespace-nowrap"><Dur d={x.cleaning}/></td>
                   <td className="table-td text-right whitespace-nowrap"><Dur d={x.duration}/></td>
                   <td className="table-td text-right">{x.duration?.days ?? '—'}</td>
                   <td className="table-td"><StatusPill s={x.status}/></td>

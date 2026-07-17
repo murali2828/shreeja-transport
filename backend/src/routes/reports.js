@@ -952,7 +952,9 @@ async function buildTripDurations(fromDate, toDate) {
            (SELECT MIN(printed_at) FROM trip_document_prints
              WHERE trip_plan_id=tp.id AND doc_type='gate_pass') AS gate_pass_at,
            (SELECT MIN(printed_at) FROM trip_document_prints
-             WHERE trip_plan_id=tp.id AND doc_type='coa')       AS coa_at
+             WHERE trip_plan_id=tp.id AND doc_type='coa')       AS coa_at,
+           (SELECT MIN(printed_at) FROM trip_document_prints
+             WHERE trip_plan_id=tp.id AND doc_type='unloading') AS unloaded_at
     FROM trip_plans tp
     LEFT JOIN tankers t          ON t.id=tp.tanker_id
     LEFT JOIN route_masters rm   ON rm.id=tp.route_id
@@ -996,14 +998,23 @@ async function buildTripDurations(fromDate, toDate) {
     const next = (gpByTanker[x.tanker_id] || [])
       .find(g => new Date(g.first_at) > new Date(x.coa_at));
     const mins = next ? (new Date(next.first_at) - new Date(x.coa_at)) / 60000 : null;
+    // Split of in-plant time: unloading = COA → unloading-done click;
+    // cleaning = unloading-done → next gate pass (same tanker).
+    const unloadMins = x.unloaded_at
+      ? (new Date(x.unloaded_at) - new Date(x.coa_at)) / 60000 : null;
+    const cleanMins = x.unloaded_at && next
+      ? (new Date(next.first_at) - new Date(x.unloaded_at)) / 60000 : null;
     turnarounds.push({
       tanker_number: x.tanker_number,
       arrived_trip_no: x.trip_no, plan_for_date: fmtDate(x.plan_for_date),
       delivery_point: x.delivery_point,
       arrived_at: x.coa_at,
+      unloading_done_at: x.unloaded_at,
       next_trip_no: next ? next.trip_no : null,
       next_gate_pass_at: next ? next.first_at : null,
       status: next ? 'Departed' : 'In plant',
+      unloading: durationParts(unloadMins),
+      cleaning: durationParts(cleanMins),
       duration: durationParts(mins),
     });
   }
@@ -1055,13 +1066,17 @@ function buildTripDurationsWorkbook(data) {
   header(ws2, [
     { title: 'Tanker', width: 15 }, { title: 'Arrived Trip #', width: 12 }, { title: 'Plan Date', width: 12 },
     { title: 'Delivery Point', width: 16 }, { title: 'Arrived (COA)', width: 18 },
+    { title: 'Unloading Done', width: 18 }, { title: 'Unloading (d hh:mm)', width: 16 },
     { title: 'Next Trip #', width: 10 }, { title: 'Next Gate Pass', width: 18 },
-    { title: 'In-Plant (d hh:mm)', width: 16 }, { title: 'Days (decimal)', width: 13 }, { title: 'Status', width: 12 },
+    { title: 'Cleaning (d hh:mm)', width: 16 },
+    { title: 'In-Plant Total (d hh:mm)', width: 18 }, { title: 'Days (decimal)', width: 13 }, { title: 'Status', width: 12 },
   ]);
   data.turnarounds.forEach((x, i) => put(ws2, i + 2, [
     x.tanker_number, x.arrived_trip_no, x.plan_for_date, x.delivery_point, fmtTs(x.arrived_at),
-    x.next_trip_no, fmtTs(x.next_gate_pass_at), x.duration.label, x.duration.days, x.status,
-  ], [8]));
+    fmtTs(x.unloading_done_at), x.unloading.label,
+    x.next_trip_no, fmtTs(x.next_gate_pass_at), x.cleaning.label,
+    x.duration.label, x.duration.days, x.status,
+  ], [11]));
 
   return wb;
 }

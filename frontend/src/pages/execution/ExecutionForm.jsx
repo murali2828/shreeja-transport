@@ -585,6 +585,12 @@ export default function ExecutionForm() {
     mutationFn: ({ docType }) => printTripDoc(exec.trip_plan_id, docType),
     onSuccess: (res, { docType }) => {
       qc.invalidateQueries(['trip-doc-plan']);
+      if (docType === 'unloading') {
+        toast.success(res.data.is_duplicate
+          ? `Already recorded — unloading completed at ${new Date(res.data.first_printed_at).toLocaleString('en-IN')}`
+          : `Unloading completed recorded at ${new Date(res.data.printed_at).toLocaleString('en-IN')}`);
+        return;
+      }
       if (docType === 'gate_pass') printGatePass(res.data); else printCoa(res.data);
       if (res.data.is_duplicate) toast('Duplicate print — original timestamp kept', { icon: 'ℹ️' });
     },
@@ -885,6 +891,22 @@ export default function ExecutionForm() {
               className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg font-medium ${coaDone ? 'bg-green-100 text-green-700' : 'btn-secondary'} ${!gpDone ? 'opacity-40 cursor-not-allowed' : ''}`}>
               <Printer size={12}/> COA{coaDone ? ' ✓' : ''}
             </button>
+            {(() => {
+              const unloadDone = !!docStatus.unloading;
+              return (
+                <button
+                  onClick={() => {
+                    if (unloadDone) return toast(`Unloading was completed at ${fmt(docStatus.unloading.first_printed_at)}`, { icon: 'ℹ️' });
+                    if (window.confirm(`Record UNLOADING COMPLETED for Trip #${exec.trip_no} now? This timestamp cannot be changed.`))
+                      printMut.mutate({ docType: 'unloading' });
+                  }}
+                  disabled={printMut.isPending || !coaDone}
+                  title={!coaDone ? 'Print the COA first (tanker must arrive)' : unloadDone ? `Unloading completed at ${fmt(docStatus.unloading.first_printed_at)}` : 'Record unloading completed'}
+                  className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg font-medium ${unloadDone ? 'bg-green-100 text-green-700' : 'btn-secondary'} ${!coaDone ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                  ⬇ Unload{unloadDone ? ' ✓' : ''}
+                </button>
+              );
+            })()}
           </>);
         })()}
       </div>

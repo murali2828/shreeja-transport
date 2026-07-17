@@ -53,8 +53,8 @@ router.get('/:planId(\\d+)', authenticate, async (req, res) => {
 router.post('/:planId(\\d+)/print', authenticate, async (req, res) => {
   const planId = req.params.planId;
   const { doc_type } = req.body;
-  if (!['gate_pass', 'coa'].includes(doc_type))
-    return res.status(400).json({ error: 'doc_type must be gate_pass or coa' });
+  if (!['gate_pass', 'coa', 'unloading'].includes(doc_type))
+    return res.status(400).json({ error: 'doc_type must be gate_pass, coa or unloading' });
 
   const client = await pool.connect();
   try {
@@ -79,6 +79,13 @@ router.post('/:planId(\\d+)/print', authenticate, async (req, res) => {
         [planId]);
       if (!gp.rows.length)
         return res.status(400).json({ error: 'Trip not started — print the Gate Pass first' });
+    }
+    if (doc_type === 'unloading') {
+      const coa = await client.query(
+        `SELECT 1 FROM trip_document_prints WHERE trip_plan_id=$1 AND doc_type='coa' LIMIT 1`,
+        [planId]);
+      if (!coa.rows.length)
+        return res.status(400).json({ error: 'Tanker not arrived — print the COA first' });
     }
 
     await client.query('BEGIN');

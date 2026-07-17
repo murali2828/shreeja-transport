@@ -121,6 +121,12 @@ export default function ExecutionList() {
     mutationFn: ({ planId, docType }) => printTripDoc(planId, docType),
     onSuccess: (res, { docType }) => {
       qc.invalidateQueries(['trip-doc-status']);
+      if (docType === 'unloading') {
+        toast.success(res.data.is_duplicate
+          ? `Already recorded — unloading completed at ${new Date(res.data.first_printed_at).toLocaleString('en-IN')}`
+          : `Unloading completed recorded at ${new Date(res.data.printed_at).toLocaleString('en-IN')}`);
+        return;
+      }
       if (docType === 'gate_pass') printGatePass(res.data); else printCoa(res.data);
       if (res.data.is_duplicate) toast('Duplicate print — original timestamp kept', { icon: 'ℹ️' });
     },
@@ -261,6 +267,22 @@ export default function ExecutionList() {
                               className={`btn-sm flex items-center gap-1 ${coaDone ? 'bg-green-100 text-green-700 rounded-lg px-2 py-1 text-xs font-medium' : 'btn-secondary'} ${!gpDone ? 'opacity-40 cursor-not-allowed' : ''}`}>
                               <Printer size={12}/> COA{coaDone ? ' ✓' : ''}
                             </button>
+                            {(() => {
+                              const unloadDone = !!ds.unloading;
+                              return (
+                                <button
+                                  onClick={() => {
+                                    if (unloadDone) return toast(`Unloading was completed at ${fmt(ds.unloading.first_printed_at)}`, { icon: 'ℹ️' });
+                                    if (window.confirm(`Record UNLOADING COMPLETED for Trip #${p.trip_no} now? This timestamp cannot be changed.`))
+                                      printMut.mutate({ planId: p.id, docType: 'unloading' });
+                                  }}
+                                  disabled={printMut.isPending || !coaDone}
+                                  title={!coaDone ? 'Print the COA first (tanker must arrive)' : unloadDone ? `Unloading completed at ${fmt(ds.unloading.first_printed_at)}` : 'Record unloading completed'}
+                                  className={`btn-sm flex items-center gap-1 ${unloadDone ? 'bg-green-100 text-green-700 rounded-lg px-2 py-1 text-xs font-medium' : 'btn-secondary'} ${!coaDone ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                                  ⬇ Unload{unloadDone ? ' ✓' : ''}
+                                </button>
+                              );
+                            })()}
                           </>);
                         })()}
                         {isAdmin && exec && exec.status !== 'closed' && (
