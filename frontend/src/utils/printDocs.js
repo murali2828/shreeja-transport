@@ -106,7 +106,8 @@ export function printNonTripGatePass(rec, { duplicate = false } = {}) {
     </table>
     <p style="line-height:2;">The following goods taken by Sri……………………………………………………… May be<br/>
     Allowed pass out of premises by hand / Vehicle No: <span class="bold">${esc(rec.tanker_number || '')}</span><br/>
-    <span class="bold">Purpose:</span> ${esc(reasonLabel)}</p>
+    <span class="bold">Issuing Point:</span> ${esc(rec.delivery_point_name || '')}
+    &nbsp;&nbsp;&nbsp;<span class="bold">Purpose:</span> ${esc(reasonLabel)}</p>
     ${rmtBlock}
     <table style="margin:12px 0;">
       <tr class="bold"><td>SL.No.</td><td>Material</td><td>Quantity/No/weight</td><td>Remarks</td></tr>

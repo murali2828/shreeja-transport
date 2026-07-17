@@ -135,9 +135,10 @@ router.get('/non-trip', authenticate, async (req, res) => {
   if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date required' });
   try {
     const r = await query(`
-      SELECT g.*, t.tanker_number, t.vendor_name
+      SELECT g.*, t.tanker_number, t.vendor_name, dp.name AS delivery_point_name
       FROM non_trip_gate_passes g
       JOIN tankers t ON t.id=g.tanker_id
+      LEFT JOIN delivery_points dp ON dp.id=g.delivery_point_id
       WHERE g.issued_at::date BETWEEN $1 AND $2
       ORDER BY g.issued_at DESC`, [from_date, to_date]);
     res.json(r.rows);
@@ -146,8 +147,9 @@ router.get('/non-trip', authenticate, async (req, res) => {
 
 // POST /api/trip-docs/non-trip
 router.post('/non-trip', authenticate, async (req, res) => {
-  const { tanker_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate } = req.body;
+  const { tanker_id, delivery_point_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate } = req.body;
   if (!tanker_id) return res.status(400).json({ error: 'tanker_id required' });
+  if (!delivery_point_id) return res.status(400).json({ error: 'Issuing delivery point required' });
   if (!NTGP_REASONS.includes(reason)) return res.status(400).json({ error: 'Invalid reason' });
   if (reason === 'Others' && !String(other_text || '').trim())
     return res.status(400).json({ error: 'Please describe the reason (Others)' });
@@ -157,15 +159,16 @@ router.post('/non-trip', authenticate, async (req, res) => {
     const isRmt = reason === 'RMT';
     const r = await query(`
       INSERT INTO non_trip_gate_passes
-        (tanker_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate, issued_by, issued_by_name)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        (tanker_id, delivery_point_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate, issued_by, issued_by_name)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
       RETURNING *`,
-      [tanker_id, reason, reason === 'Others' ? other_text.trim() : null,
+      [tanker_id, delivery_point_id, reason, reason === 'Others' ? other_text.trim() : null,
        isRmt ? billing || null : null, isRmt ? remarks || null : null,
        isRmt ? km : null, isRmt ? tanker_vendor_rate : null, isRmt ? balaji_dairy_rate : null,
        req.user.id, req.user.full_name]);
     const t = await query('SELECT tanker_number, vendor_name FROM tankers WHERE id=$1', [tanker_id]);
-    res.json({ ...r.rows[0], ...t.rows[0] });
+    const dp = await query('SELECT name AS delivery_point_name FROM delivery_points WHERE id=$1', [delivery_point_id]);
+    res.json({ ...r.rows[0], ...t.rows[0], ...dp.rows[0] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -211,9 +214,11 @@ router.get('/tanker-position', authenticate, async (req, res) => {
 
     // Latest non-trip gate pass per tanker.
     const ntgp = (await query(`
-      SELECT DISTINCT ON (tanker_id) tanker_id, reason, other_text, issued_at
-      FROM non_trip_gate_passes
-      ORDER BY tanker_id, issued_at DESC`)).rows;
+      SELECT DISTINCT ON (g.tanker_id) g.tanker_id, g.reason, g.other_text, g.issued_at,
+             dp.name AS delivery_point_name
+      FROM non_trip_gate_passes g
+      LEFT JOIN delivery_points dp ON dp.id=g.delivery_point_id
+      ORDER BY g.tanker_id, g.issued_at DESC`)).rows;
     const ntgpBy = Object.fromEntries(ntgp.map(g => [g.tanker_id, g]));
 
     const STATUSES = ['unloading', 'running', 'cleaning', 'maintenance', 'without_driver', 'idle'];
@@ -239,16 +244,16 @@ router.get('/tanker-position', authenticate, async (req, res) => {
       }
       // Latest event wins
       let status = 'idle', since = null, detail = null, trip_no = null;
+      let location = dpBy[t.id] || 'Unassigned';
       if (tripAt && (!ntAt || new Date(tripAt) >= new Date(ntAt))) {
         status = tripStatus; since = tripAt; trip_no = trip.trip_no;
         detail = `Trip #${trip.trip_no}`;
+        location = trip.delivery_point || location;
       } else if (ntAt) {
         status = ntStatus; since = ntAt; detail = ntLabel;
+        location = gp.delivery_point_name || location; // issuing dairy of the gate pass
       }
-      return {
-        tanker_number: t.tanker_number, status, since, detail, trip_no,
-        location: dpBy[t.id] || 'Unassigned',
-      };
+      return { tanker_number: t.tanker_number, status, since, detail, trip_no, location };
     });
 
     const locations = {};

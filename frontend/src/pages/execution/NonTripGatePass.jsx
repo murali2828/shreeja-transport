@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Printer, Plus, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getTankers, getNonTripGatePasses, createNonTripGatePass } from '../../api/index';
+import { getTankers, getDeliveryPoints, getNonTripGatePasses, createNonTripGatePass } from '../../api/index';
 import { printNonTripGatePass } from '../../utils/printDocs';
 
 const REASONS = ['Maintainance', 'Hot water', 'RMT', 'Tankers without driver', 'Others'];
@@ -16,7 +16,7 @@ const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 
 const fmtTs = ts => ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 const n2 = v => v == null || v === '' ? '—' : parseFloat(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const EMPTY = { tanker_no: '', reason: 'Maintainance', other_text: '', remarks: '', km: '', tanker_vendor_rate: '', balaji_dairy_rate: '' };
+const EMPTY = { tanker_no: '', delivery_point_id: '', reason: 'Maintainance', other_text: '', remarks: '', km: '', tanker_vendor_rate: '', balaji_dairy_rate: '' };
 
 export default function NonTripGatePass() {
   const qc = useQueryClient();
@@ -29,6 +29,11 @@ export default function NonTripGatePass() {
   const { data: tankers = [] } = useQuery({
     queryKey: ['tankers-active'],
     queryFn:  () => getTankers({ is_active: true }).then(r => r.data),
+  });
+
+  const { data: deliveryPoints = [] } = useQuery({
+    queryKey: ['delivery-points'],
+    queryFn:  () => getDeliveryPoints().then(r => r.data),
   });
 
   const { data: rows = [], isFetching } = useQuery({
@@ -52,6 +57,7 @@ export default function NonTripGatePass() {
 
   const submit = () => {
     if (!matchedTanker) return toast.error('Select a valid tanker number from the list');
+    if (!form.delivery_point_id) return toast.error('Select the issuing point');
     if (form.reason === 'Others' && !form.other_text.trim()) return toast.error('Describe the reason');
     if (isRmt && (!form.km || !form.tanker_vendor_rate || !form.balaji_dairy_rate))
       return toast.error('RMT requires KM, Tanker Vendor Rate and Balaji Dairy Rate');
@@ -80,6 +86,13 @@ export default function NonTripGatePass() {
             <datalist id="ntgp-tankers">
               {tankers.map(t => <option key={t.id} value={t.tanker_number}/>)}
             </datalist>
+          </div>
+          <div>
+            <label className="label">Issuing Point *</label>
+            <select className="input" value={form.delivery_point_id} onChange={e => set('delivery_point_id', e.target.value)}>
+              <option value="">— select —</option>
+              {deliveryPoints.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
           </div>
           <div>
             <label className="label">Reason *</label>
@@ -142,6 +155,7 @@ export default function NonTripGatePass() {
                 <th className="table-th">No.</th>
                 <th className="table-th">Issued At</th>
                 <th className="table-th">Tanker</th>
+                <th className="table-th">Issuing Point</th>
                 <th className="table-th">Reason</th>
                 <th className="table-th text-right">KM</th>
                 <th className="table-th text-right">Vendor Rate</th>
@@ -155,13 +169,14 @@ export default function NonTripGatePass() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={12}><div className="empty-state">No gate passes in this date range.</div></td></tr>
+                <tr><td colSpan={13}><div className="empty-state">No gate passes in this date range.</div></td></tr>
               )}
               {rows.map(g => (
                 <tr key={g.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="table-td font-bold text-[#0078d4]">NT-{g.id}</td>
                   <td className="table-td whitespace-nowrap">{fmtTs(g.issued_at)}</td>
                   <td className="table-td font-mono font-semibold text-[#005ba3]">{g.tanker_number}</td>
+                  <td className="table-td whitespace-nowrap">{g.delivery_point_name || '—'}</td>
                   <td className="table-td">
                     <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-medium">{g.reason}</span>
                     {g.other_text && <span className="text-gray-500"> — {g.other_text}</span>}
