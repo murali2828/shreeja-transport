@@ -169,4 +169,106 @@ router.post('/non-trip', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/trip-docs/tanker-position — live tanker status/position dashboard.
+// Status per tanker from its LATEST event:
+//   trip cycle:  gate pass → Running · COA → Unloading Point ·
+//                unloading → Cleaning · (next gate pass starts a new cycle)
+//   non-trip GP: Maintainance → maintenance · Tankers without driver →
+//                without_driver · Hot water / RMT / Others → running (out)
+//   no events   → idle
+// Location = delivery point of the tanker's latest trip (else 'Unassigned').
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/tanker-position', authenticate, async (req, res) => {
+  try {
+    const tankers = (await query(
+      `SELECT id, tanker_number, is_active FROM tankers ORDER BY tanker_number`)).rows;
+    const active = tankers.filter(t => t.is_active);
+
+    // Latest trip-cycle prints per tanker: newest gate-pass cycle and its stage.
+    const trips = (await query(`
+      SELECT DISTINCT ON (tp.tanker_id)
+        tp.tanker_id, tp.id AS plan_id, tp.trip_no, dp.name AS delivery_point,
+        (SELECT MIN(printed_at) FROM trip_document_prints WHERE trip_plan_id=tp.id AND doc_type='gate_pass') AS gp_at,
+        (SELECT MIN(printed_at) FROM trip_document_prints WHERE trip_plan_id=tp.id AND doc_type='coa')       AS coa_at,
+        (SELECT MIN(printed_at) FROM trip_document_prints WHERE trip_plan_id=tp.id AND doc_type='unloading') AS unload_at
+      FROM trip_plans tp
+      LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
+      WHERE tp.tanker_id IS NOT NULL AND tp.status NOT IN ('cancelled','deleted')
+        AND EXISTS (SELECT 1 FROM trip_document_prints p WHERE p.trip_plan_id=tp.id)
+      ORDER BY tp.tanker_id,
+        (SELECT MAX(printed_at) FROM trip_document_prints p WHERE p.trip_plan_id=tp.id) DESC`)).rows;
+    const tripBy = Object.fromEntries(trips.map(t => [t.tanker_id, t]));
+
+    // Latest delivery point per tanker (for location even when idle/non-trip).
+    const lastDp = (await query(`
+      SELECT DISTINCT ON (tp.tanker_id) tp.tanker_id, dp.name AS delivery_point
+      FROM trip_plans tp
+      LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
+      WHERE tp.tanker_id IS NOT NULL AND tp.status NOT IN ('cancelled','deleted')
+      ORDER BY tp.tanker_id, tp.plan_for_date DESC, tp.id DESC`)).rows;
+    const dpBy = Object.fromEntries(lastDp.map(t => [t.tanker_id, t.delivery_point]));
+
+    // Latest non-trip gate pass per tanker.
+    const ntgp = (await query(`
+      SELECT DISTINCT ON (tanker_id) tanker_id, reason, other_text, issued_at
+      FROM non_trip_gate_passes
+      ORDER BY tanker_id, issued_at DESC`)).rows;
+    const ntgpBy = Object.fromEntries(ntgp.map(g => [g.tanker_id, g]));
+
+    const STATUSES = ['unloading', 'running', 'cleaning', 'maintenance', 'without_driver', 'idle'];
+    const rows = active.map(t => {
+      const trip = tripBy[t.id];
+      const gp = ntgpBy[t.id];
+
+      // Trip-cycle candidate status + its defining event time
+      let tripStatus = null, tripAt = null;
+      if (trip) {
+        if (trip.unload_at)   { tripStatus = 'cleaning';  tripAt = trip.unload_at; }
+        else if (trip.coa_at) { tripStatus = 'unloading'; tripAt = trip.coa_at; }
+        else if (trip.gp_at)  { tripStatus = 'running';   tripAt = trip.gp_at; }
+      }
+      // Non-trip candidate
+      let ntStatus = null, ntAt = null, ntLabel = null;
+      if (gp) {
+        ntAt = gp.issued_at;
+        ntLabel = gp.reason + (gp.other_text ? ` — ${gp.other_text}` : '');
+        ntStatus = gp.reason === 'Maintainance' ? 'maintenance'
+          : gp.reason === 'Tankers without driver' ? 'without_driver'
+          : 'running';
+      }
+      // Latest event wins
+      let status = 'idle', since = null, detail = null, trip_no = null;
+      if (tripAt && (!ntAt || new Date(tripAt) >= new Date(ntAt))) {
+        status = tripStatus; since = tripAt; trip_no = trip.trip_no;
+        detail = `Trip #${trip.trip_no}`;
+      } else if (ntAt) {
+        status = ntStatus; since = ntAt; detail = ntLabel;
+      }
+      return {
+        tanker_number: t.tanker_number, status, since, detail, trip_no,
+        location: dpBy[t.id] || 'Unassigned',
+      };
+    });
+
+    const locations = {};
+    for (const r of rows) {
+      const loc = locations[r.location] ||= { name: r.location, total: 0, tankers: [] };
+      loc.total++;
+      loc.tankers.push(r);
+      loc[r.status] = (loc[r.status] || 0) + 1;
+    }
+    for (const loc of Object.values(locations))
+      for (const s of STATUSES) loc[s] = loc[s] || 0;
+
+    res.json({
+      total_tankers: tankers.length,
+      active_tankers: active.length,
+      last_updated: new Date().toISOString(),
+      statuses: STATUSES,
+      locations: Object.values(locations).sort((a, b) => b.total - a.total),
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

@@ -36,6 +36,7 @@ import AcknowledgementForm  from './pages/execution/AcknowledgementForm';
 import ClosedTrips          from './pages/execution/ClosedTrips';
 import Approvals            from './pages/execution/Approvals';
 import NonTripGatePass      from './pages/execution/NonTripGatePass';
+import TankerPosition       from './pages/execution/TankerPosition';
 
 // Reports
 import DailyTSReport   from './pages/reports/DailyTSReport';
@@ -128,6 +129,7 @@ function AppRoutes() {
         <Route path="execution"           element={<ExecutionList/>}/>
         <Route path="execution/closed"    element={<ClosedTrips/>}/>
         <Route path="execution/gate-pass" element={<NonTripGatePass/>}/>
+        <Route path="tanker-position"     element={<TankerPosition/>}/>
         <Route path="approvals"           element={<Approvals/>}/>
         <Route path="execution/:id"       element={<ExecutionForm/>}/>
         <Route path="execution/:id/acknowledge" element={<AcknowledgementForm/>}/>

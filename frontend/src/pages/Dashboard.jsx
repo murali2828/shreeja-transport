@@ -5,7 +5,13 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Truck, ClipboardList, Play, CheckSquare, TrendingUp, Zap, Route } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
-import { getPlans, getExecutions, getDistanceSummary } from '../api/index';
+import { getPlans, getExecutions, getDistanceSummary, getTankerPosition } from '../api/index';
+
+// Tanker Position dashboard access: admins + transport incharge/module owner
+export const canSeeTankerPosition = (user) =>
+  user?.role === 'admin' ||
+  ['pp01', 'mahesh.k@shreejamilk.com', 'krithiga.a@shreejamilk.com']
+    .includes(String(user?.user_id || '').toLowerCase());
 
 function StatCard({ icon: Icon, label, value, sub, colorClass, onClick }) {
   return (
@@ -55,6 +61,14 @@ export default function Dashboard() {
   const { data: activeExecs = [] } = useQuery({
     queryKey: ['executions', selectedDate],
     queryFn:  () => getExecutions({ execution_date: selectedDate }).then(r => r.data),
+  });
+
+  const showTankerPos = canSeeTankerPosition(user);
+  const { data: tankerPos } = useQuery({
+    queryKey: ['tanker-position'],
+    queryFn:  () => getTankerPosition().then(r => r.data),
+    enabled:  showTankerPos,
+    refetchInterval: 60_000,
   });
 
   const { data: distSummary } = useQuery({
@@ -112,6 +126,37 @@ export default function Dashboard() {
           sub="trips completed"
           colorClass="stat-card-green" onClick={() => navigate(`/execution/closed?date=${selectedDate}`)}/>
       </div>
+
+      {/* Tanker Position (Level 1) — live status card */}
+      {showTankerPos && (
+        <div onClick={() => navigate('/tanker-position')}
+          className="card card-body cursor-pointer hover:scale-[1.01] transition-transform">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ background: 'rgba(0,120,212,0.12)' }}>
+                <Truck size={18} style={{ color: '#0078d4' }}/>
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-gray-800">Tanker Position</div>
+                <div className="text-xs text-gray-500">
+                  Last updated: {tankerPos ? new Date(tankerPos.last_updated).toLocaleString('en-IN') : '—'} · click for location-wise view
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-6 text-center">
+              <div>
+                <div className="text-2xl font-bold text-[#0078d4]">{tankerPos?.total_tankers ?? '—'}</div>
+                <div className="text-xs text-gray-500">Total Tankers</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-green-600">{tankerPos?.active_tankers ?? '—'}</div>
+                <div className="text-xs text-gray-500">Active Tankers</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Quick actions */}
       {user?.role !== 'executor' && (

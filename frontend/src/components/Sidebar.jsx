@@ -84,6 +84,8 @@ export default function Sidebar({ collapsed = false }) {
           {ni('/execution',        <Play size={15}/>,        'Active Trips')}
           {ni('/execution/closed', <CheckSquare size={15}/>, 'Closed Trips')}
           {ni('/execution/gate-pass', <Play size={15}/>, 'Other Gate Pass')}
+          {(isAdmin || ['pp01','mahesh.k@shreejamilk.com','krithiga.a@shreejamilk.com'].includes(String(user?.user_id || '').toLowerCase()))
+            && ni('/tanker-position', <Truck size={15}/>, 'Tanker Position')}
           {ni('/approvals', <CheckSquare size={15}/>, 'Approvals')}
         </NavSection>
       )}
