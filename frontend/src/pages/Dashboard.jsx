@@ -10,7 +10,7 @@ import { getPlans, getExecutions, getDistanceSummary, getTankerPosition } from '
 // Tanker Position dashboard access: admins + transport incharge/module owner
 export const canSeeTankerPosition = (user) =>
   user?.role === 'admin' ||
-  ['pp01', 'mahesh.k@shreejamilk.com', 'krithiga.a@shreejamilk.com']
+  ['pp01', 'mahesh.k@shreejamilk.com', 'dceo', 'krithiga.a@shreejamilk.com']
     .includes(String(user?.user_id || '').toLowerCase());
 
 function StatCard({ icon: Icon, label, value, sub, colorClass, onClick }) {
