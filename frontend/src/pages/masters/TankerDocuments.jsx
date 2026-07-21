@@ -46,12 +46,15 @@ export default function TankerDocuments() {
   const [inductionFilter, setInductionFilter] = useState('');
   const [tankerSearch, setTankerSearch] = useState('');
   const [showRecipients, setShowRecipients] = useState(false);
-  const [expanded, setExpanded] = useState(() => new Set()); // collapsed by default
-  const toggleExpand = (id) => setExpanded(prev => {
+  const [expanded, setExpanded] = useState(() => new Set());        // tankers, collapsed by default
+  const [expandedVendors, setExpandedVendors] = useState(() => new Set()); // vendors, collapsed by default
+  const toggleSet = (setter) => (id) => setter(prev => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
     return next;
   });
+  const toggleExpand = toggleSet(setExpanded);
+  const toggleVendor = toggleSet(setExpandedVendors);
 
   const { data: docs = [], isLoading } = useQuery({
     queryKey: ['documents'],
@@ -84,19 +87,30 @@ export default function TankerDocuments() {
     });
   }, [docs, search, typeFilter, statusFilter, inductionFilter]);
 
-  // One group per tanker — all its documents together
-  const grouped = useMemo(() => {
-    const map = new Map();
+  // Vendor → tankers → documents (a vendor can have multiple tankers)
+  const groupedVendors = useMemo(() => {
+    const tankerMap = new Map();
     for (const d of filtered) {
-      const g = map.get(d.tanker_id) || {
+      const g = tankerMap.get(d.tanker_id) || {
         tanker_id: d.tanker_id, tanker_number: d.tanker_number,
         induction_type: d.induction_type, vendor_code: d.vendor_code,
         vendor_name: d.vendor_name, docs: [],
       };
       g.docs.push(d);
-      map.set(d.tanker_id, g);
+      tankerMap.set(d.tanker_id, g);
     }
-    return [...map.values()].sort((a, b) => String(a.tanker_number).localeCompare(String(b.tanker_number)));
+    const vendorMap = new Map();
+    for (const t of tankerMap.values()) {
+      const key = `${t.vendor_code || ''}|${t.vendor_name || ''}` || 'none';
+      const v = vendorMap.get(key) || {
+        key, vendor_code: t.vendor_code, vendor_name: t.vendor_name, tankers: [],
+      };
+      v.tankers.push(t);
+      vendorMap.set(key, v);
+    }
+    const vendors = [...vendorMap.values()];
+    for (const v of vendors) v.tankers.sort((a, b) => String(a.tanker_number).localeCompare(String(b.tanker_number)));
+    return vendors.sort((a, b) => String(a.vendor_name || 'zzz').localeCompare(String(b.vendor_name || 'zzz')));
   }, [filtered]);
 
   const openAdd  = () => { setForm(EMPTY); setFile(null); setTankerSearch(''); setModal('add'); };
@@ -230,17 +244,43 @@ export default function TankerDocuments() {
             </thead>
             <tbody>
               {isLoading && <LoadingState/>}
-              {!isLoading && grouped.length === 0 && <EmptyState message="No documents found."/>}
-              {grouped.map(g => {
+              {!isLoading && groupedVendors.length === 0 && <EmptyState message="No documents found."/>}
+              {groupedVendors.map(v => {
+                const vDocs     = v.tankers.flatMap(t => t.docs);
+                const vExpired  = vDocs.filter(d => d.status === 'expired').length;
+                const vExpiring = vDocs.filter(d => d.status === 'expiring').length;
+                const vOpen     = expandedVendors.has(v.key);
+                return [
+                  // Vendor header row — a vendor can have multiple tankers
+                  <tr key={`v-${v.key}`} onClick={() => toggleVendor(v.key)}
+                    className="bg-[#dbeafe] border-y border-blue-200 cursor-pointer select-none hover:bg-blue-200/60">
+                    <td className="table-td" colSpan={7}>
+                      <div className="flex flex-wrap items-center gap-2.5 py-0.5">
+                        {vOpen ? <ChevronDown size={15} className="text-[#003a6b]"/> : <ChevronRight size={15} className="text-[#003a6b]"/>}
+                        <span className="font-bold text-[#003a6b]">
+                          {v.vendor_code || v.vendor_name
+                            ? <>{v.vendor_code && <span className="font-mono">{v.vendor_code}</span>}{v.vendor_code && v.vendor_name ? ' — ' : ''}{v.vendor_name || ''}</>
+                            : 'No vendor'}
+                        </span>
+                        <span className="ml-auto flex items-center gap-1.5 text-[11px]">
+                          <span className="px-2 py-0.5 rounded-full bg-white text-gray-600 font-medium">{v.tankers.length} tanker{v.tankers.length > 1 ? 's' : ''}</span>
+                          <span className="px-2 py-0.5 rounded-full bg-white text-gray-600 font-medium">{vDocs.length} document{vDocs.length > 1 ? 's' : ''}</span>
+                          {vExpired > 0 && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">{vExpired} expired</span>}
+                          {vExpiring > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{vExpiring} expiring</span>}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>,
+                  ...(vOpen ? v.tankers : []).flatMap(g => {
                 const expired  = g.docs.filter(d => d.status === 'expired').length;
                 const expiring = g.docs.filter(d => d.status === 'expiring').length;
                 const isOpen   = expanded.has(g.tanker_id);
                 return [
-                  // Tanker header row — click to expand/collapse its documents
+                  // Tanker row — click to expand/collapse its documents
                   <tr key={`t-${g.tanker_id}`} onClick={() => toggleExpand(g.tanker_id)}
                     className="bg-blue-50/70 border-y border-blue-100 cursor-pointer select-none hover:bg-blue-100/70">
                     <td className="table-td" colSpan={7}>
-                      <div className="flex flex-wrap items-center gap-2.5 py-0.5">
+                      <div className="flex flex-wrap items-center gap-2.5 py-0.5 pl-5">
                         {isOpen ? <ChevronDown size={14} className="text-[#003a6b]"/> : <ChevronRight size={14} className="text-[#003a6b]"/>}
                         <span className="font-mono font-bold text-[#003a6b]">{g.tanker_number}</span>
                         {g.induction_type && (
@@ -248,11 +288,6 @@ export default function TankerDocuments() {
                             {g.induction_type}
                           </span>
                         )}
-                        <span className="text-xs text-gray-600">
-                          {g.vendor_code || g.vendor_name
-                            ? <>{g.vendor_code && <span className="font-mono">{g.vendor_code}</span>}{g.vendor_code && g.vendor_name ? ' — ' : ''}{g.vendor_name || ''}</>
-                            : 'No vendor'}
-                        </span>
                         <span className="ml-auto flex items-center gap-1.5 text-[11px]">
                           <span className="px-2 py-0.5 rounded-full bg-white text-gray-600 font-medium">{g.docs.length} document{g.docs.length > 1 ? 's' : ''}</span>
                           {expired > 0 && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">{expired} expired</span>}
@@ -292,6 +327,8 @@ export default function TankerDocuments() {
                       </td>
                     </tr>
                   )),
+                ];
+              }),
                 ];
               })}
             </tbody>
