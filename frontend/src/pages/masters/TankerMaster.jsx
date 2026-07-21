@@ -160,6 +160,9 @@ export default function TankerMaster() {
               <th className="table-th text-right cursor-pointer select-none" onClick={() => toggleSort('rate_per_km_p2p')}>
                 ₹/km P2P <SortIcon col="rate_per_km_p2p" sortCol={sortCol} sortDir={sortDir}/>
               </th>
+              <th className="table-th">Type</th>
+              <th className="table-th">Validity Start</th>
+              <th className="table-th">Validity End</th>
               <th className="table-th">Status</th>
               <th className="table-th w-24">Actions</th>
             </tr>
@@ -182,6 +185,13 @@ export default function TankerMaster() {
                 <td className="table-td text-right font-medium">{parseInt(t.capacity_litres).toLocaleString()}</td>
                 <td className="table-td text-right">{t.rate_per_km_bmcu ? `₹${parseFloat(t.rate_per_km_bmcu).toFixed(2)}` : '—'}</td>
                 <td className="table-td text-right">{t.rate_per_km_p2p ? `₹${parseFloat(t.rate_per_km_p2p).toFixed(2)}` : '—'}</td>
+                <td className="table-td">
+                  {t.induction_type
+                    ? <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${t.induction_type === 'Temporary' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700'}`}>{t.induction_type}</span>
+                    : <span className="text-xs text-gray-300">—</span>}
+                </td>
+                <td className="table-td text-xs text-gray-600 whitespace-nowrap">{t.validity_start ? String(t.validity_start).slice(0,10) : '—'}</td>
+                <td className="table-td text-xs text-gray-600 whitespace-nowrap">{t.validity_end ? String(t.validity_end).slice(0,10) : '—'}</td>
                 <td className="table-td"><ActiveBadge active={t.is_active}/></td>
                 <td className="table-td">
                   <div className="flex gap-1">
