@@ -1,7 +1,7 @@
 // frontend/src/pages/masters/TankerDocuments.jsx
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Search, Bell, Trash2, Send, RefreshCw, Paperclip, Download } from 'lucide-react';
+import { Search, Bell, Trash2, Send, RefreshCw, Paperclip, Download, ChevronDown, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   getDocuments, createDocument, updateDocument, deleteDocument, getTankers,
@@ -46,6 +46,12 @@ export default function TankerDocuments() {
   const [inductionFilter, setInductionFilter] = useState('');
   const [tankerSearch, setTankerSearch] = useState('');
   const [showRecipients, setShowRecipients] = useState(false);
+  const [expanded, setExpanded] = useState(() => new Set()); // collapsed by default
+  const toggleExpand = (id) => setExpanded(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
 
   const { data: docs = [], isLoading } = useQuery({
     queryKey: ['documents'],
@@ -228,11 +234,14 @@ export default function TankerDocuments() {
               {grouped.map(g => {
                 const expired  = g.docs.filter(d => d.status === 'expired').length;
                 const expiring = g.docs.filter(d => d.status === 'expiring').length;
+                const isOpen   = expanded.has(g.tanker_id);
                 return [
-                  // Tanker header row — all its documents follow beneath
-                  <tr key={`t-${g.tanker_id}`} className="bg-blue-50/70 border-y border-blue-100">
+                  // Tanker header row — click to expand/collapse its documents
+                  <tr key={`t-${g.tanker_id}`} onClick={() => toggleExpand(g.tanker_id)}
+                    className="bg-blue-50/70 border-y border-blue-100 cursor-pointer select-none hover:bg-blue-100/70">
                     <td className="table-td" colSpan={7}>
                       <div className="flex flex-wrap items-center gap-2.5 py-0.5">
+                        {isOpen ? <ChevronDown size={14} className="text-[#003a6b]"/> : <ChevronRight size={14} className="text-[#003a6b]"/>}
                         <span className="font-mono font-bold text-[#003a6b]">{g.tanker_number}</span>
                         {g.induction_type && (
                           <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${g.induction_type === 'Temporary' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700'}`}>
@@ -252,7 +261,7 @@ export default function TankerDocuments() {
                       </div>
                     </td>
                   </tr>,
-                  ...g.docs.map(d => (
+                  ...(isOpen ? g.docs : []).map(d => (
                     <tr key={d.id} className="hover:bg-gray-50 border-b border-gray-50">
                       <td className="table-td font-medium pl-6">
                         {d.doc_type}{d.doc_name ? <span className="text-gray-500"> — {d.doc_name}</span> : null}
