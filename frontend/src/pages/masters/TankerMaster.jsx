@@ -73,6 +73,14 @@ export default function TankerMaster() {
 
   const activeCount   = tankers.filter(t => t.is_active).length;
   const inactiveCount = tankers.filter(t => !t.is_active).length;
+  // Capacity-wise availability of ACTIVE tankers, largest first
+  const capacityCounts = Object.entries(
+    tankers.filter(t => t.is_active).reduce((acc, t) => {
+      const cap = parseInt(t.capacity_litres, 10) || 0;
+      acc[cap] = (acc[cap] || 0) + 1;
+      return acc;
+    }, {})
+  ).sort((a, b) => b[0] - a[0]);
 
   const filtered = tankers.filter(t => {
     if (statusFilter === 'active' && !t.is_active) return false;
@@ -103,6 +111,14 @@ export default function TankerMaster() {
             {(search || statusFilter !== 'active') && (
               <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-600 text-xs font-medium">{filtered.length} shown</span>
             )}
+          </div>
+          {/* Capacity-wise availability of active tankers */}
+          <div className="flex gap-1.5 mt-1.5 flex-wrap">
+            {capacityCounts.map(([cap, n]) => (
+              <span key={cap} className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 text-[11px] font-medium">
+                {parseInt(cap, 10).toLocaleString('en-IN')} L × {n}
+              </span>
+            ))}
           </div>
         </div>
         <div className="flex items-center gap-2">
