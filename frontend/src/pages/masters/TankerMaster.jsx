@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { getTankers, createTanker, updateTanker, deleteTanker, getVendors } from '../../api/index';
 import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
 
-const EMPTY = { tanker_number: '', compartments: '', capacity_litres: '', per_km_rate: '', vendor_id: '', vendor_code: '', vendor_name: '', rate_per_km_bmcu: '', rate_per_km_p2p: '', is_active: true };
+const EMPTY = { tanker_number: '', compartments: '', capacity_litres: '', per_km_rate: '', vendor_id: '', vendor_code: '', vendor_name: '', rate_per_km_bmcu: '', rate_per_km_p2p: '', induction_type: '', validity_start: '', validity_end: '', is_active: true };
 
 function SortIcon({ col, sortCol, sortDir }) {
   if (sortCol !== col) return <span className="text-gray-300 ml-0.5">⇅</span>;
@@ -37,7 +37,13 @@ export default function TankerMaster() {
   });
 
   const openAdd  = () => { setForm(EMPTY); setModal('add'); };
-  const openEdit = (row) => { setForm({ ...row }); setModal(row); };
+  const openEdit = (row) => {
+    setForm({ ...row,
+      validity_start: row.validity_start ? String(row.validity_start).slice(0, 10) : '',
+      validity_end:   row.validity_end   ? String(row.validity_end).slice(0, 10)   : '',
+      induction_type: row.induction_type || '' });
+    setModal(row);
+  };
   const close    = () => setModal(null);
   const set      = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -45,6 +51,8 @@ export default function TankerMaster() {
     mutationFn: () => {
       if (!form.tanker_number || !form.capacity_litres)
         throw new Error('Tanker number and capacity required');
+      if (form.induction_type && (!form.validity_start || !form.validity_end))
+        throw new Error(`Validity start and end dates are required for a ${form.induction_type} tanker`);
       return modal === 'add'
         ? createTanker(form)
         : updateTanker(modal.id, form);
@@ -231,6 +239,27 @@ export default function TankerMaster() {
                 <input type="number" min="0" step="0.01" className="input w-full" placeholder="e.g. 38.00"
                   value={form.rate_per_km_p2p} onChange={e => set('rate_per_km_p2p', e.target.value)}/>
               </Field>
+              <Field label="Induction Type">
+                <select className="input w-full" value={form.induction_type || ''}
+                  onChange={e => set('induction_type', e.target.value)}>
+                  <option value="">— select —</option>
+                  <option value="Temporary">Temporary</option>
+                  <option value="Permanent">Permanent</option>
+                </select>
+              </Field>
+              <div/>
+              {form.induction_type && (
+                <>
+                  <Field label="Validity Start Date" required>
+                    <input type="date" className="input w-full" value={form.validity_start}
+                      onChange={e => set('validity_start', e.target.value)}/>
+                  </Field>
+                  <Field label="Validity End Date" required>
+                    <input type="date" className="input w-full" value={form.validity_end}
+                      onChange={e => set('validity_end', e.target.value)}/>
+                  </Field>
+                </>
+              )}
             </div>
             {modal !== 'add' && (
               <Field label="Status">

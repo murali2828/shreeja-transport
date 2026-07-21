@@ -17,7 +17,10 @@ catch (e) { console.error('Failed to create upload dir:', e.message); }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-const DOC_TYPES = ['RC', 'Fitness Certificate', 'Pollution (PUC)', 'Insurance', 'Permit', 'Agreement', 'Other'];
+const DOC_TYPES = ['RC', 'Fitness Certificate', 'Pollution (PUC)', 'FSSAI Number',
+  'Milk Insurance', 'Tanker Insurance', 'State Permit', 'National Permit', 'Agreement', 'Other',
+  // legacy values kept valid for existing rows
+  'Insurance', 'Permit'];
 
 // ─── Schema (runs once at startup) ────────────────────────────────────────────
 (async () => {
@@ -106,7 +109,9 @@ router.get('/', authenticate, async (req, res) => {
              d.issue_date, d.expiry_date, d.remarks, d.is_active,
              d.created_at, d.updated_at,
              (d.file_path IS NOT NULL OR d.file_name IS NOT NULL) AS has_file, d.file_name, d.file_mime, d.file_size,
-             t.tanker_number, t.vendor_id, v.vendor_name,
+             t.tanker_number, t.vendor_id, t.induction_type,
+             COALESCE(v.vendor_code, t.vendor_code) AS vendor_code,
+             COALESCE(v.vendor_name, t.vendor_name) AS vendor_name,
              (d.expiry_date - CURRENT_DATE) AS days_left
       FROM tanker_documents d
       JOIN tankers t ON t.id = d.tanker_id

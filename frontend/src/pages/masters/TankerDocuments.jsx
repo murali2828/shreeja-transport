@@ -11,7 +11,8 @@ import {
 import { Modal, Field, SaveButton, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
 import { useAuth } from '../../hooks/useAuth';
 
-const DOC_TYPES = ['RC', 'Fitness Certificate', 'Pollution (PUC)', 'Insurance', 'Permit', 'Agreement', 'Other'];
+const DOC_TYPES = ['RC', 'Fitness Certificate', 'Pollution (PUC)', 'FSSAI Number',
+  'Milk Insurance', 'Tanker Insurance', 'State Permit', 'National Permit', 'Agreement', 'Other'];
 const EMPTY = { tanker_id: '', doc_type: 'RC', doc_name: '', doc_number: '', issue_date: '', expiry_date: '', remarks: '' };
 
 const STATUS_STYLE = {
@@ -42,6 +43,8 @@ export default function TankerDocuments() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter]     = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [inductionFilter, setInductionFilter] = useState('');
+  const [tankerSearch, setTankerSearch] = useState('');
   const [showRecipients, setShowRecipients] = useState(false);
 
   const { data: docs = [], isLoading } = useQuery({
@@ -54,9 +57,11 @@ export default function TankerDocuments() {
   });
 
   const counts = useMemo(() => ({
-    expired:  docs.filter(d => d.status === 'expired').length,
-    expiring: docs.filter(d => d.status === 'expiring').length,
-    valid:    docs.filter(d => d.status === 'valid').length,
+    expired:   docs.filter(d => d.status === 'expired').length,
+    expiring:  docs.filter(d => d.status === 'expiring').length,
+    valid:     docs.filter(d => d.status === 'valid').length,
+    temporary: docs.filter(d => d.induction_type === 'Temporary').length,
+    permanent: docs.filter(d => d.induction_type === 'Permanent').length,
   }), [docs]);
 
   const filtered = useMemo(() => {
@@ -64,14 +69,16 @@ export default function TankerDocuments() {
     return docs.filter(d => {
       if (typeFilter && d.doc_type !== typeFilter) return false;
       if (statusFilter && d.status !== statusFilter) return false;
+      if (inductionFilter && d.induction_type !== inductionFilter) return false;
       if (!q) return true;
       return d.tanker_number?.toLowerCase().includes(q) ||
              d.doc_number?.toLowerCase().includes(q) ||
-             d.vendor_name?.toLowerCase().includes(q);
+             d.vendor_name?.toLowerCase().includes(q) ||
+             d.vendor_code?.toLowerCase().includes(q);
     });
-  }, [docs, search, typeFilter, statusFilter]);
+  }, [docs, search, typeFilter, statusFilter, inductionFilter]);
 
-  const openAdd  = () => { setForm(EMPTY); setFile(null); setModal('add'); };
+  const openAdd  = () => { setForm(EMPTY); setFile(null); setTankerSearch(''); setModal('add'); };
   const openEdit = (d) => {
     setForm({
       tanker_id: d.tanker_id, doc_type: d.doc_type, doc_name: d.doc_name || '',
@@ -79,6 +86,7 @@ export default function TankerDocuments() {
       expiry_date: d.expiry_date ? d.expiry_date.slice(0,10) : '', remarks: d.remarks || '',
     });
     setFile(null);
+    setTankerSearch(d.tanker_number || '');
     setModal(d);
   };
   const close = () => { setFile(null); setModal(null); };
@@ -156,6 +164,8 @@ export default function TankerDocuments() {
         <span className="px-3 py-1 rounded-full bg-red-100 text-red-700 font-medium">{counts.expired} Expired</span>
         <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-700 font-medium">{counts.expiring} Expiring (≤30d)</span>
         <span className="px-3 py-1 rounded-full bg-green-100 text-green-700 font-medium">{counts.valid} Valid</span>
+        <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-700 font-medium">{counts.temporary} Temporary</span>
+        <span className="px-3 py-1 rounded-full bg-violet-100 text-violet-700 font-medium">{counts.permanent} Permanent</span>
       </div>
 
       <div className="card p-3 flex flex-wrap gap-3 items-center">
@@ -175,6 +185,11 @@ export default function TankerDocuments() {
           <option value="valid">Valid</option>
           <option value="no_expiry">No expiry</option>
         </select>
+        <select className="input py-1.5 text-sm w-36" value={inductionFilter} onChange={e => setInductionFilter(e.target.value)}>
+          <option value="">All tanker types</option>
+          <option value="Temporary">Temporary</option>
+          <option value="Permanent">Permanent</option>
+        </select>
         <span className="ml-auto text-xs text-gray-400">{filtered.length} of {docs.length}</span>
       </div>
 
@@ -184,6 +199,7 @@ export default function TankerDocuments() {
             <thead className="sticky top-0 bg-gray-50 border-b">
               <tr>
                 <th className="table-th">Tanker</th>
+                <th className="table-th">Type</th>
                 <th className="table-th">Vendor</th>
                 <th className="table-th">Document</th>
                 <th className="table-th">Number</th>
@@ -200,7 +216,16 @@ export default function TankerDocuments() {
               {filtered.map(d => (
                 <tr key={d.id} className="hover:bg-gray-50 border-b border-gray-50">
                   <td className="table-td font-mono font-semibold text-[#005ba3]">{d.tanker_number}</td>
-                  <td className="table-td text-gray-600 text-xs">{d.vendor_name || '—'}</td>
+                  <td className="table-td">
+                    {d.induction_type
+                      ? <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${d.induction_type === 'Temporary' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700'}`}>{d.induction_type}</span>
+                      : <span className="text-xs text-gray-300">—</span>}
+                  </td>
+                  <td className="table-td text-gray-600 text-xs">
+                    {d.vendor_code || d.vendor_name
+                      ? <>{d.vendor_code && <span className="font-mono">{d.vendor_code}</span>}{d.vendor_code && d.vendor_name ? ' — ' : ''}{d.vendor_name || ''}</>
+                      : '—'}
+                  </td>
                   <td className="table-td font-medium">
                     {d.doc_type}{d.doc_name ? <span className="text-gray-500"> — {d.doc_name}</span> : null}
                   </td>
@@ -247,12 +272,18 @@ export default function TankerDocuments() {
           }>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Tanker" required>
-              <select className="input w-full" value={form.tanker_id}
-                disabled={modal !== 'add'}
-                onChange={e => set('tanker_id', e.target.value)}>
-                <option value="">— Select tanker —</option>
-                {tankers.map(t => <option key={t.id} value={t.id}>{t.tanker_number}</option>)}
-              </select>
+              <input className="input w-full" list="doc-tankers" disabled={modal !== 'add'}
+                placeholder="Type part of tanker number…"
+                value={tankerSearch}
+                onChange={e => {
+                  const v = e.target.value;
+                  setTankerSearch(v);
+                  const t = tankers.find(x => x.tanker_number.toLowerCase() === v.trim().toLowerCase());
+                  set('tanker_id', t ? t.id : '');
+                }}/>
+              <datalist id="doc-tankers">
+                {tankers.map(t => <option key={t.id} value={t.tanker_number}/>)}
+              </datalist>
             </Field>
             <Field label="Document Type" required>
               <select className="input w-full" value={form.doc_type}
