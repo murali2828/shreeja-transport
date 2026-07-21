@@ -146,7 +146,7 @@ router.get('/expiring', authenticate, async (req, res) => {
 });
 
 // POST /api/documents
-router.post('/', authenticate, authorize('admin','planner'), async (req, res) => {
+router.post('/', authenticate, authorize('admin','planner','executor'), async (req, res) => {
   const { tanker_id, doc_type, doc_name, doc_number, issue_date, expiry_date, remarks } = req.body;
   if (!tanker_id || !doc_type) return res.status(400).json({ error: 'tanker_id and doc_type required' });
   if (!DOC_TYPES.includes(doc_type)) return res.status(400).json({ error: 'Invalid doc_type' });
@@ -162,7 +162,7 @@ router.post('/', authenticate, authorize('admin','planner'), async (req, res) =>
 });
 
 // PUT /api/documents/:id
-router.put('/:id', authenticate, authorize('admin','planner'), async (req, res) => {
+router.put('/:id', authenticate, authorize('admin','planner','executor'), async (req, res) => {
   const { doc_type, doc_name, doc_number, issue_date, expiry_date, remarks } = req.body;
   if (doc_type && !DOC_TYPES.includes(doc_type)) return res.status(400).json({ error: 'Invalid doc_type' });
   try {
@@ -192,7 +192,7 @@ router.delete('/:id', authenticate, authorize('admin','planner'), async (req, re
 
 // ─── File attachment (stored in DB) ───────────────────────────────────────────
 // POST /api/documents/:id/file  — upload/replace the scanned document (stored on disk)
-router.post('/:id/file', authenticate, authorize('admin','planner'), upload.single('file'), async (req, res) => {
+router.post('/:id/file', authenticate, authorize('admin','planner','executor'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     // Ensure the document exists and grab any previous on-disk file to clean up.

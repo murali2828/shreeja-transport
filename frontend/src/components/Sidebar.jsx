@@ -39,8 +39,9 @@ function NavSection({ label, children, defaultOpen = true }) {
 export default function Sidebar({ collapsed = false }) {
   const { user } = useAuth();
   const isAdmin   = user?.role === 'admin';
-  const isPlanner = user?.role === 'planner' || isAdmin;
-  const isViewer  = user?.role === 'viewer';
+  const isPlanner  = user?.role === 'planner' || isAdmin;
+  const isViewer   = user?.role === 'viewer';
+  const isExecutor = user?.role === 'executor';
 
   const ni = (to, icon, label, end) =>
     <NavItem to={to} end={end} icon={icon} label={label} collapsed={collapsed}/>;
@@ -76,6 +77,13 @@ export default function Sidebar({ collapsed = false }) {
           {ni('/planning',          <ClipboardList size={15}/>, 'Trip Plans')}
           {ni('/planning/optimize', <Zap size={15}/>,           'Route Optimizer')}
           {ni('/planning/deleted',  <Trash2 size={15}/>,        'Deleted Plans')}
+        </NavSection>
+      )}
+
+      {/* Execution team: document upload access */}
+      {isExecutor && (
+        <NavSection label={collapsed ? '' : 'Masters'}>
+          {ni('/masters/documents', <FileText size={15}/>, 'Tanker Documents')}
         </NavSection>
       )}
 

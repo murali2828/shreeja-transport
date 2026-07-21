@@ -96,7 +96,7 @@ function AppRoutes() {
           <ProtectedRoute roles={['admin','planner']}><VendorMaster/></ProtectedRoute>
         }/>
         <Route path="masters/documents" element={
-          <ProtectedRoute roles={['admin','planner']}><TankerDocuments/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','planner','executor']}><TankerDocuments/></ProtectedRoute>
         }/>
         <Route path="masters/users" element={
           <ProtectedRoute roles={['admin']}><UserManagement/></ProtectedRoute>
