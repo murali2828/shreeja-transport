@@ -78,6 +78,21 @@ export default function TankerDocuments() {
     });
   }, [docs, search, typeFilter, statusFilter, inductionFilter]);
 
+  // One group per tanker — all its documents together
+  const grouped = useMemo(() => {
+    const map = new Map();
+    for (const d of filtered) {
+      const g = map.get(d.tanker_id) || {
+        tanker_id: d.tanker_id, tanker_number: d.tanker_number,
+        induction_type: d.induction_type, vendor_code: d.vendor_code,
+        vendor_name: d.vendor_name, docs: [],
+      };
+      g.docs.push(d);
+      map.set(d.tanker_id, g);
+    }
+    return [...map.values()].sort((a, b) => String(a.tanker_number).localeCompare(String(b.tanker_number)));
+  }, [filtered]);
+
   const openAdd  = () => { setForm(EMPTY); setFile(null); setTankerSearch(''); setModal('add'); };
   const openEdit = (d) => {
     setForm({
@@ -196,11 +211,8 @@ export default function TankerDocuments() {
       <div className="card overflow-hidden">
         <div className="overflow-x-auto max-h-[60vh]">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-gray-50 border-b">
+            <thead className="sticky top-0 bg-gray-50 border-b z-10">
               <tr>
-                <th className="table-th">Tanker</th>
-                <th className="table-th">Type</th>
-                <th className="table-th">Vendor</th>
                 <th className="table-th">Document</th>
                 <th className="table-th">Number</th>
                 <th className="table-th">Issue / Start</th>
@@ -212,49 +224,67 @@ export default function TankerDocuments() {
             </thead>
             <tbody>
               {isLoading && <LoadingState/>}
-              {!isLoading && filtered.length === 0 && <EmptyState message="No documents found."/>}
-              {filtered.map(d => (
-                <tr key={d.id} className="hover:bg-gray-50 border-b border-gray-50">
-                  <td className="table-td font-mono font-semibold text-[#005ba3]">{d.tanker_number}</td>
-                  <td className="table-td">
-                    {d.induction_type
-                      ? <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${d.induction_type === 'Temporary' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700'}`}>{d.induction_type}</span>
-                      : <span className="text-xs text-gray-300">—</span>}
-                  </td>
-                  <td className="table-td text-gray-600 text-xs">
-                    {d.vendor_code || d.vendor_name
-                      ? <>{d.vendor_code && <span className="font-mono">{d.vendor_code}</span>}{d.vendor_code && d.vendor_name ? ' — ' : ''}{d.vendor_name || ''}</>
-                      : '—'}
-                  </td>
-                  <td className="table-td font-medium">
-                    {d.doc_type}{d.doc_name ? <span className="text-gray-500"> — {d.doc_name}</span> : null}
-                  </td>
-                  <td className="table-td font-mono text-xs text-gray-600">{d.doc_number || '—'}</td>
-                  <td className="table-td text-gray-600 text-xs">{d.issue_date ? d.issue_date.slice(0,10) : '—'}</td>
-                  <td className="table-td text-gray-600 text-xs">{d.expiry_date ? d.expiry_date.slice(0,10) : '—'}</td>
-                  <td className="table-td">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[d.status]}`}>
-                      {STATUS_LABEL[d.status]}
-                    </span>
-                    <span className="ml-1.5 text-[11px] text-gray-400">{daysText(d)}</span>
-                  </td>
-                  <td className="table-td">
-                    {d.has_file ? (
-                      <button onClick={() => downloadDocumentFile(d.id, d.file_name)}
-                        className="inline-flex items-center gap-1 text-xs text-[#0078d4] hover:underline" title={d.file_name}>
-                        <Download size={12}/> View
-                      </button>
-                    ) : <span className="text-xs text-gray-300">—</span>}
-                  </td>
-                  <td className="table-td">
-                    <div className="flex gap-1">
-                      <button onClick={() => openEdit(d)} className="btn-secondary btn-sm p-1.5">✏</button>
-                      <button onClick={() => { if (window.confirm('Remove this document?')) deleteMut.mutate(d.id); }}
-                        className="btn-danger btn-sm p-1.5"><Trash2 size={12}/></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {!isLoading && grouped.length === 0 && <EmptyState message="No documents found."/>}
+              {grouped.map(g => {
+                const expired  = g.docs.filter(d => d.status === 'expired').length;
+                const expiring = g.docs.filter(d => d.status === 'expiring').length;
+                return [
+                  // Tanker header row — all its documents follow beneath
+                  <tr key={`t-${g.tanker_id}`} className="bg-blue-50/70 border-y border-blue-100">
+                    <td className="table-td" colSpan={7}>
+                      <div className="flex flex-wrap items-center gap-2.5 py-0.5">
+                        <span className="font-mono font-bold text-[#003a6b]">{g.tanker_number}</span>
+                        {g.induction_type && (
+                          <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${g.induction_type === 'Temporary' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700'}`}>
+                            {g.induction_type}
+                          </span>
+                        )}
+                        <span className="text-xs text-gray-600">
+                          {g.vendor_code || g.vendor_name
+                            ? <>{g.vendor_code && <span className="font-mono">{g.vendor_code}</span>}{g.vendor_code && g.vendor_name ? ' — ' : ''}{g.vendor_name || ''}</>
+                            : 'No vendor'}
+                        </span>
+                        <span className="ml-auto flex items-center gap-1.5 text-[11px]">
+                          <span className="px-2 py-0.5 rounded-full bg-white text-gray-600 font-medium">{g.docs.length} document{g.docs.length > 1 ? 's' : ''}</span>
+                          {expired > 0 && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">{expired} expired</span>}
+                          {expiring > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{expiring} expiring</span>}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>,
+                  ...g.docs.map(d => (
+                    <tr key={d.id} className="hover:bg-gray-50 border-b border-gray-50">
+                      <td className="table-td font-medium pl-6">
+                        {d.doc_type}{d.doc_name ? <span className="text-gray-500"> — {d.doc_name}</span> : null}
+                      </td>
+                      <td className="table-td font-mono text-xs text-gray-600">{d.doc_number || '—'}</td>
+                      <td className="table-td text-gray-600 text-xs">{d.issue_date ? d.issue_date.slice(0,10) : '—'}</td>
+                      <td className="table-td text-gray-600 text-xs">{d.expiry_date ? d.expiry_date.slice(0,10) : '—'}</td>
+                      <td className="table-td">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[d.status]}`}>
+                          {STATUS_LABEL[d.status]}
+                        </span>
+                        <span className="ml-1.5 text-[11px] text-gray-400">{daysText(d)}</span>
+                      </td>
+                      <td className="table-td">
+                        {d.has_file ? (
+                          <button onClick={() => downloadDocumentFile(d.id, d.file_name)}
+                            className="inline-flex items-center gap-1 text-xs text-[#0078d4] hover:underline" title={d.file_name}>
+                            <Download size={12}/> View
+                          </button>
+                        ) : <span className="text-xs text-gray-300">—</span>}
+                      </td>
+                      <td className="table-td">
+                        <div className="flex gap-1">
+                          <button onClick={() => openEdit(d)} className="btn-secondary btn-sm p-1.5">✏</button>
+                          <button onClick={() => { if (window.confirm('Remove this document?')) deleteMut.mutate(d.id); }}
+                            className="btn-danger btn-sm p-1.5"><Trash2 size={12}/></button>
+                        </div>
+                      </td>
+                    </tr>
+                  )),
+                ];
+              })}
             </tbody>
           </table>
         </div>
