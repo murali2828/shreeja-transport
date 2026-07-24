@@ -395,7 +395,9 @@ router.delete('/email-config/:id', authenticate, authorize('admin'), async (req,
 router.get('/template/download', authenticate, async (req, res) => {
   try {
     const tankers    = await query('SELECT tanker_number, capacity_litres FROM tankers WHERE is_active=TRUE ORDER BY tanker_number');
-    const bmcus      = await query('SELECT bmcu_code, bmcu_name FROM bmcus WHERE is_active=TRUE ORDER BY bmcu_code');
+    // Sorted by NAME — required for the prefix-search dropdown (OFFSET over a
+    // contiguous block of names sharing the typed prefix).
+    const bmcus      = await query('SELECT bmcu_code, bmcu_name FROM bmcus WHERE is_active=TRUE ORDER BY bmcu_name');
     const routes     = await query('SELECT route_name FROM route_masters WHERE is_active=TRUE ORDER BY route_name');
     const startPts   = await query('SELECT name FROM starting_points WHERE is_active=TRUE ORDER BY name');
     const delivPts   = await query('SELECT name FROM delivery_points ORDER BY name');
@@ -447,7 +449,7 @@ router.get('/template/download', authenticate, async (req, res) => {
     // Row 2: instruction
     ws.mergeCells('A2:O2');
     const instrCell = ws.getCell('A2');
-    instrCell.value = 'TRIP HEADER: fill A–F and L–O. BMCU rows: select Plant Name from dropdown col G (searchable) → Code auto-fills in col H. Fill cols I–K. Delete sample rows 4–8 before uploading.';
+    instrCell.value = 'TRIP HEADER: fill A–F and L–O. BMCU rows (col G): TYPE the first letters of the plant name, then open the dropdown — only matching plants are listed (empty cell shows all). Code auto-fills in col H. Fill cols I–K. Delete sample rows 4–8 before uploading.';
     instrCell.font  = { italic: true, size: 9, color: { argb: 'FF595959' } };
     instrCell.alignment = { wrapText: true };
     ws.getRow(2).height = 28;
@@ -527,11 +529,15 @@ router.get('/template/download', authenticate, async (req, res) => {
         errorTitle: 'Delivery point not found', error: 'Select a delivery point from the list.'
       });
     }
-    // Col G: BMCU name dropdown (searchable by name)
+    // Col G: BMCU name dropdown with PREFIX SEARCH — type the first letters in
+    // the cell, then open the dropdown: only plants starting with those letters
+    // are listed (empty cell → full list). Relies on BMCUs!$B being sorted by
+    // name; relative G4 adjusts per row across the applied range.
     if (bmcuCount > 0) {
+      const nameCol = `BMCUs!$B$2:$B$${bmcuCount + 1}`;
       ws.dataValidations.add('G4:G2000', {
         type: 'list', allowBlank: true,
-        formulae: [`BMCUs!$B$2:$B$${bmcuCount + 1}`],
+        formulae: [`OFFSET(BMCUs!$B$2,MATCH(G4&"*",${nameCol},0)-1,0,COUNTIF(${nameCol},G4&"*"),1)`],
         showErrorMessage: false
       });
     }
