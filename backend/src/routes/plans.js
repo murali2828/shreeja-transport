@@ -139,31 +139,13 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // POST /api/plans
-// Sale-tanker routes: third-party buyer tankers are typed as free text and
-// resolved to a (find-or-created) tanker master row, tagged 'Third Party (Sale)'.
-async function resolveSaleTanker(tankerNumberText) {
-  const num = String(tankerNumberText || '').trim().toUpperCase();
-  if (!num) return null;
-  const r = await query(
-    `INSERT INTO tankers (tanker_number, capacity_litres, per_km_rate, vendor_name)
-     VALUES ($1, 0, 0, 'Third Party (Sale)')
-     ON CONFLICT (tanker_number) DO UPDATE SET tanker_number = EXCLUDED.tanker_number
-     RETURNING id`, [num]);
-  return r.rows[0].id;
-}
-
 router.post('/', authenticate, authorize('admin','planner'), async (req, res) => {
   const {
-    plan_date, plan_for_date, trip_no, route_id, tanker_number_text,
+    plan_date, plan_for_date, trip_no, route_id, tanker_id,
     start_point_id, testing_point_id, delivery_point_id,
     shifts_milk, expected_km, expected_total_qty,
     driver_name, loader_name, remarks, bmcus
   } = req.body;
-  let { tanker_id } = req.body;
-
-  try {
-    if (!tanker_id && tanker_number_text) tanker_id = await resolveSaleTanker(tanker_number_text);
-  } catch (err) { return res.status(500).json({ error: err.message }); }
 
   if (!plan_date || !plan_for_date || !tanker_id || !delivery_point_id)
     return res.status(400).json({ error: 'plan_date, plan_for_date, tanker_id, delivery_point_id required' });
@@ -207,16 +189,11 @@ router.post('/', authenticate, authorize('admin','planner'), async (req, res) =>
 // PUT /api/plans/:id
 router.put('/:id', authenticate, authorize('admin','planner'), async (req, res) => {
   const {
-    plan_for_date, trip_no, route_id, tanker_number_text,
+    plan_for_date, trip_no, route_id, tanker_id,
     start_point_id, testing_point_id, delivery_point_id,
     shifts_milk, expected_km, expected_total_qty,
     driver_name, loader_name, remarks, status, bmcus
   } = req.body;
-  let { tanker_id } = req.body;
-
-  try {
-    if (!tanker_id && tanker_number_text) tanker_id = await resolveSaleTanker(tanker_number_text);
-  } catch (err) { return res.status(500).json({ error: err.message }); }
 
   const client = await pool.connect();
   try {
