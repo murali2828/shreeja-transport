@@ -21,7 +21,7 @@ export default function TripPlanForm() {
 
   const [form, setForm] = useState({
     plan_date: today, plan_for_date: today, trip_no: '',
-    route_id: '', tanker_id: '', start_point_id: '', testing_point_id: '', delivery_point_id: '',
+    route_id: '', tanker_id: '', tanker_number_text: '', start_point_id: '', testing_point_id: '', delivery_point_id: '',
     shifts_milk: '', expected_km: '', expected_total_qty: '',
     driver_name: '', loader_name: '', remarks: '', bmcus: []
   });
@@ -33,6 +33,11 @@ export default function TripPlanForm() {
   const { data: startPts  = [] } = useQuery({ queryKey: ['start-pts'],queryFn: () => getStartingPoints().then(r=>r.data) });
   const { data: testPts   = [] } = useQuery({ queryKey: ['test-pts'], queryFn: () => getTestingPoints().then(r=>r.data) });
   const { data: delivPts  = [] } = useQuery({ queryKey: ['deliv-pts'],queryFn: () => getDeliveryPoints().then(r=>r.data) });
+
+  // Sale-tanker route (e.g. "Sale Tanker"): milk sold to a third-party buyer —
+  // tanker number is typed directly instead of picked from our fleet.
+  const selectedRoute = routes.find(r => String(r.id) === String(form.route_id));
+  const isSaleRoute   = /sale/i.test(selectedRoute?.route_name || '');
 
   // Load existing plan for edit
   const { data: existing } = useQuery({
@@ -48,6 +53,7 @@ export default function TripPlanForm() {
         trip_no: existing.trip_no || '',
         route_id: String(existing.route_id || ''),
         tanker_id: String(existing.tanker_id || ''),
+        tanker_number_text: existing.tanker_number || '',
         start_point_id: String(existing.start_point_id || ''),
         testing_point_id: String(existing.testing_point_id || ''),
         delivery_point_id: String(existing.delivery_point_id || ''),
@@ -133,10 +139,15 @@ export default function TripPlanForm() {
 
   const saveMut = useMutation({
     mutationFn: () => {
-      if (!form.tanker_id || !form.delivery_point_id)
-        throw new Error('Tanker and delivery point required');
+      const saleTanker = isSaleRoute && form.tanker_number_text.trim();
+      if ((!form.tanker_id && !saleTanker) || !form.delivery_point_id)
+        throw new Error(isSaleRoute
+          ? 'Tanker number and delivery point required'
+          : 'Tanker and delivery point required');
       const payload = {
         ...form,
+        tanker_id: saleTanker ? null : form.tanker_id,
+        tanker_number_text: saleTanker ? form.tanker_number_text.trim() : null,
         expected_total_qty: totalExpQty || form.expected_total_qty,
         total_cost: totalCost,
         per_liter_cost: perLitreCost,
@@ -195,15 +206,25 @@ export default function TripPlanForm() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="label">Tanker *</label>
-            <SearchableSelect
-              value={form.tanker_id}
-              onChange={v => set('tanker_id', v)}
-              placeholder="Select tanker…"
-              options={tankers.map(t => ({
-                value: String(t.id),
-                label: `${t.tanker_number} — ${t.capacity_litres.toLocaleString()}L @ ₹${t.per_km_rate}/km`
-              }))}
-            />
+            {isSaleRoute ? (
+              /* Sale-tanker route: third-party buyer's tanker — type the number directly */
+              <>
+                <input className="input w-full" placeholder="Type tanker number (third-party buyer)…"
+                  value={form.tanker_number_text}
+                  onChange={e => setForm(p => ({ ...p, tanker_number_text: e.target.value.toUpperCase(), tanker_id: '' }))}/>
+                <p className="text-[11px] text-amber-700 mt-1">Sale route — enter the buyer's tanker number directly.</p>
+              </>
+            ) : (
+              <SearchableSelect
+                value={form.tanker_id}
+                onChange={v => set('tanker_id', v)}
+                placeholder="Select tanker…"
+                options={tankers.map(t => ({
+                  value: String(t.id),
+                  label: `${t.tanker_number} — ${t.capacity_litres.toLocaleString()}L @ ₹${t.per_km_rate}/km`
+                }))}
+              />
+            )}
           </div>
           <div>
             <label className="label">Route (optional)</label>
