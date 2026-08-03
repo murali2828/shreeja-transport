@@ -56,13 +56,23 @@ export default function AcknowledgementForm() {
   };
 
   const saveMut = useMutation({
-    mutationFn: () => saveAcknowledgements(id, { ack_date: ackDate, chambers }),
+    mutationFn: () => {
+      // 110% capacity guard (also enforced server-side)
+      const capacity = parseFloat(exec?.capacity_litres) || 0;
+      const totalL = chambers.reduce((s, c) => s + (parseFloat(c.qty_litres) || 0), 0);
+      if (capacity > 0 && totalL > capacity * 1.1) {
+        const fmtL = v => Math.round(v).toLocaleString('en-IN');
+        return Promise.reject(new Error(
+          `Acknowledgement total ${fmtL(totalL)} L exceeds 110% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(capacity * 1.1)} L)`));
+      }
+      return saveAcknowledgements(id, { ack_date: ackDate, chambers });
+    },
     onSuccess: () => {
       toast.success('Acknowledgement saved — trip closed');
       qc.invalidateQueries(['execution', id]);
       navigate('/execution/closed');
     },
-    onError: (e) => toast.error(e.response?.data?.error || 'Save failed'),
+    onError: (e) => toast.error(e.response?.data?.error || e.message || 'Save failed'),
   });
 
   const totalAckL = chambers.reduce((s,c) => s + (parseFloat(c.qty_litres)||0), 0);

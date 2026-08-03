@@ -27,8 +27,14 @@ const { calcKgs, calcKgFat, calcKgSnf } = require('../services/executionData');
 
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 
-async function buildTsReport(reportDate) {
-  // One row per plan of the date; latest non-cancelled execution (if any).
+async function buildTsReport(reportDate, basis = 'plan') {
+  // basis 'plan': one row per plan of the planning date (default).
+  // basis 'ack_entry': only trips whose acknowledgement was ENTERED on the
+  // date (trip_acknowledgements.created_at) — every row fully populated.
+  const dateFilter = basis === 'ack_entry'
+    ? `te.id IS NOT NULL AND EXISTS (SELECT 1 FROM trip_acknowledgements ta2
+         WHERE ta2.execution_id=te.id AND ta2.created_at::date=$1)`
+    : `tp.plan_for_date=$1`;
   const r = await query(`
     SELECT
       tp.id AS plan_id, tp.trip_no, tp.shifts_milk,
@@ -68,7 +74,7 @@ async function buildTsReport(reportDate) {
     LEFT JOIN route_masters rm  ON rm.id=tp.route_id
     LEFT JOIN starting_points sp ON sp.id=tp.start_point_id
     LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
-    WHERE tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
+    WHERE ${dateFilter} AND tp.status NOT IN ('cancelled','deleted')
     ORDER BY tp.trip_no`, [reportDate]);
 
   // RMRD totals per execution from shift rows (qty in litres; kgs/fat/snf derived).
@@ -206,7 +212,9 @@ const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
 const BORDER = { top: thin, bottom: thin, left: thin, right: thin };
 const fillOf = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
 
-function buildTsWorkbook(rows, reportDate) {
+const TS_BASIS_LABEL = basis => basis === 'ack_entry' ? 'by Ack Entry Date' : 'by Planning Date';
+
+function buildTsWorkbook(rows, reportDate, basis = 'plan') {
   const wb = new ExcelJS.Workbook();
   const NINFO = INFO_HEADERS.length;
   const ws = wb.addWorksheet('TS Report', { views: [{ state: 'frozen', xSplit: NINFO, ySplit: 3 }] });
@@ -220,7 +228,7 @@ function buildTsWorkbook(rows, reportDate) {
   // Row 1 — title
   ws.mergeCells(1, 1, 1, NINFO + TS_NMEAS);
   const title = ws.getCell(1, 1);
-  title.value = `Daily TS Report — ${reportDate}`;
+  title.value = `Daily TS Report — ${reportDate} (${TS_BASIS_LABEL(basis)})`;
   title.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
   title.alignment = { vertical: 'middle', horizontal: 'left' };
   ws.getRow(1).height = 24;
@@ -327,7 +335,7 @@ router.get('/daily-ts', authenticate, async (req, res) => {
   const reportDate = req.query.report_date || req.query.from_date;
   if (!reportDate) return res.status(400).json({ error: 'report_date required' });
   try {
-    res.json(await buildTsReport(reportDate));
+    res.json(await buildTsReport(reportDate, req.query.date_basis || 'plan'));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -370,10 +378,11 @@ router.get('/bmcu-wise', authenticate, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/daily-ts/excel', authenticate, async (req, res) => {
   const { report_date } = req.query;
+  const basis = req.query.date_basis || 'plan';
   if (!report_date) return res.status(400).json({ error: 'report_date required' });
   try {
-    const rows = await buildTsReport(report_date);
-    const wb   = buildTsWorkbook(rows, report_date);
+    const rows = await buildTsReport(report_date, basis);
+    const wb   = buildTsWorkbook(rows, report_date, basis);
     const buf  = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=ts_report_${report_date}.xlsx`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -386,6 +395,7 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/send-email', authenticate, async (req, res) => {
   const { report_date } = req.body;
+  const basis = req.body.date_basis || 'plan';
   if (!report_date) return res.status(400).json({ error: 'report_date required' });
   try {
     const recipients = await query(
@@ -394,8 +404,8 @@ router.post('/send-email', authenticate, async (req, res) => {
     if (!recipients.rows.length)
       return res.status(400).json({ error: 'No active email recipients configured' });
 
-    const rows = await buildTsReport(report_date);
-    const wb   = buildTsWorkbook(rows, report_date);
+    const rows = await buildTsReport(report_date, basis);
+    const wb   = buildTsWorkbook(rows, report_date, basis);
     const buf  = Buffer.from(await wb.xlsx.writeBuffer());
 
     const acked = rows.filter(r => r.has_ack).length;
@@ -403,9 +413,9 @@ router.post('/send-email', authenticate, async (req, res) => {
     await transporter.sendMail({
       from:    process.env.SMTP_FROM,
       to:      recipients.rows.map(r => `${r.full_name} <${r.email}>`).join(', '),
-      subject: `Daily TS Report — ${report_date}`,
+      subject: `Daily TS Report — ${report_date} (${TS_BASIS_LABEL(basis)})`,
       html: `<p>Dear Team,</p>
-             <p>Please find attached the Daily TS Report for <strong>${report_date}</strong> (planning date).</p>
+             <p>Please find attached the Daily TS Report for <strong>${report_date}</strong> (${basis === 'ack_entry' ? 'acknowledgement entry date' : 'planning date'}).</p>
              <p>Trips planned: ${rows.length} · Acknowledged: ${acked}</p>
              <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/>
              <p style="font-family:sans-serif;font-size:12px;color:#9ca3af;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <strong style="color:#6b7280;">Shreeja IT Team</strong>.</p>`,

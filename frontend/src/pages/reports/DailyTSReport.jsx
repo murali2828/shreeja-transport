@@ -37,11 +37,12 @@ function DiffCell({ value, fmt }) {
 
 export default function DailyTSReport() {
   const [reportDate, setReportDate] = useState(today());
+  const [basis, setBasis] = useState('plan'); // 'plan' | 'ack_entry'
   const [emailing, setEmailing] = useState(false);
 
   const { data: rows = [], isFetching } = useQuery({
-    queryKey: ['daily-ts', reportDate],
-    queryFn:  () => getDailyTSReport({ report_date: reportDate }).then(r => r.data),
+    queryKey: ['daily-ts', reportDate, basis],
+    queryFn:  () => getDailyTSReport({ report_date: reportDate, date_basis: basis }).then(r => r.data),
     enabled:  !!reportDate,
   });
 
@@ -51,7 +52,7 @@ export default function DailyTSReport() {
   const doEmail = async () => {
     setEmailing(true);
     try {
-      const r = await sendDailyReport(reportDate);
+      const r = await sendDailyReport(reportDate, basis);
       toast.success(`Report emailed to ${r.data.recipients} recipient(s)`);
     } catch (e) {
       toast.error(e.response?.data?.error || 'Email failed');
@@ -63,12 +64,23 @@ export default function DailyTSReport() {
       <div className="page-header">
         <div>
           <div className="page-title">Daily TS Report</div>
-          <div className="page-sub">RMRD vs Dispatch vs Acknowledgement reconciliation — by planning date</div>
+          <div className="page-sub">
+            RMRD vs Dispatch vs Acknowledgement reconciliation — by {basis === 'ack_entry' ? 'acknowledgement entry date' : 'planning date'}
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Date basis toggle: planning date (all planned trips) vs ack entry date (only acknowledged trips — no zero rows) */}
+          <div className="flex rounded-lg overflow-hidden border border-white/40 text-xs font-medium">
+            {[['plan', 'Planning Date'], ['ack_entry', 'Ack Entry Date']].map(([k, label]) => (
+              <button key={k} onClick={() => setBasis(k)}
+                className={`px-3 py-1.5 ${basis === k ? 'bg-white text-[#005ba3]' : 'bg-white/10 text-white hover:bg-white/20'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
           <input type="date" className="input py-1.5 text-sm" value={reportDate}
             onChange={e => setReportDate(e.target.value)}/>
-          <button onClick={() => downloadTSExcel(reportDate)} className="btn-secondary flex items-center gap-1.5 text-sm">
+          <button onClick={() => downloadTSExcel(reportDate, basis)} className="btn-secondary flex items-center gap-1.5 text-sm">
             <Download size={14}/> Export Excel
           </button>
           <button onClick={doEmail} disabled={emailing} className="btn-primary flex items-center gap-1.5 text-sm">
@@ -110,7 +122,9 @@ export default function DailyTSReport() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={32}><div className="empty-state">No trips planned for this date.</div></td></tr>
+                <tr><td colSpan={32}><div className="empty-state">
+                  {basis === 'ack_entry' ? 'No acknowledgements were entered on this date.' : 'No trips planned for this date.'}
+                </div></td></tr>
               )}
               {rows.map((r, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">

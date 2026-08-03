@@ -5,7 +5,7 @@ const { pool, query } = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const {
   calcKgs, calcKgFat, calcKgSnf,
-  computeExecutionDistance, applyExecutionData,
+  computeExecutionDistance, applyExecutionData, assertWithinCapacity,
 } = require('../services/executionData');
 
 // Ensure the sub-entries table (balance milk / new MPP / internal shifting) exists.
@@ -285,7 +285,7 @@ router.put('/:id', authenticate, async (req, res) => {
     res.json({ ...execution, distance: dist });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    res.status(err.code === 400 ? 400 : 500).json({ error: err.message });
   } finally { client.release(); }
 });
 
@@ -372,6 +372,9 @@ router.post('/:id/acknowledgements', authenticate, async (req, res) => {
       );
     }
 
+    // 110% capacity guard on acknowledgement totals (throws code 400)
+    await assertWithinCapacity(client, req.params.id);
+
     const r = await client.query(
       "UPDATE trip_executions SET status='closed',updated_at=NOW() WHERE id=$1 RETURNING *",
       [req.params.id]
@@ -381,7 +384,7 @@ router.post('/:id/acknowledgements', authenticate, async (req, res) => {
     res.json(r.rows[0]);
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    res.status(err.code === 400 ? 400 : 500).json({ error: err.message });
   } finally { client.release(); }
 });
 
