@@ -88,6 +88,47 @@ async function computeExecutionDistance(client, execId, userId) {
   return { total_km: total, legs, estimated_leg_count: estimated, incomplete };
 }
 
+// ─── 110% capacity guard ──────────────────────────────────────────────────────
+const CAPACITY_TOLERANCE = 1.1;
+const fmtL = v => Math.round(parseFloat(v)).toLocaleString('en-IN');
+
+function capacityError(area, entered, capacity) {
+  const limit = capacity * CAPACITY_TOLERANCE;
+  return Object.assign(
+    new Error(`${area}: entered volume ${fmtL(entered)} L exceeds 110% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(limit)} L)`),
+    { code: 400 });
+}
+
+// Validates every volume area of an execution against 110% of the tanker's
+// registered capacity. Skipped when capacity is 0/NULL (legacy tankers).
+async function assertWithinCapacity(client, execId) {
+  const cap = await client.query(`
+    SELECT t.capacity_litres
+    FROM trip_executions te
+    JOIN trip_plans tp ON tp.id=te.trip_plan_id
+    LEFT JOIN tankers t ON t.id=tp.tanker_id
+    WHERE te.id=$1`, [execId]);
+  const capacity = parseFloat(cap.rows[0]?.capacity_litres) || 0;
+  if (capacity <= 0) return;
+  const limit = capacity * CAPACITY_TOLERANCE;
+
+  const sums = await client.query(`
+    SELECT
+      COALESCE((SELECT SUM(qty_litres) FROM trip_execution_bmcus
+        WHERE execution_id=$1 AND is_deleted=FALSE),0) AS dispatch_l,
+      COALESCE((SELECT SUM(s.rmrd_qty) FROM trip_execution_bmcu_shifts s
+        JOIN trip_execution_bmcus b
+          ON b.execution_id=s.execution_id AND b.seq_no=s.bmcu_seq_no AND b.is_deleted=FALSE
+        WHERE s.execution_id=$1),0) AS rmrd_l,
+      COALESCE((SELECT SUM(qty_litres) FROM trip_acknowledgements
+        WHERE execution_id=$1),0) AS ack_l`, [execId]);
+  const s = sums.rows[0];
+
+  if (parseFloat(s.dispatch_l) > limit) throw capacityError('BMCU dispatch total', s.dispatch_l, capacity);
+  if (parseFloat(s.rmrd_l)     > limit) throw capacityError('RMRD shift total', s.rmrd_l, capacity);
+  if (parseFloat(s.ack_l)      > limit) throw capacityError('Acknowledgement total', s.ack_l, capacity);
+}
+
 // Persist a full execution-data payload inside the caller's transaction.
 // data: { actual_km, delivery_point_id, start_point_id, bmcus, shift_rows,
 //         entries, ack_date, acknowledgements }  (all optional except what changes)
@@ -195,6 +236,11 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     }
   }
 
+  // Capacity guard: no volume area may exceed 110% of the tanker's registered
+  // capacity. Throws (code 400) → the caller's transaction rolls back. Covers
+  // the PUT save AND change-request approval, since both route through here.
+  await assertWithinCapacity(client, execId);
+
   // Recalculate execution totals (exclude Balance Milk)
   const totals = await client.query(`
     SELECT
@@ -240,5 +286,5 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
 
 module.exports = {
   KG_FACTOR, calcKgs, calcKgFat, calcKgSnf,
-  computeExecutionDistance, applyExecutionData,
+  computeExecutionDistance, applyExecutionData, assertWithinCapacity,
 };

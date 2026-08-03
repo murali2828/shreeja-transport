@@ -53,10 +53,13 @@ router.get('/', authenticate, async (req, res) => {
       LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
       LEFT JOIN route_masters rm   ON rm.id=tp.route_id
       LEFT JOIN users u            ON u.id=tp.created_by
-      WHERE tp.status NOT IN ('cancelled','deleted')`;
+      WHERE 1=1`;
     const params = [];
     if (plan_for_date) { params.push(plan_for_date); sql += ` AND tp.plan_for_date=$${params.length}`; }
-    if (status)        { params.push(status);        sql += ` AND tp.status=$${params.length}`; }
+    // Explicit status (e.g. 'deleted' for the Deleted Plans report) wins;
+    // otherwise hide cancelled/deleted as before.
+    if (status) { params.push(status); sql += ` AND tp.status=$${params.length}`; }
+    else        { sql += ` AND tp.status NOT IN ('cancelled','deleted')`; }
     sql += ' ORDER BY tp.plan_for_date, tp.trip_no';
     const r = await query(sql, params);
     res.json(r.rows);

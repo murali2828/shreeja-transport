@@ -482,7 +482,7 @@ async function portalDecision(req, res, decision) {
     );
     res.json({ ok: true, id: parseInt(req.params.id), decision, execution_id: cr.execution_id });
   } catch (err) {
-    res.status(err.code === 404 ? 404 : 500).json({ error: err.message });
+    res.status(err.code === 404 ? 404 : err.code === 400 ? 400 : 500).json({ error: err.message });
   }
 }
 router.post('/:id/approve', authenticate, (req, res) => portalDecision(req, res, 'approve'));
