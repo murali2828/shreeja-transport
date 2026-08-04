@@ -13,7 +13,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const n2 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const M6 = m => [m?.litres, m?.kgs, m?.fat, m?.snf, m?.kg_fat, m?.kg_snf];
-const D4 = d => [d?.kgs, d?.litres, d?.kg_fat, d?.kg_snf];
+const D4 = d => [d?.kgs, d?.litres, d?.kg_fat, d?.kg_snf, d?.pct];
 
 const NumCells = ({ m, cls = '' }) => M6(m).map((v, i) => (
   <td key={i} className={`table-td text-right whitespace-nowrap ${i === 0 ? 'border-l border-gray-200' : ''} ${cls}`}>{n2(v)}</td>
@@ -87,14 +87,14 @@ export default function BmcuBreakup() {
                   <th className="table-th text-center border-l bg-emerald-50" colSpan={6}>As per the Tanker Dispatch Quantity</th>
                   <th className="table-th text-center border-l" rowSpan={2}>Shift</th>
                   <th className="table-th text-center border-l bg-sky-50" colSpan={6}>As Per RMRD</th>
-                  <th className="table-th text-center border-l bg-amber-50" colSpan={4}>Truck sheet(RMRD) Vs Dispatch</th>
+                  <th className="table-th text-center border-l bg-amber-50" colSpan={5}>Difference Dispatch Vs RMRD</th>
                 </tr>
                 <tr className="border-b">
                   {['Qty Lts','Qty Kgs','Fat','SNF','KG Fat','KG SNF'].map((h, i) => (
                     <th key={'d'+h} className={`table-th text-right bg-emerald-50 ${i===0?'border-l':''}`}>{h}</th>))}
                   {['Qty Lts','Qty Kgs','Fat','SNF','KG Fat','KG SNF'].map((h, i) => (
                     <th key={'r'+h} className={`table-th text-right bg-sky-50 ${i===0?'border-l':''}`}>{h}</th>))}
-                  {['Qty Kgs','Qty Lts','KG Fat','KG SNF'].map((h, i) => (
+                  {['Qty Kgs','Qty Lts','KG Fat','KG SNF','Gain/Loss %'].map((h, i) => (
                     <th key={'x'+h} className={`table-th text-right bg-amber-50 ${i===0?'border-l':''}`}>{h}</th>))}
                 </tr>
               </thead>

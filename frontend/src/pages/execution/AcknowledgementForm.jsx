@@ -37,17 +37,17 @@ export default function AcknowledgementForm() {
     }
   }, [exec]);
 
-  // Immediate blocking pop-up when chamber quantities exceed 110% of capacity
+  // Immediate blocking pop-up when chamber quantities exceed 103% of capacity
   const capAlertRef = useRef(false);
   useEffect(() => {
     const capacity = parseFloat(exec?.capacity_litres) || 0;
     if (capacity <= 0) return;
     const totalL = chambers.reduce((s, c) => s + (parseFloat(c.qty_litres) || 0), 0);
-    const over = totalL > capacity * 1.1;
+    const over = totalL > capacity * 1.03;
     if (over && !capAlertRef.current) {
       capAlertRef.current = true;
       const fmtL = v => Math.round(v).toLocaleString('en-IN');
-      window.alert(`⚠ ABNORMAL ENTRY BLOCKED\n\nAcknowledgement total ${fmtL(totalL)} L exceeds 110% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(capacity * 1.1)} L).\n\nCorrect the quantity — saving is blocked until it is within the limit.`);
+      window.alert(`⚠ ABNORMAL ENTRY BLOCKED\n\nAcknowledgement total ${fmtL(totalL)} L exceeds 103% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(capacity * 1.03)} L).\n\nCorrect the quantity — saving is blocked until it is within the limit.`);
     } else if (!over) capAlertRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chambers]);
@@ -72,13 +72,13 @@ export default function AcknowledgementForm() {
 
   const saveMut = useMutation({
     mutationFn: () => {
-      // 110% capacity guard (also enforced server-side)
+      // 103% capacity guard (also enforced server-side)
       const capacity = parseFloat(exec?.capacity_litres) || 0;
       const totalL = chambers.reduce((s, c) => s + (parseFloat(c.qty_litres) || 0), 0);
-      if (capacity > 0 && totalL > capacity * 1.1) {
+      if (capacity > 0 && totalL > capacity * 1.03) {
         const fmtL = v => Math.round(v).toLocaleString('en-IN');
         return Promise.reject(new Error(
-          `Acknowledgement total ${fmtL(totalL)} L exceeds 110% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(capacity * 1.1)} L)`));
+          `Acknowledgement total ${fmtL(totalL)} L exceeds 103% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(capacity * 1.03)} L)`));
       }
       return saveAcknowledgements(id, { ack_date: ackDate, chambers });
     },

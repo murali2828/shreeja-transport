@@ -615,8 +615,8 @@ export default function ExecutionForm() {
       if (violation) throw new Error(violation);
       const capacity = parseFloat(exec?.capacity_litres) || 0;
       const ackTotal = ackRows.reduce((s, a) => s + (parseFloat(a.qty_litres) || 0), 0);
-      if (capacity > 0 && ackTotal > capacity * 1.1)
-        throw new Error(`Acknowledgement total ${Math.round(ackTotal).toLocaleString('en-IN')} L exceeds 110% of tanker capacity ${Math.round(capacity).toLocaleString('en-IN')} L (limit ${Math.round(capacity * 1.1).toLocaleString('en-IN')} L)`);
+      if (capacity > 0 && ackTotal > capacity * 1.03)
+        throw new Error(`Acknowledgement total ${Math.round(ackTotal).toLocaleString('en-IN')} L exceeds 103% of tanker capacity ${Math.round(capacity).toLocaleString('en-IN')} L (limit ${Math.round(capacity * 1.03).toLocaleString('en-IN')} L)`);
       return createChangeRequest(id, {
         reason: stagingReason,
         changes: {
@@ -801,22 +801,22 @@ export default function ExecutionForm() {
   const deleteEntry = (key) =>
     setEntries(prev => prev.filter(e => e._key !== key));
 
-  // 110% capacity guard (mirrors the server-side check in applyExecutionData)
+  // 103% capacity guard (mirrors the server-side check in applyExecutionData)
   const capacityViolation = () => {
     const capacity = parseFloat(exec?.capacity_litres) || 0;
     if (capacity <= 0) return null;
-    const limit = capacity * 1.1;
+    const limit = capacity * 1.03;
     const fmtL = v => Math.round(v).toLocaleString('en-IN');
     const dispatch = bmcuRows.filter(r => !r.is_deleted)
       .reduce((s, r) => s + (parseFloat(r.qty_litres) || 0), 0);
     const rmrd = shiftRows.reduce((s, r) => s + (parseFloat(r.rmrd_qty) || 0), 0);
-    if (dispatch > limit) return `BMCU dispatch total ${fmtL(dispatch)} L exceeds 110% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(limit)} L)`;
-    if (rmrd > limit)     return `RMRD shift total ${fmtL(rmrd)} L exceeds 110% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(limit)} L)`;
+    if (dispatch > limit) return `BMCU dispatch total ${fmtL(dispatch)} L exceeds 103% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(limit)} L)`;
+    if (rmrd > limit)     return `RMRD shift total ${fmtL(rmrd)} L exceeds 103% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(limit)} L)`;
     return null;
   };
 
   // Immediate blocking pop-up the moment an entered quantity pushes a total
-  // past 110% of tanker capacity (fires once per violation episode).
+  // past 103% of tanker capacity (fires once per violation episode).
   const capAlertRef = useRef(false);
   useEffect(() => {
     const violation = capacityViolation();

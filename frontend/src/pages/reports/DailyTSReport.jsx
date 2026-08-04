@@ -14,16 +14,41 @@ const n2 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maxi
 const n4 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
 const M6 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['fat','Fat%'], ['snf','SNF%'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF']];
-const M4 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF']];
+const D5 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF'], ['pct','Gain/Loss %']];
+const D7 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['fat','Fat%'], ['snf','SNF%'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF'], ['pct','Gain/Loss %']];
 const GROUPS = [
-  { title: 'As per RMRD',                prefix: 'rmrd',      cls: 'bg-sky-50',     measures: M6 },
-  { title: 'As per Dispatch',            prefix: 'disp',      cls: 'bg-emerald-50', measures: M6 },
-  { title: 'As per Acknowledgement',     prefix: 'ack',       cls: 'bg-violet-50',  measures: M6 },
-  { title: 'Difference RMRD Vs Ack',     prefix: 'diff_rmrd', cls: 'bg-amber-50',   measures: M4, diff: true },
-  { title: 'Difference Dispatch Vs Ack', prefix: 'diff_disp', cls: 'bg-rose-50',    measures: M4, diff: true },
+  { title: 'As per RMRD',                 prefix: 'rmrd', cls: 'bg-sky-50',     measures: M6 },
+  { title: 'As per Dispatch',             prefix: 'disp', cls: 'bg-emerald-50', measures: M6 },
+  { title: 'As per Acknowledgement',      prefix: 'ack',  cls: 'bg-violet-50',  measures: M6 },
+  { title: 'Difference Dispatch Vs RMRD', prefix: 'dd',   cls: 'bg-amber-50',   measures: D5, diff: true },
+  { title: 'Difference Ack Vs Dispatch',  prefix: 'da',   cls: 'bg-rose-50',    measures: D7, diff: true },
+  { title: 'Difference Ackn Vs RMRD',     prefix: 'dr',   cls: 'bg-yellow-50',  measures: D7, diff: true },
 ];
-// Fat%/SNF% totals are weighted: Σ kg-part / Σ kgs × 100
-const PCT_MEASURES = ['fat', 'snf'];
+// Weighted totals (mirrors the backend): pct columns are never plain sums.
+function tsTotal(key, sum) {
+  const w = (part, kgs) => sum(kgs) > 0 ? sum(part) / sum(kgs) * 100 : null;
+  const dw = (p1, k1, p2, k2) => {
+    const a = w(p1, k1), b = w(p2, k2);
+    return a != null && b != null ? a - b : null;
+  };
+  const g = (diffKgs, baseKgs) => sum(baseKgs) > 0 ? sum(diffKgs) / sum(baseKgs) * 100 : null;
+  switch (key) {
+    case 'rmrd_fat': return w('rmrd_kg_fat', 'rmrd_kgs');
+    case 'rmrd_snf': return w('rmrd_kg_snf', 'rmrd_kgs');
+    case 'disp_fat': return w('disp_kg_fat', 'disp_kgs');
+    case 'disp_snf': return w('disp_kg_snf', 'disp_kgs');
+    case 'ack_fat':  return w('ack_kg_fat', 'ack_kgs');
+    case 'ack_snf':  return w('ack_kg_snf', 'ack_kgs');
+    case 'da_fat':   return dw('ack_kg_fat', 'ack_kgs', 'disp_kg_fat', 'disp_kgs');
+    case 'da_snf':   return dw('ack_kg_snf', 'ack_kgs', 'disp_kg_snf', 'disp_kgs');
+    case 'dr_fat':   return dw('ack_kg_fat', 'ack_kgs', 'rmrd_kg_fat', 'rmrd_kgs');
+    case 'dr_snf':   return dw('ack_kg_snf', 'ack_kgs', 'rmrd_kg_snf', 'rmrd_kgs');
+    case 'dd_pct':   return g('dd_kgs', 'rmrd_kgs');
+    case 'da_pct':   return g('da_kgs', 'disp_kgs');
+    case 'dr_pct':   return g('dr_kgs', 'rmrd_kgs');
+    default:         return sum(key);
+  }
+}
 
 function DiffCell({ value, fmt }) {
   if (value == null) return <td className="table-td text-right text-gray-300">—</td>;
@@ -98,12 +123,13 @@ export default function DailyTSReport() {
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto max-h-[68vh]">
-          <table className="text-xs" style={{ minWidth: 2250 }}>
+          <table className="text-xs" style={{ minWidth: 2900 }}>
             <thead className="sticky top-0 bg-gray-50 z-10">
               <tr className="border-b">
-                <th className="table-th" rowSpan={2}>Tanker Number</th>
                 <th className="table-th" rowSpan={2}>Milk Lifting Date</th>
-                <th className="table-th" rowSpan={2}>Ack. Date</th>
+                <th className="table-th" rowSpan={2}>Milk Ack Date</th>
+                <th className="table-th" rowSpan={2}>Posting Date</th>
+                <th className="table-th" rowSpan={2}>Tanker Number</th>
                 <th className="table-th" rowSpan={2}>Route Name</th>
                 <th className="table-th" rowSpan={2}>Starting Point</th>
                 <th className="table-th" rowSpan={2}>Unloading Point</th>
@@ -123,15 +149,16 @@ export default function DailyTSReport() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={33}><div className="empty-state">
+                <tr><td colSpan={45}><div className="empty-state">
                   {basis === 'ack_entry' ? 'No acknowledgements were entered on this date.' : 'No trips planned for this date.'}
                 </div></td></tr>
               )}
               {rows.map((r, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="table-td font-mono font-semibold text-[#005ba3] whitespace-nowrap">{r.tanker_number || '—'}</td>
                   <td className="table-td whitespace-nowrap">{fmtD(r.lifting_date)}</td>
                   <td className="table-td whitespace-nowrap">{fmtD(r.ack_date)}</td>
+                  <td className="table-td whitespace-nowrap">{fmtD(r.posting_date)}</td>
+                  <td className="table-td font-mono font-semibold text-[#005ba3] whitespace-nowrap">{r.tanker_number || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.route_name || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.starting_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.unloading_point || '—'}</td>
@@ -149,14 +176,9 @@ export default function DailyTSReport() {
             {rows.length > 0 && (
               <tfoot className="bg-blue-50 border-t font-semibold sticky bottom-0">
                 <tr>
-                  <td className="table-td" colSpan={7}>TOTAL — {rows.length} trips</td>
+                  <td className="table-td" colSpan={8}>TOTAL — {rows.length} trips</td>
                   {GROUPS.map(g => g.measures.map(([m], mi) => {
-                    // Fat%/SNF% totals are weighted: Σ kg-part / Σ kgs × 100
-                    const total = PCT_MEASURES.includes(m)
-                      ? (sum(`${g.prefix}_kgs`) > 0
-                          ? sum(`${g.prefix}_kg_${m === 'fat' ? 'fat' : 'snf'}`) / sum(`${g.prefix}_kgs`) * 100
-                          : null)
-                      : sum(`${g.prefix}_${m}`);
+                    const total = tsTotal(`${g.prefix}_${m}`, sum);
                     const fmt = m === 'litres' ? n2 : n4;
                     return (
                       <td key={g.prefix + m}
