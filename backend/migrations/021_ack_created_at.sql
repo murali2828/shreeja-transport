@@ -5,4 +5,4 @@ ALTER TABLE trip_acknowledgements ADD COLUMN IF NOT EXISTS created_at TIMESTAMPT
 UPDATE trip_acknowledgements
    SET created_at = COALESCE(ack_date, CURRENT_DATE)::timestamptz
  WHERE created_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_ta_created ON trip_acknowledgements ((created_at::date));
+CREATE INDEX IF NOT EXISTS idx_ta_created ON trip_acknowledgements (created_at);
