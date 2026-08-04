@@ -17,8 +17,8 @@ const M6 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['fat','Fat%'], ['snf','SN
 const D5 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF'], ['pct','Gain/Loss %']];
 const D7 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['fat','Fat%'], ['snf','SNF%'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF'], ['pct','Gain/Loss %']];
 const GROUPS = [
-  { title: 'As per RMRD',                 prefix: 'rmrd', cls: 'bg-sky-50',     measures: M6 },
   { title: 'As per Dispatch',             prefix: 'disp', cls: 'bg-emerald-50', measures: M6 },
+  { title: 'As per RMRD',                 prefix: 'rmrd', cls: 'bg-sky-50',     measures: M6 },
   { title: 'As per Acknowledgement',      prefix: 'ack',  cls: 'bg-violet-50',  measures: M6 },
   { title: 'Difference Dispatch Vs RMRD', prefix: 'dd',   cls: 'bg-amber-50',   measures: D5, diff: true },
   { title: 'Difference Ack Vs Dispatch',  prefix: 'da',   cls: 'bg-rose-50',    measures: D7, diff: true },
@@ -90,13 +90,13 @@ export default function DailyTSReport() {
         <div>
           <div className="page-title">Daily TS Report</div>
           <div className="page-sub">
-            RMRD vs Dispatch vs Acknowledgement reconciliation — by {basis === 'ack_entry' ? 'acknowledgement entry date' : 'planning date'}
+            RMRD vs Dispatch vs Acknowledgement reconciliation — by {basis === 'ack_entry' ? 'acknowledgement entry date' : basis === 'ack_date' ? 'acknowledgement date' : 'planning date'}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {/* Date basis toggle: planning date (all planned trips) vs ack entry date (only acknowledged trips — no zero rows) */}
           <div className="flex rounded-lg overflow-hidden border border-white/40 text-xs font-medium">
-            {[['plan', 'Planning Date'], ['ack_entry', 'Ack Entry Date']].map(([k, label]) => (
+            {[['plan', 'Planning Date'], ['ack_date', 'Ack Date'], ['ack_entry', 'Ack Entry Date']].map(([k, label]) => (
               <button key={k} onClick={() => setBasis(k)}
                 className={`px-3 py-1.5 ${basis === k ? 'bg-white text-[#005ba3]' : 'bg-white/10 text-white hover:bg-white/20'}`}>
                 {label}

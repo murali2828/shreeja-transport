@@ -34,6 +34,9 @@ async function buildTsReport(reportDate, basis = 'plan') {
   const dateFilter = basis === 'ack_entry'
     ? `te.id IS NOT NULL AND EXISTS (SELECT 1 FROM trip_acknowledgements ta2
          WHERE ta2.execution_id=te.id AND ta2.created_at::date=$1)`
+    : basis === 'ack_date'
+    ? `te.id IS NOT NULL AND EXISTS (SELECT 1 FROM trip_acknowledgements ta2
+         WHERE ta2.execution_id=te.id AND ta2.ack_date=$1)`
     : `tp.plan_for_date=$1`;
   const r = await query(`
     SELECT
@@ -218,8 +221,8 @@ const MEAS6 = ['Qty Ltrs', 'Qty Kgs', 'Fat%', 'SNF%', 'Kg.Fat', 'Kg.SNF'];
 const DIFF5 = ['Qty Ltrs', 'Qty Kgs', 'Kg.Fat', 'Kg.SNF', 'Gain/Loss %'];
 const DIFF7 = ['Qty Ltrs', 'Qty Kgs', 'Fat%', 'SNF%', 'Kg.Fat', 'Kg.SNF', 'Gain/Loss %'];
 const TS_GROUPS = [
-  { title: 'As per RMRD',                  fill: 'FFE0F2FE', heads: MEAS6, keys: ['rmrd_litres','rmrd_kgs','rmrd_fat','rmrd_snf','rmrd_kg_fat','rmrd_kg_snf'] },
   { title: 'As per Dispatch',              fill: 'FFDCFCE7', heads: MEAS6, keys: ['disp_litres','disp_kgs','disp_fat','disp_snf','disp_kg_fat','disp_kg_snf'] },
+  { title: 'As per RMRD',                  fill: 'FFE0F2FE', heads: MEAS6, keys: ['rmrd_litres','rmrd_kgs','rmrd_fat','rmrd_snf','rmrd_kg_fat','rmrd_kg_snf'] },
   { title: 'As per Acknowledgement',       fill: 'FFEDE9FE', heads: MEAS6, keys: ['ack_litres','ack_kgs','ack_fat','ack_snf','ack_kg_fat','ack_kg_snf'] },
   { title: 'Difference Dispatch Vs RMRD',  fill: 'FFFEF3C7', heads: DIFF5, keys: ['dd_litres','dd_kgs','dd_kg_fat','dd_kg_snf','dd_pct'], diff: true },
   { title: 'Difference Ack Vs Dispatch',   fill: 'FFFFE4E6', heads: DIFF7, keys: ['da_litres','da_kgs','da_fat','da_snf','da_kg_fat','da_kg_snf','da_pct'], diff: true },
@@ -263,7 +266,10 @@ const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
 const BORDER = { top: thin, bottom: thin, left: thin, right: thin };
 const fillOf = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
 
-const TS_BASIS_LABEL = basis => basis === 'ack_entry' ? 'by Ack Entry Date' : 'by Planning Date';
+const TS_BASIS_LABEL = basis =>
+  basis === 'ack_entry' ? 'by Ack Entry Date'
+  : basis === 'ack_date' ? 'by Ack Date'
+  : 'by Planning Date';
 
 function buildTsWorkbook(rows, reportDate, basis = 'plan') {
   const wb = new ExcelJS.Workbook();

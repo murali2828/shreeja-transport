@@ -158,19 +158,56 @@ export default function AcknowledgementForm() {
           ))}
         </div>
 
-        <div className="bg-[#e6f3fb] border border-[#bddff5] rounded-lg p-3 text-sm flex gap-6">
-          <span>Ack Total Litres: <strong className="text-[#003a6b]">{totalAckL.toLocaleString()}</strong></span>
-          <span>Ack Total Kgs: <strong className="text-[#003a6b]">{totalAckK.toFixed(2)}</strong></span>
-          {exec && (
-            <>
-              <span className={parseFloat(totalAckL - exec.total_qty_litres) >= 0 ? 'text-green-600' : 'text-red-600'}>
-                Var L: <strong>{(totalAckL - parseFloat(exec.total_qty_litres||0)).toFixed(2)}</strong>
-              </span>
-              <span className={parseFloat(totalAckK - exec.total_qty_kgs) >= 0 ? 'text-green-600' : 'text-red-600'}>
-                Var Kg: <strong>{(totalAckK - parseFloat(exec.total_qty_kgs||0)).toFixed(4)}</strong>
-              </span>
-            </>
-          )}
+        <div className="bg-[#e6f3fb] border border-[#bddff5] rounded-lg p-3 text-sm space-y-1.5">
+          <div className="flex gap-6 flex-wrap">
+            <span>Ack Total Litres: <strong className="text-[#003a6b]">{totalAckL.toLocaleString()}</strong></span>
+            <span>Ack Total Kgs: <strong className="text-[#003a6b]">{totalAckK.toFixed(2)}</strong></span>
+          </div>
+          {exec && (() => {
+            const KGf = 1.0285;
+            const ackKgFat = chambers.reduce((s, c) => s + (parseFloat(c.kg_fat) || 0), 0);
+            const ackKgSnf = chambers.reduce((s, c) => s + (parseFloat(c.kg_snf) || 0), 0);
+            // RMRD totals: shift rows + signed adjustment entries (TS report rules,
+            // receiver side): Left Over −, Lifted +, New MPP +, Internal Shifting +.
+            let rL = 0, rKgFat = 0, rKgSnf = 0;
+            for (const s of (exec.shift_rows || [])) {
+              const q = parseFloat(s.rmrd_qty) || 0;
+              rL += q;
+              rKgFat += q * KGf * (parseFloat(s.rmrd_fat_pct) || 0) / 100;
+              rKgSnf += q * KGf * (parseFloat(s.rmrd_snf_pct) || 0) / 100;
+            }
+            for (const e of (exec.entries || [])) {
+              const q = parseFloat(e.qty_litres) || 0;
+              if (!q) continue;
+              const sign = e.kind === 'balance_milk' && e.category === 'Left Over milk' ? -1
+                : (e.kind === 'balance_milk' && e.category === 'Lifted milk') || e.kind === 'new_mpp' || e.kind === 'internal_shifting' ? 1 : 0;
+              rL += sign * q;
+              rKgFat += sign * q * KGf * (parseFloat(e.fat_pct) || 0) / 100;
+              rKgSnf += sign * q * KGf * (parseFloat(e.snf_pct) || 0) / 100;
+            }
+            const rK = rL * KGf;
+            const line = (label, dK, dL, dF, dS) => (
+              <div className="flex gap-6 flex-wrap items-center">
+                <span className="font-semibold text-gray-700 w-32">{label}</span>
+                {[['Qty Kgs', dK, 2], ['Qty Ltrs', dL, 2], ['FAT Kgs', dF, 2], ['SNF Kgs', dS, 2]].map(([l, v, d]) => (
+                  <span key={l} className={v >= 0 ? 'text-green-600' : 'text-red-600'}>
+                    {l}: <strong>{v.toFixed(d)}</strong>
+                  </span>
+                ))}
+              </div>
+            );
+            return (
+              <>
+                {line('Ack Vs Dispatch',
+                  totalAckK - (parseFloat(exec.total_qty_kgs) || 0),
+                  totalAckL - (parseFloat(exec.total_qty_litres) || 0),
+                  ackKgFat - (parseFloat(exec.total_kg_fat) || 0),
+                  ackKgSnf - (parseFloat(exec.total_kg_snf) || 0))}
+                {line('Ack Vs RMRD',
+                  totalAckK - rK, totalAckL - rL, ackKgFat - rKgFat, ackKgSnf - rKgSnf)}
+              </>
+            );
+          })()}
         </div>
 
         <div className="flex justify-end">
