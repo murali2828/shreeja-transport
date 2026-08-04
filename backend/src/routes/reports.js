@@ -40,6 +40,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
       tp.id AS plan_id, tp.trip_no, tp.shifts_milk,
       t.tanker_number, rm.route_name, sp.name AS starting_point, dp.name AS unloading_point,
       te.id AS execution_id, te.status AS execution_status, te.dc_number, te.actual_km,
+      COALESCE(uu2.user_id, uu1.user_id) AS entered_by,
 
       (SELECT MIN(teb.milk_date) FROM trip_execution_bmcus teb
         WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE)          AS lifting_date,
@@ -74,6 +75,8 @@ async function buildTsReport(reportDate, basis = 'plan') {
     LEFT JOIN route_masters rm  ON rm.id=tp.route_id
     LEFT JOIN starting_points sp ON sp.id=tp.start_point_id
     LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
+    LEFT JOIN users uu1         ON uu1.id=te.executed_by
+    LEFT JOIN users uu2         ON uu2.id=te.updated_by
     WHERE ${dateFilter} AND tp.status NOT IN ('cancelled','deleted')
     ORDER BY tp.trip_no`, [reportDate]);
 
@@ -157,6 +160,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
       unloading_point: row.unloading_point,
       execution_status: row.execution_status,
       shifts_milk: row.shifts_milk,
+      entered_by: row.entered_by,
       has_ack: hasAck,
       rmrd_litres: rN(rmrd.litres), rmrd_kgs: rN(rmrd.kgs, 2),
       rmrd_fat: pct(rmrd.kg_fat, rmrd.kgs), rmrd_snf: pct(rmrd.kg_snf, rmrd.kgs),
@@ -206,7 +210,7 @@ const TS_PCT_KEYS = {
   disp_fat: ['disp_kg_fat', 'disp_kgs'], disp_snf: ['disp_kg_snf', 'disp_kgs'],
   ack_fat:  ['ack_kg_fat',  'ack_kgs'],  ack_snf:  ['ack_kg_snf',  'ack_kgs'],
 };
-const INFO_HEADERS = ['Tanker Number', 'Milk Lifting Date', 'Ack.Date', 'Route Name', 'Starting Point', 'Unloading Point'];
+const INFO_HEADERS = ['Tanker Number', 'Milk Lifting Date', 'Ack.Date', 'Route Name', 'Starting Point', 'Unloading Point', 'Entered By'];
 const RED = 'FFC0392B', GREEN = 'FF1E8449', HEADER_TEXT = 'FF1F2937';
 const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
 const BORDER = { top: thin, bottom: thin, left: thin, right: thin };
@@ -221,7 +225,7 @@ function buildTsWorkbook(rows, reportDate, basis = 'plan') {
 
   // Column widths: 6 info + numeric measures
   ws.columns = [
-    { width: 16 }, { width: 14 }, { width: 12 }, { width: 20 }, { width: 18 }, { width: 18 },
+    { width: 16 }, { width: 14 }, { width: 12 }, { width: 20 }, { width: 18 }, { width: 18 }, { width: 14 },
     ...Array(TS_NMEAS).fill({ width: 11 }),
   ];
 
@@ -268,7 +272,7 @@ function buildTsWorkbook(rows, reportDate, basis = 'plan') {
   const numFmt = () => '#,##0.00'; // all measures 2dp
   rows.forEach((x, ri) => {
     const row = ws.getRow(4 + ri);
-    const info = [x.tanker_number, fmtDate(x.lifting_date), fmtDate(x.ack_date), x.route_name, x.starting_point, x.unloading_point];
+    const info = [x.tanker_number, fmtDate(x.lifting_date), fmtDate(x.ack_date), x.route_name, x.starting_point, x.unloading_point, x.entered_by || ''];
     info.forEach((v, i) => {
       const c = row.getCell(i + 1);
       c.value = v ?? '';
@@ -390,6 +394,60 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Styled email body: branded header, stat chips, per-trip summary table with
+// red/green differences and a weighted TOTAL row. Full detail stays attached.
+function buildTsEmailHtml(rows, reportDate, basis) {
+  const escH = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const n0 = v => v == null ? '—' : Math.round(parseFloat(v)).toLocaleString('en-IN');
+  const acked = rows.filter(r => r.has_ack).length;
+  const td = (v, extra = '') => `<td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:12px;${extra}">${v}</td>`;
+  const num = (v, extra = '') => td(n0(v), 'text-align:right;' + extra);
+  const diffCell = v => v == null ? td('—', 'text-align:right;color:#cbd5e1;')
+    : num(v, `font-weight:700;color:${parseFloat(v) < 0 ? '#dc2626' : '#15803d'};`);
+
+  const bodyRows = rows.map((r, i) => `
+    <tr style="background:${i % 2 ? '#f8fafc' : '#ffffff'};">
+      ${td(`<b style="color:#005ba3;">${escH(r.tanker_number || '—')}</b>`)}
+      ${td(escH(r.route_name || '—'))}
+      ${num(r.rmrd_litres)}${num(r.disp_litres)}
+      ${r.has_ack ? num(r.ack_litres) : td('pending', 'text-align:center;color:#b45309;font-size:11px;')}
+      ${diffCell(r.diff_rmrd_litres)}${diffCell(r.diff_disp_litres)}
+    </tr>`).join('');
+
+  const sum = k => rows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
+  const chip = (label, color, bg) =>
+    `<span style="display:inline-block;padding:4px 12px;border-radius:999px;background:${bg};color:${color};font-size:12px;font-weight:600;margin-right:8px;">${label}</span>`;
+
+  return `
+  <div style="font-family:Segoe UI,Arial,sans-serif;max-width:860px;">
+    <div style="background:#005ba3;color:#ffffff;padding:14px 20px;border-radius:10px 10px 0 0;">
+      <div style="font-size:17px;font-weight:700;">Shreeja TMS — Daily TS Report</div>
+      <div style="font-size:12px;opacity:.85;">${escH(reportDate)} · ${TS_BASIS_LABEL(basis)}</div>
+    </div>
+    <div style="border:1px solid #e2e8f0;border-top:none;padding:16px 20px;border-radius:0 0 10px 10px;">
+      <p style="font-size:13px;margin:0 0 10px;">Dear Team,<br/>Summary of the Daily TS Report for <b>${escH(reportDate)}</b> — the full report is attached.</p>
+      <div style="margin:0 0 12px;">
+        ${chip(`${rows.length} trips`, '#1d4ed8', '#dbeafe')}
+        ${chip(`${acked} acknowledged`, '#15803d', '#dcfce7')}
+        ${chip(`${rows.length - acked} pending`, '#b45309', '#fef3c7')}
+      </div>
+      <table style="border-collapse:collapse;width:100%;">
+        <tr style="background:#e0f2fe;">
+          ${['Tanker', 'Route', 'RMRD (L)', 'Dispatch (L)', 'Ack (L)', 'Diff RMRD vs Ack (L)', 'Diff Dispatch vs Ack (L)']
+            .map(h => `<th style="padding:6px 8px;border:1px solid #e2e8f0;font-size:12px;color:#0f172a;text-align:left;">${h}</th>`).join('')}
+        </tr>
+        ${bodyRows}
+        <tr style="background:#dbeafe;font-weight:700;">
+          ${td(`TOTAL — ${rows.length} trips`)}${td('')}
+          ${num(sum('rmrd_litres'))}${num(sum('disp_litres'))}${num(sum('ack_litres'))}
+          ${diffCell(rN(sum('diff_rmrd_litres')))}${diffCell(rN(sum('diff_disp_litres')))}
+        </tr>
+      </table>
+      <p style="font-size:11px;color:#9ca3af;margin:14px 0 0;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <b style="color:#6b7280;">Shreeja IT Team</b>.</p>
+    </div>
+  </div>`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/reports/send-email  { report_date }  — same workbook as the download
 // ─────────────────────────────────────────────────────────────────────────────
@@ -414,11 +472,7 @@ router.post('/send-email', authenticate, async (req, res) => {
       from:    process.env.SMTP_FROM,
       to:      recipients.rows.map(r => `${r.full_name} <${r.email}>`).join(', '),
       subject: `Daily TS Report — ${report_date} (${TS_BASIS_LABEL(basis)})`,
-      html: `<p>Dear Team,</p>
-             <p>Please find attached the Daily TS Report for <strong>${report_date}</strong> (${basis === 'ack_entry' ? 'acknowledgement entry date' : 'planning date'}).</p>
-             <p>Trips planned: ${rows.length} · Acknowledged: ${acked}</p>
-             <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/>
-             <p style="font-family:sans-serif;font-size:12px;color:#9ca3af;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <strong style="color:#6b7280;">Shreeja IT Team</strong>.</p>`,
+      html: buildTsEmailHtml(rows, report_date, basis),
       attachments: [{
         filename: `ts_report_${report_date}.xlsx`,
         content: buf,
@@ -454,6 +508,7 @@ async function buildBmcuBreakup(reportDate) {
       tp.id AS plan_id, tp.trip_no,
       t.tanker_number, rm.route_name,
       te.id AS execution_id,
+      COALESCE(uu2.user_id, uu1.user_id) AS entered_by,
       (SELECT MIN(teb.milk_date) FROM trip_execution_bmcus teb
         WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE) AS lifting_date
     FROM trip_plans tp
@@ -464,6 +519,8 @@ async function buildBmcuBreakup(reportDate) {
     ) te ON TRUE
     LEFT JOIN tankers t        ON t.id=tp.tanker_id
     LEFT JOIN route_masters rm ON rm.id=tp.route_id
+    LEFT JOIN users uu1        ON uu1.id=te.executed_by
+    LEFT JOIN users uu2        ON uu2.id=te.updated_by
     WHERE tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
     ORDER BY tp.trip_no`, [reportDate]);
 
@@ -605,6 +662,7 @@ async function buildBmcuBreakup(reportDate) {
       const gr = sum6(bmcus.map(b => b.rmrd));
       return {
         trip_no: x.trip_no, tanker_number: x.tanker_number, route_name: x.route_name,
+        entered_by: x.entered_by,
         lifting_date: fmtDate(x.lifting_date), bmcus,
         grand: {
           dispatch: { litres: rN(gd.litres), kgs: rN(gd.kgs),
@@ -746,9 +804,10 @@ function buildBmcuBreakupWorkbook(data) {
       D4(b.diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFFEF3C7' }));
       rIdx++;
     }
-    // Grand Total per trip
+    // Grand Total per trip (cell 1 carries the entered-by user id)
     const row = ws.getRow(rIdx);
-    for (let k = 1; k <= 4; k++) setTxt(row.getCell(k), '', { fill: 'FFDBEAFE' });
+    setTxt(row.getCell(1), trip.entered_by ? `Entered by: ${trip.entered_by}` : '', { fill: 'FFDBEAFE' });
+    for (let k = 2; k <= 4; k++) setTxt(row.getCell(k), '', { fill: 'FFDBEAFE' });
     setTxt(row.getCell(5), 'Grand Total', { bold: true, fill: 'FFDBEAFE' });
     setTxt(row.getCell(6), '', { fill: 'FFDBEAFE' });
     M6(trip.grand.dispatch).forEach((v, k) => setNum(row.getCell(7 + k), v, { bold: true, fill: 'FFDBEAFE' }));

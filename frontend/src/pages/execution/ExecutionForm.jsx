@@ -815,10 +815,22 @@ export default function ExecutionForm() {
     return null;
   };
 
+  // Immediate blocking pop-up the moment an entered quantity pushes a total
+  // past 110% of tanker capacity (fires once per violation episode).
+  const capAlertRef = useRef(false);
+  useEffect(() => {
+    const violation = capacityViolation();
+    if (violation && !capAlertRef.current) {
+      capAlertRef.current = true;
+      window.alert(`⚠ ABNORMAL ENTRY BLOCKED\n\n${violation}\n\nCorrect the quantity — saving is blocked until it is within the limit.`);
+    } else if (!violation) capAlertRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bmcuRows, shiftRows]);
+
   const saveMut = useMutation({
     mutationFn: () => {
       const violation = capacityViolation();
-      if (violation) return Promise.reject(new Error(violation));
+      if (violation) { window.alert(`⚠ Cannot save\n\n${violation}`); return Promise.reject(new Error(violation)); }
       return updateExecution(id, {
       actual_km: actualKm, delivery_point_id: deliveryPointId || null,
       start_point_id: startPointId || null,
@@ -878,6 +890,7 @@ export default function ExecutionForm() {
             {exec.shifts_milk && <> · <span style={{ color: 'white' }}>{exec.shifts_milk}</span></>}
             {exec.route_name  && <> · <span style={{ color: 'white' }}>{exec.route_name}</span></>}
             {exec.delivery_point_name && <> · {exec.delivery_point_name}</>}
+            {exec.entered_by_user_id && <> · Entered by: <span style={{ color: 'white', fontFamily: 'monospace' }}>{exec.entered_by_user_id}</span></>}
           </p>
         </div>
         {isAdmin && !isClosed && (
@@ -1169,6 +1182,9 @@ export default function ExecutionForm() {
           </h3>
           <div className="text-xs text-gray-500 mb-1">
             Date: <strong className="text-gray-700">{exec.acknowledgements[0]?.ack_date?.slice(0,10)}</strong>
+            {exec.acknowledgements[0]?.entered_by_user_id && (
+              <> · Entered by: <strong className="text-gray-700 font-mono">{exec.acknowledgements[0].entered_by_user_id}</strong></>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

@@ -19,6 +19,19 @@ function createTransport() {
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
+// ─── Helper: maintenance guard ───────────────────────────────────────────────
+// A tanker out on an unreturned Maintainance gate pass cannot be planned.
+async function assertTankerAvailable(tankerId) {
+  if (!tankerId) return;
+  const r = await query(`
+    SELECT t.tanker_number FROM tankers t
+    WHERE t.id=$1 AND EXISTS (SELECT 1 FROM non_trip_gate_passes g
+      WHERE g.tanker_id=t.id AND g.reason='Maintainance' AND g.returned_at IS NULL)`,
+    [tankerId]);
+  if (r.rows.length)
+    throw Object.assign(new Error(`Tanker ${r.rows[0].tanker_number} is under maintenance — not available for planning until it reports back`), { code: 400 });
+}
+
 // ─── Helper: calculate cost fields ───────────────────────────────────────────
 async function calcCost(client, tankerId, expectedKm, expectedTotalQty) {
   if (!tankerId || !expectedKm) return { total_cost: 0, per_liter_cost: 0, utilization_pct: 0 };
@@ -153,6 +166,9 @@ router.post('/', authenticate, authorize('admin','planner'), async (req, res) =>
   if (!plan_date || !plan_for_date || !tanker_id || !delivery_point_id)
     return res.status(400).json({ error: 'plan_date, plan_for_date, tanker_id, delivery_point_id required' });
 
+  try { await assertTankerAvailable(tanker_id); }
+  catch (err) { return res.status(err.code === 400 ? 400 : 500).json({ error: err.message }); }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -197,6 +213,9 @@ router.put('/:id', authenticate, authorize('admin','planner'), async (req, res) 
     shifts_milk, expected_km, expected_total_qty,
     driver_name, loader_name, remarks, status, bmcus
   } = req.body;
+
+  try { await assertTankerAvailable(tanker_id); }
+  catch (err) { return res.status(err.code === 400 ? 400 : 500).json({ error: err.message }); }
 
   const client = await pool.connect();
   try {

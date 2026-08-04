@@ -107,6 +107,7 @@ export const getTripDocStatus = (date)   => api.get('/trip-docs/status', { param
 export const getTripDocPlan   = (planId) => api.get(`/trip-docs/${planId}`);
 export const getNonTripGatePasses  = (p) => api.get('/trip-docs/non-trip', { params: p });
 export const createNonTripGatePass = (d) => api.post('/trip-docs/non-trip', d);
+export const markNonTripReturned   = (id) => api.post(`/trip-docs/non-trip/${id}/return`);
 export const getTankerPosition     = ()  => api.get('/trip-docs/tanker-position');
 
 // ── Day wise Tanker Utilisation ───────────────────────────────────────────────

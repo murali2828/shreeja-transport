@@ -46,13 +46,15 @@ router.get('/', authenticate, async (req, res) => {
         tp.shifts_milk, tp.driver_name, tp.loader_name,
         t.tanker_number, t.capacity_litres,
         sp.name AS start_point_name, dp.name AS delivery_point_name,
-        u.full_name AS executor_name
+        u.full_name AS executor_name,
+        COALESCE(u2.user_id, u.user_id) AS entered_by_user_id
       FROM trip_executions te
       JOIN trip_plans tp      ON tp.id=te.trip_plan_id
       LEFT JOIN tankers t     ON t.id=tp.tanker_id
       LEFT JOIN starting_points sp ON sp.id=tp.start_point_id
       LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
       LEFT JOIN users u       ON u.id=te.executed_by
+      LEFT JOIN users u2      ON u2.id=te.updated_by
       WHERE 1=1`;
     const params = [];
     if (status)         { params.push(status);         sql += ` AND te.status=$${params.length}`; }
@@ -155,8 +157,11 @@ router.get('/:id', authenticate, async (req, res) => {
         tp.start_point_id, tp.delivery_point_id, tp.testing_point_id,
         t.tanker_number, t.capacity_litres, t.compartments, t.per_km_rate,
         sp.name AS start_point_name, dp.name AS delivery_point_name,
-        tpt.name AS testing_point_name, rm.route_name
+        tpt.name AS testing_point_name, rm.route_name,
+        COALESCE(u2.user_id, u1.user_id) AS entered_by_user_id
       FROM trip_executions te
+      LEFT JOIN users u1            ON u1.id=te.executed_by
+      LEFT JOIN users u2            ON u2.id=te.updated_by
       JOIN trip_plans tp            ON tp.id=te.trip_plan_id
       LEFT JOIN tankers t           ON t.id=tp.tanker_id
       LEFT JOIN starting_points sp  ON sp.id=tp.start_point_id
@@ -177,7 +182,10 @@ router.get('/:id', authenticate, async (req, res) => {
     );
 
     const acks = await query(
-      'SELECT * FROM trip_acknowledgements WHERE execution_id=$1 ORDER BY chamber',
+      `SELECT ta.*, ua.user_id AS entered_by_user_id
+       FROM trip_acknowledgements ta
+       LEFT JOIN users ua ON ua.id=ta.entered_by
+       WHERE ta.execution_id=$1 ORDER BY ta.chamber`,
       [req.params.id]
     );
 
@@ -364,11 +372,11 @@ router.post('/:id/acknowledgements', authenticate, async (req, res) => {
       const kgSnf  = calcKgSnf(kgs, ch.snf_pct);
       await client.query(
         `INSERT INTO trip_acknowledgements
-           (execution_id,ack_date,chamber,qty_litres,qty_kgs,fat_pct,snf_pct,kg_fat,kg_snf,temperature,description)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+           (execution_id,ack_date,chamber,qty_litres,qty_kgs,fat_pct,snf_pct,kg_fat,kg_snf,temperature,description,entered_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [req.params.id, ack_date||null, ch.chamber, ch.qty_litres||null,
          kgs||null, ch.fat_pct||null, ch.snf_pct||null, kgFat||null, kgSnf||null,
-         ch.temperature||null, ch.description||null]
+         ch.temperature||null, ch.description||null, req.user.id]
       );
     }
 

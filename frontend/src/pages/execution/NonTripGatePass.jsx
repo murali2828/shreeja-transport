@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Printer, Plus, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getTankers, getDeliveryPoints, getNonTripGatePasses, createNonTripGatePass } from '../../api/index';
+import { getTankers, getDeliveryPoints, getNonTripGatePasses, createNonTripGatePass, markNonTripReturned } from '../../api/index';
 import { printNonTripGatePass } from '../../utils/printDocs';
 
 const REASONS = ['Maintainance', 'Hot water', 'RMT', 'Tankers without driver', 'Others'];
@@ -53,6 +53,12 @@ export default function NonTripGatePass() {
       printNonTripGatePass(res.data);
     },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to issue gate pass'),
+  });
+
+  const returnMut = useMutation({
+    mutationFn: (gpId) => markNonTripReturned(gpId),
+    onSuccess: () => { toast.success('Tanker marked as returned — available for planning again'); qc.invalidateQueries(['non-trip-gp']); },
+    onError: (e) => toast.error(e.response?.data?.error || 'Failed'),
   });
 
   const submit = () => {
@@ -164,12 +170,13 @@ export default function NonTripGatePass() {
                 <th className="table-th text-right">Reimburse (₹)</th>
                 <th className="table-th">Remarks</th>
                 <th className="table-th">Issued By</th>
+                <th className="table-th">Returned</th>
                 <th className="table-th">Print</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={13}><div className="empty-state">No gate passes in this date range.</div></td></tr>
+                <tr><td colSpan={14}><div className="empty-state">No gate passes in this date range.</div></td></tr>
               )}
               {rows.map(g => (
                 <tr key={g.id} className="border-b border-gray-50 hover:bg-gray-50">
@@ -188,6 +195,24 @@ export default function NonTripGatePass() {
                   <td className="table-td text-right">{g.km && g.balaji_dairy_rate ? n2(g.km * g.balaji_dairy_rate) : '—'}</td>
                   <td className="table-td text-gray-600">{g.remarks || '—'}</td>
                   <td className="table-td text-gray-600">{g.issued_by_name || '—'}</td>
+                  <td className="table-td whitespace-nowrap">
+                    {g.returned_at ? (
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium"
+                        title={g.returned_by_name ? `by ${g.returned_by_name}` : ''}>
+                        {fmtTs(g.returned_at)}
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Mark tanker ${g.tanker_number} as RETURNED? It becomes available for trip planning again.`))
+                            returnMut.mutate(g.id);
+                        }}
+                        disabled={returnMut.isPending}
+                        className="btn-secondary btn-sm text-[11px] px-2 py-1">
+                        Mark Returned
+                      </button>
+                    )}
+                  </td>
                   <td className="table-td">
                     <button onClick={() => printNonTripGatePass(g, { duplicate: true })}
                       className="btn-secondary btn-sm flex items-center gap-1" title="Reprint (marked DUPLICATE)">

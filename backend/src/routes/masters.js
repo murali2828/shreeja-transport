@@ -13,6 +13,9 @@ router.get('/tankers', authenticate, async (req, res) => {
               t.vendor_code, t.vendor_name, t.rate_per_km_bmcu, t.rate_per_km_p2p,
               t.vendor_id, v.vendor_name AS vendor_master_name,
               t.induction_type, t.validity_start, t.validity_end,
+              EXISTS (SELECT 1 FROM non_trip_gate_passes g
+                WHERE g.tanker_id=t.id AND g.reason='Maintainance'
+                  AND g.returned_at IS NULL) AS in_maintenance,
               t.is_active, t.created_at, t.updated_at
        FROM tankers t
        LEFT JOIN vendors v ON v.id = t.vendor_id

@@ -199,7 +199,7 @@ export default function TripPlanForm() {
               value={form.tanker_id}
               onChange={v => set('tanker_id', v)}
               placeholder="Select tanker…"
-              options={tankers.map(t => ({
+              options={tankers.filter(t => !t.in_maintenance).map(t => ({
                 value: String(t.id),
                 label: `${t.tanker_number} — ${t.capacity_litres.toLocaleString()}L @ ₹${t.per_km_rate}/km`
               }))}

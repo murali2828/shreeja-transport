@@ -172,6 +172,20 @@ router.post('/non-trip', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /api/trip-docs/non-trip/:id/return — tanker reported back (e.g. from
+// maintenance). Frees the tanker for trip planning again.
+router.post('/non-trip/:id(\\d+)/return', authenticate, async (req, res) => {
+  try {
+    const r = await query(`
+      UPDATE non_trip_gate_passes
+      SET returned_at=NOW(), returned_by_name=$2
+      WHERE id=$1 AND returned_at IS NULL
+      RETURNING id, returned_at`, [req.params.id, req.user.full_name]);
+    if (!r.rows.length) return res.status(409).json({ error: 'Gate pass not found or already marked returned' });
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/trip-docs/tanker-position — live tanker status/position dashboard.
 // Status per tanker from its LATEST event:
@@ -213,11 +227,13 @@ router.get('/tanker-position', authenticate, async (req, res) => {
     const dpBy = Object.fromEntries(lastDp.map(t => [t.tanker_id, t.delivery_point]));
 
     // Latest non-trip gate pass per tanker.
+    // Only passes not yet marked returned hold a tanker's status.
     const ntgp = (await query(`
       SELECT DISTINCT ON (g.tanker_id) g.tanker_id, g.reason, g.other_text, g.issued_at,
              dp.name AS delivery_point_name
       FROM non_trip_gate_passes g
       LEFT JOIN delivery_points dp ON dp.id=g.delivery_point_id
+      WHERE g.returned_at IS NULL
       ORDER BY g.tanker_id, g.issued_at DESC`)).rows;
     const ntgpBy = Object.fromEntries(ntgp.map(g => [g.tanker_id, g]));
 

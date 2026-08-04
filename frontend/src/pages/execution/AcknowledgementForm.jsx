@@ -1,5 +1,5 @@
 // frontend/src/pages/execution/AcknowledgementForm.jsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronLeft } from 'lucide-react';
@@ -36,6 +36,21 @@ export default function AcknowledgementForm() {
         setAckDate(exec.acknowledgements[0].ack_date.slice(0,10));
     }
   }, [exec]);
+
+  // Immediate blocking pop-up when chamber quantities exceed 110% of capacity
+  const capAlertRef = useRef(false);
+  useEffect(() => {
+    const capacity = parseFloat(exec?.capacity_litres) || 0;
+    if (capacity <= 0) return;
+    const totalL = chambers.reduce((s, c) => s + (parseFloat(c.qty_litres) || 0), 0);
+    const over = totalL > capacity * 1.1;
+    if (over && !capAlertRef.current) {
+      capAlertRef.current = true;
+      const fmtL = v => Math.round(v).toLocaleString('en-IN');
+      window.alert(`⚠ ABNORMAL ENTRY BLOCKED\n\nAcknowledgement total ${fmtL(totalL)} L exceeds 110% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(capacity * 1.1)} L).\n\nCorrect the quantity — saving is blocked until it is within the limit.`);
+    } else if (!over) capAlertRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chambers]);
 
   const updateChamber = (idx, field, val) => {
     setChambers(prev => prev.map((c, i) => {

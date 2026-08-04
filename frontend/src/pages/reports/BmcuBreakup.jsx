@@ -75,6 +75,7 @@ export default function BmcuBreakup() {
             <span className="font-mono text-xs font-semibold text-[#005ba3]">{trip.tanker_number || '—'}</span>
             <span className="text-gray-600">{trip.route_name || '—'}</span>
             <span className="text-gray-500 text-xs">Lifting: {trip.lifting_date || '—'}</span>
+            {trip.entered_by && <span className="text-gray-500 text-xs">Entered by: <span className="font-mono text-gray-700">{trip.entered_by}</span></span>}
           </div>
           <div className="overflow-x-auto">
             <table className="text-xs" style={{ minWidth: 1700 }}>

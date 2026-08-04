@@ -227,11 +227,11 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
       const kgSnf  = calcKgSnf(kgs, ch.snf_pct);
       await client.query(
         `INSERT INTO trip_acknowledgements
-           (execution_id,ack_date,chamber,qty_litres,qty_kgs,fat_pct,snf_pct,kg_fat,kg_snf,temperature,description)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+           (execution_id,ack_date,chamber,qty_litres,qty_kgs,fat_pct,snf_pct,kg_fat,kg_snf,temperature,description,entered_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [execId, ch.ack_date || ack_date || null, ch.chamber, ch.qty_litres||null,
          kgs||null, ch.fat_pct||null, ch.snf_pct||null, kgFat||null, kgSnf||null,
-         ch.temperature||null, ch.description||null]
+         ch.temperature||null, ch.description||null, userId || null]
       );
     }
   }
@@ -270,14 +270,15 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     `UPDATE trip_executions SET
        actual_km=$1,
        total_qty_litres=$2, total_qty_kgs=$3,
-       avg_fat=$4, avg_snf=$5, total_kg_fat=$6, total_kg_snf=$7
+       avg_fat=$4, avg_snf=$5, total_kg_fat=$6, total_kg_snf=$7,
+       updated_by=COALESCE($9, updated_by)
        ${statusSql}, updated_at=NOW()
      WHERE id=$8 RETURNING *`,
     [actual_km !== undefined ? (actual_km || null) : exec.rows[0].actual_km,
      t.total_litres, t.total_kgs,
      Math.round(avgFat * 10000) / 10000, Math.round(avgSnf * 10000) / 10000,
      t.total_kg_fat, t.total_kg_snf,
-     execId]
+     execId, userId || null]
   );
 
   const dist = await computeExecutionDistance(client, execId, userId);

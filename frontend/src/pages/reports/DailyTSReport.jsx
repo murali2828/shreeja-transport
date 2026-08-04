@@ -98,7 +98,7 @@ export default function DailyTSReport() {
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto max-h-[68vh]">
-          <table className="text-xs" style={{ minWidth: 2150 }}>
+          <table className="text-xs" style={{ minWidth: 2250 }}>
             <thead className="sticky top-0 bg-gray-50 z-10">
               <tr className="border-b">
                 <th className="table-th" rowSpan={2}>Tanker Number</th>
@@ -107,6 +107,7 @@ export default function DailyTSReport() {
                 <th className="table-th" rowSpan={2}>Route Name</th>
                 <th className="table-th" rowSpan={2}>Starting Point</th>
                 <th className="table-th" rowSpan={2}>Unloading Point</th>
+                <th className="table-th" rowSpan={2}>Entered By</th>
                 {GROUPS.map(g => (
                   <th key={g.prefix} colSpan={g.measures.length}
                     className={`table-th text-center border-l ${g.cls}`}>{g.title}</th>
@@ -122,7 +123,7 @@ export default function DailyTSReport() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={32}><div className="empty-state">
+                <tr><td colSpan={33}><div className="empty-state">
                   {basis === 'ack_entry' ? 'No acknowledgements were entered on this date.' : 'No trips planned for this date.'}
                 </div></td></tr>
               )}
@@ -134,6 +135,7 @@ export default function DailyTSReport() {
                   <td className="table-td whitespace-nowrap">{r.route_name || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.starting_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.unloading_point || '—'}</td>
+                  <td className="table-td whitespace-nowrap font-mono text-[11px] text-gray-600">{r.entered_by || '—'}</td>
                   {GROUPS.map(g => g.measures.map(([m], mi) => {
                     const key = `${g.prefix}_${m}`;
                     const fmt = m === 'litres' ? n2 : n4;
@@ -147,7 +149,7 @@ export default function DailyTSReport() {
             {rows.length > 0 && (
               <tfoot className="bg-blue-50 border-t font-semibold sticky bottom-0">
                 <tr>
-                  <td className="table-td" colSpan={6}>TOTAL — {rows.length} trips</td>
+                  <td className="table-td" colSpan={7}>TOTAL — {rows.length} trips</td>
                   {GROUPS.map(g => g.measures.map(([m], mi) => {
                     // Fat%/SNF% totals are weighted: Σ kg-part / Σ kgs × 100
                     const total = PCT_MEASURES.includes(m)

@@ -63,14 +63,15 @@ export default function ClosedTrips() {
                 <th className="table-th text-right">TS Kgs</th>
                 <th className="table-th text-right">Avg Fat%</th>
                 <th className="table-th text-right">Avg SNF%</th>
+                <th className="table-th">Entered By</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={10} className="table-td text-center py-10 text-gray-400">Loading…</td></tr>
+                <tr><td colSpan={11} className="table-td text-center py-10 text-gray-400">Loading…</td></tr>
               )}
               {!isLoading && execs.length === 0 && (
-                <tr><td colSpan={10} className="table-td text-center py-10 text-gray-400">
+                <tr><td colSpan={11} className="table-td text-center py-10 text-gray-400">
                   No closed trips in this date range
                 </td></tr>
               )}
@@ -88,6 +89,7 @@ export default function ClosedTrips() {
                   <td className="table-td text-right">{parseFloat(e.total_qty_kgs||0).toFixed(2)}</td>
                   <td className="table-td text-right">{parseFloat(e.avg_fat||0).toFixed(3)}</td>
                   <td className="table-td text-right">{parseFloat(e.avg_snf||0).toFixed(3)}</td>
+                  <td className="table-td font-mono text-[11px] text-gray-600">{e.entered_by_user_id || '—'}</td>
                 </tr>
               ))}
             </tbody>

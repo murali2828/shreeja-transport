@@ -179,6 +179,7 @@ export default function ExecutionList() {
                 <th className="table-th text-right">Exp Qty (L)</th>
                 <th className="table-th text-right">KM</th>
                 <th className="table-th">Execution Status</th>
+                <th className="table-th">Entered By</th>
                 <th className="table-th">Action</th>
               </tr>
             </thead>
@@ -211,6 +212,7 @@ export default function ExecutionList() {
                         <span className="text-xs text-gray-400">Not started</span>
                       )}
                     </td>
+                    <td className="table-td font-mono text-[11px] text-gray-600">{exec?.entered_by_user_id || '—'}</td>
                     <td className="table-td">
                       <div className="flex items-center gap-1.5">
                         {exec ? (
