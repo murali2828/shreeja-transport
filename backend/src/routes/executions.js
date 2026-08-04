@@ -367,7 +367,9 @@ router.post('/:id/acknowledgements', authenticate, async (req, res) => {
     await client.query('DELETE FROM trip_acknowledgements WHERE execution_id=$1', [req.params.id]);
 
     for (const ch of chambers) {
-      const kgs    = calcKgs(ch.qty_litres);
+      // Preserve the user-ENTERED kgs — deriving it back from the 2-dp-rounded
+      // litres drifts by ±0.01 kg (e.g. entered 19,900 stored as 19,899.99).
+      const kgs    = parseFloat(ch.qty_kgs) || calcKgs(ch.qty_litres);
       const kgFat  = calcKgFat(kgs, ch.fat_pct);
       const kgSnf  = calcKgSnf(kgs, ch.snf_pct);
       await client.query(

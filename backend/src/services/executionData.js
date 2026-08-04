@@ -222,7 +222,8 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
   if (acknowledgements !== undefined) {
     await client.query('DELETE FROM trip_acknowledgements WHERE execution_id=$1', [execId]);
     for (const ch of (acknowledgements || [])) {
-      const kgs    = calcKgs(ch.qty_litres);
+      // Preserve the user-ENTERED kgs (see executions.js ack handler).
+      const kgs    = parseFloat(ch.qty_kgs) || calcKgs(ch.qty_litres);
       const kgFat  = calcKgFat(kgs, ch.fat_pct);
       const kgSnf  = calcKgSnf(kgs, ch.snf_pct);
       await client.query(

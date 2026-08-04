@@ -57,7 +57,7 @@ export default function AcknowledgementForm() {
       if (i !== idx) return c;
       const updated = { ...c, [field]: val };
       if (field === 'qty_kgs') {
-        // Qty Litres = Qty Kgs ÷ 1.028 (auto-calculated, read-only)
+        // Qty Litres = Qty Kgs ÷ 1.0285 (auto-calculated, read-only)
         updated.qty_litres = val ? +(parseFloat(val) / KG).toFixed(2) : '';
         if (c.fat_pct) updated.kg_fat = +(parseFloat(val) * parseFloat(c.fat_pct) / 100).toFixed(4);
         if (c.snf_pct) updated.kg_snf = +(parseFloat(val) * parseFloat(c.snf_pct) / 100).toFixed(4);
