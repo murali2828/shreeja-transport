@@ -237,23 +237,6 @@ const TS_GROUPS = [
 let _off = 0;
 for (const g of TS_GROUPS) { g.offset = _off; _off += g.keys.length; }
 const TS_NMEAS = _off;
-// key -> absolute column index (1-based, before adding NINFO); filled once TS_GROUPS is final.
-const TS_KEY_COL = {};
-for (const g of TS_GROUPS) g.keys.forEach((key, ki) => { TS_KEY_COL[key] = g.offset + ki; });
-// Gain/Loss % Excel formula, mirroring the confirmed sample cell AV4
-// "=(AT4+AU4)/(T4+U4)%" — i.e. (diff Kg.Fat + diff Kg.SNF)/(base Kg.Fat + base Kg.SNF)*100.
-// Left as a live formula so Excel shows a native #DIV/0! when the base is zero,
-// matching the reference workbook's behavior.
-const TS_PCT_FORMULA = {
-  dd_pct: ['dd_kg_fat', 'dd_kg_snf', 'rmrd_kg_fat', 'rmrd_kg_snf'],
-  da_pct: ['da_kg_fat', 'da_kg_snf', 'disp_kg_fat', 'disp_kg_snf'],
-  dr_pct: ['dr_kg_fat', 'dr_kg_snf', 'rmrd_kg_fat', 'rmrd_kg_snf'],
-};
-function colLetter(n) {
-  let s = '';
-  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
-  return s;
-}
 // Weighted totals for percentage columns (never plain sums):
 //   section Fat%/SNF% = Σkg-part / Σkgs × 100
 //   diff Fat%/SNF%    = weighted pct of one section minus the other
@@ -360,25 +343,17 @@ function buildTsWorkbook(rows, reportDate, basis = 'plan') {
       c.alignment = { vertical: 'middle', horizontal: 'left' };
       if (i === 3) c.font = { bold: true, color: { argb: 'FF005BA3' } };
     });
-    const rowNum = 4 + ri;
     TS_GROUPS.forEach(g => {
       g.keys.forEach((key, ki) => {
         const c = row.getCell(NINFO + 1 + g.offset + ki);
-        const pctRefs = TS_PCT_FORMULA[key];
-        if (pctRefs) {
-          const [dF, dS, bF, bS] = pctRefs.map(k => `${colLetter(NINFO + 1 + TS_KEY_COL[k])}${rowNum}`);
-          c.value = { formula: `(${dF}+${dS})/(${bF}+${bS})*100` };
-        } else {
-          const v = x[key];
-          c.value = v == null ? null : parseFloat(v);
-        }
+        const v = x[key];
+        c.value = v == null ? null : parseFloat(v);
         c.numFmt = numFmt(ki);
         c.alignment = { horizontal: 'right' };
         c.border = BORDER;
         c.fill = fillOf(g.fill);
-        if (g.diff) {
-          const v = x[key];
-          if (pctRefs || v != null) c.font = { color: { argb: (v == null || parseFloat(v) >= 0) ? GREEN : RED }, bold: true };
+        if (g.diff && v != null) {
+          c.font = { color: { argb: parseFloat(v) < 0 ? RED : GREEN }, bold: true };
         }
       });
     });
