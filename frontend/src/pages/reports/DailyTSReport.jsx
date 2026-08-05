@@ -31,7 +31,12 @@ function tsTotal(key, sum) {
     const a = w(p1, k1), b = w(p2, k2);
     return a != null && b != null ? a - b : null;
   };
-  const g = (diffKgs, baseKgs) => sum(baseKgs) > 0 ? sum(diffKgs) / sum(baseKgs) * 100 : null;
+  // Gain/Loss % — confirmed formula (sample workbook cell AV4):
+  // (Σdiff Kg.Fat + Σdiff Kg.SNF) / (Σbase Kg.Fat + Σbase Kg.SNF) × 100
+  const g = (diffKgFat, diffKgSnf, baseKgFat, baseKgSnf) => {
+    const base = sum(baseKgFat) + sum(baseKgSnf);
+    return base > 0 ? (sum(diffKgFat) + sum(diffKgSnf)) / base * 100 : null;
+  };
   switch (key) {
     case 'rmrd_fat': return w('rmrd_kg_fat', 'rmrd_kgs');
     case 'rmrd_snf': return w('rmrd_kg_snf', 'rmrd_kgs');
@@ -43,9 +48,9 @@ function tsTotal(key, sum) {
     case 'da_snf':   return dw('ack_kg_snf', 'ack_kgs', 'disp_kg_snf', 'disp_kgs');
     case 'dr_fat':   return dw('ack_kg_fat', 'ack_kgs', 'rmrd_kg_fat', 'rmrd_kgs');
     case 'dr_snf':   return dw('ack_kg_snf', 'ack_kgs', 'rmrd_kg_snf', 'rmrd_kgs');
-    case 'dd_pct':   return g('dd_kgs', 'rmrd_kgs');
-    case 'da_pct':   return g('da_kgs', 'disp_kgs');
-    case 'dr_pct':   return g('dr_kgs', 'rmrd_kgs');
+    case 'dd_pct':   return g('dd_kg_fat', 'dd_kg_snf', 'rmrd_kg_fat', 'rmrd_kg_snf');
+    case 'da_pct':   return g('da_kg_fat', 'da_kg_snf', 'disp_kg_fat', 'disp_kg_snf');
+    case 'dr_pct':   return g('dr_kg_fat', 'dr_kg_snf', 'rmrd_kg_fat', 'rmrd_kg_snf');
     default:         return sum(key);
   }
 }

@@ -160,7 +160,12 @@ async function buildTsReport(reportDate, basis = 'plan') {
     const ackFat  = hasAck ? pct(row.ack_kg_fat, row.ack_kgs) : null;
     const ackSnf  = hasAck ? pct(row.ack_kg_snf, row.ack_kgs) : null;
     const d = (a, b) => rN(parseFloat(a) - parseFloat(b), 2);
-    const gain = (diffKgs, baseKgs) => parseFloat(baseKgs) > 0 ? rN(diffKgs / parseFloat(baseKgs) * 100) : null;
+    // TS Gain/Loss % — confirmed formula (sample workbook cell AV4):
+    // (diff Kg.Fat + diff Kg.SNF) / (base Kg.Fat + base Kg.SNF) × 100
+    const gain = (diffKgFat, diffKgSnf, baseKgFat, baseKgSnf) => {
+      const base = parseFloat(baseKgFat) + parseFloat(baseKgSnf);
+      return base > 0 ? rN((parseFloat(diffKgFat) + parseFloat(diffKgSnf)) / base * 100) : null;
+    };
     return {
       trip_no: row.trip_no,
       tanker_number: row.tanker_number,
@@ -191,7 +196,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
       dd_kgs:    hasExec ? d(row.disp_kgs, rmrd.kgs) : null,
       dd_kg_fat: hasExec ? d(row.disp_kg_fat, rmrd.kg_fat) : null,
       dd_kg_snf: hasExec ? d(row.disp_kg_snf, rmrd.kg_snf) : null,
-      dd_pct:    hasExec ? gain(d(row.disp_kgs, rmrd.kgs), rmrd.kgs) : null,
+      dd_pct:    hasExec ? gain(d(row.disp_kg_fat, rmrd.kg_fat), d(row.disp_kg_snf, rmrd.kg_snf), rmrd.kg_fat, rmrd.kg_snf) : null,
       // Difference Ack Vs Dispatch (Ack − Dispatch)
       da_litres: hasAck ? d(row.ack_litres, row.disp_litres) : null,
       da_kgs:    hasAck ? d(row.ack_kgs, row.disp_kgs) : null,
@@ -199,7 +204,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
       da_snf:    hasAck && ackSnf != null && dispSnf != null ? rN(ackSnf - dispSnf) : null,
       da_kg_fat: hasAck ? d(row.ack_kg_fat, row.disp_kg_fat) : null,
       da_kg_snf: hasAck ? d(row.ack_kg_snf, row.disp_kg_snf) : null,
-      da_pct:    hasAck ? gain(d(row.ack_kgs, row.disp_kgs), row.disp_kgs) : null,
+      da_pct:    hasAck ? gain(d(row.ack_kg_fat, row.disp_kg_fat), d(row.ack_kg_snf, row.disp_kg_snf), row.disp_kg_fat, row.disp_kg_snf) : null,
       // Difference Ackn Vs RMRD (Ack − RMRD)
       dr_litres: hasAck ? d(row.ack_litres, rmrd.litres) : null,
       dr_kgs:    hasAck ? d(row.ack_kgs, rmrd.kgs) : null,
@@ -207,7 +212,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
       dr_snf:    hasAck && ackSnf != null && rmrdSnf != null ? rN(ackSnf - rmrdSnf) : null,
       dr_kg_fat: hasAck ? d(row.ack_kg_fat, rmrd.kg_fat) : null,
       dr_kg_snf: hasAck ? d(row.ack_kg_snf, rmrd.kg_snf) : null,
-      dr_pct:    hasAck ? gain(d(row.ack_kgs, rmrd.kgs), rmrd.kgs) : null,
+      dr_pct:    hasAck ? gain(d(row.ack_kg_fat, rmrd.kg_fat), d(row.ack_kg_snf, rmrd.kg_snf), rmrd.kg_fat, rmrd.kg_snf) : null,
     };
   });
 }
@@ -232,17 +237,38 @@ const TS_GROUPS = [
 let _off = 0;
 for (const g of TS_GROUPS) { g.offset = _off; _off += g.keys.length; }
 const TS_NMEAS = _off;
+// key -> absolute column index (1-based, before adding NINFO); filled once TS_GROUPS is final.
+const TS_KEY_COL = {};
+for (const g of TS_GROUPS) g.keys.forEach((key, ki) => { TS_KEY_COL[key] = g.offset + ki; });
+// Gain/Loss % Excel formula, mirroring the confirmed sample cell AV4
+// "=(AT4+AU4)/(T4+U4)%" — i.e. (diff Kg.Fat + diff Kg.SNF)/(base Kg.Fat + base Kg.SNF)*100.
+// Left as a live formula so Excel shows a native #DIV/0! when the base is zero,
+// matching the reference workbook's behavior.
+const TS_PCT_FORMULA = {
+  dd_pct: ['dd_kg_fat', 'dd_kg_snf', 'rmrd_kg_fat', 'rmrd_kg_snf'],
+  da_pct: ['da_kg_fat', 'da_kg_snf', 'disp_kg_fat', 'disp_kg_snf'],
+  dr_pct: ['dr_kg_fat', 'dr_kg_snf', 'rmrd_kg_fat', 'rmrd_kg_snf'],
+};
+function colLetter(n) {
+  let s = '';
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
 // Weighted totals for percentage columns (never plain sums):
 //   section Fat%/SNF% = Σkg-part / Σkgs × 100
 //   diff Fat%/SNF%    = weighted pct of one section minus the other
-//   Gain/Loss %       = Σdiff kgs / Σbase kgs × 100
+//   Gain/Loss %       = confirmed formula (sample workbook cell AV4):
+//     (Σdiff Kg.Fat + Σdiff Kg.SNF) / (Σbase Kg.Fat + Σbase Kg.SNF) × 100
 function tsTotal(key, sum) {
   const w = (part, kgs) => sum(kgs) > 0 ? sum(part) / sum(kgs) * 100 : null;
   const dw = (p1, k1, p2, k2) => {
     const a = w(p1, k1), b = w(p2, k2);
     return a != null && b != null ? a - b : null;
   };
-  const g = (diffKgs, baseKgs) => sum(baseKgs) > 0 ? sum(diffKgs) / sum(baseKgs) * 100 : null;
+  const g = (diffKgFat, diffKgSnf, baseKgFat, baseKgSnf) => {
+    const base = sum(baseKgFat) + sum(baseKgSnf);
+    return base > 0 ? (sum(diffKgFat) + sum(diffKgSnf)) / base * 100 : null;
+  };
   switch (key) {
     case 'rmrd_fat': return w('rmrd_kg_fat', 'rmrd_kgs');
     case 'rmrd_snf': return w('rmrd_kg_snf', 'rmrd_kgs');
@@ -254,9 +280,9 @@ function tsTotal(key, sum) {
     case 'da_snf':   return dw('ack_kg_snf', 'ack_kgs', 'disp_kg_snf', 'disp_kgs');
     case 'dr_fat':   return dw('ack_kg_fat', 'ack_kgs', 'rmrd_kg_fat', 'rmrd_kgs');
     case 'dr_snf':   return dw('ack_kg_snf', 'ack_kgs', 'rmrd_kg_snf', 'rmrd_kgs');
-    case 'dd_pct':   return g('dd_kgs', 'rmrd_kgs');
-    case 'da_pct':   return g('da_kgs', 'disp_kgs');
-    case 'dr_pct':   return g('dr_kgs', 'rmrd_kgs');
+    case 'dd_pct':   return g('dd_kg_fat', 'dd_kg_snf', 'rmrd_kg_fat', 'rmrd_kg_snf');
+    case 'da_pct':   return g('da_kg_fat', 'da_kg_snf', 'disp_kg_fat', 'disp_kg_snf');
+    case 'dr_pct':   return g('dr_kg_fat', 'dr_kg_snf', 'rmrd_kg_fat', 'rmrd_kg_snf');
     default:         return sum(key);
   }
 }
@@ -334,17 +360,25 @@ function buildTsWorkbook(rows, reportDate, basis = 'plan') {
       c.alignment = { vertical: 'middle', horizontal: 'left' };
       if (i === 3) c.font = { bold: true, color: { argb: 'FF005BA3' } };
     });
+    const rowNum = 4 + ri;
     TS_GROUPS.forEach(g => {
       g.keys.forEach((key, ki) => {
         const c = row.getCell(NINFO + 1 + g.offset + ki);
-        const v = x[key];
-        c.value = v == null ? null : parseFloat(v);
+        const pctRefs = TS_PCT_FORMULA[key];
+        if (pctRefs) {
+          const [dF, dS, bF, bS] = pctRefs.map(k => `${colLetter(NINFO + 1 + TS_KEY_COL[k])}${rowNum}`);
+          c.value = { formula: `(${dF}+${dS})/(${bF}+${bS})*100` };
+        } else {
+          const v = x[key];
+          c.value = v == null ? null : parseFloat(v);
+        }
         c.numFmt = numFmt(ki);
         c.alignment = { horizontal: 'right' };
         c.border = BORDER;
         c.fill = fillOf(g.fill);
-        if (g.diff && v != null) {
-          c.font = { color: { argb: parseFloat(v) < 0 ? RED : GREEN }, bold: true };
+        if (g.diff) {
+          const v = x[key];
+          if (pctRefs || v != null) c.font = { color: { argb: (v == null || parseFloat(v) >= 0) ? GREEN : RED }, bold: true };
         }
       });
     });
@@ -702,7 +736,10 @@ async function buildBmcuBreakup(reportDate) {
             litres: rN(b.dispatch.litres - rm.litres),
             kg_fat: rN(b.dispatch.kg_fat - rm.kg_fat),
             kg_snf: rN(b.dispatch.kg_snf - rm.kg_snf),
-            pct:    rm.kgs > 0 ? rN((b.dispatch.kgs - rm.kgs) / rm.kgs * 100) : null,
+            // Gain/Loss % — confirmed formula: (diff Kg.Fat + diff Kg.SNF)/(base Kg.Fat + base Kg.SNF)×100
+            pct: (rm.kg_fat + rm.kg_snf) > 0
+              ? rN(((b.dispatch.kg_fat - rm.kg_fat) + (b.dispatch.kg_snf - rm.kg_snf)) / (rm.kg_fat + rm.kg_snf) * 100)
+              : null,
           },
         };
       });
@@ -721,7 +758,9 @@ async function buildBmcuBreakup(reportDate) {
             kg_fat: rN(gr.kg_fat), kg_snf: rN(gr.kg_snf) },
           diff: { kgs: rN(gd.kgs - gr.kgs), litres: rN(gd.litres - gr.litres),
             kg_fat: rN(gd.kg_fat - gr.kg_fat), kg_snf: rN(gd.kg_snf - gr.kg_snf),
-            pct: gr.kgs > 0 ? rN((gd.kgs - gr.kgs) / gr.kgs * 100) : null },
+            pct: (gr.kg_fat + gr.kg_snf) > 0
+              ? rN(((gd.kg_fat - gr.kg_fat) + (gd.kg_snf - gr.kg_snf)) / (gr.kg_fat + gr.kg_snf) * 100)
+              : null },
         },
       };
     });
