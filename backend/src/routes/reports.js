@@ -464,16 +464,20 @@ function buildTsEmailHtml(rows, reportDate, basis) {
   const lossCell = v => v == null || parseFloat(v) >= 0 ? td('—', 'text-align:right;color:#cbd5e1;')
     : td(n0(v), 'text-align:right;font-weight:700;color:#dc2626;');
 
-  const bodyRows = rows.map((r, i) => `
+  // Only rows with an actual loss on at least one of the three measures are
+  // shown — a trip with no loss anywhere is dropped from the summary entirely.
+  const lossRows = rows.filter(r => r.has_ack &&
+    [r.dr_kgs, r.dr_kg_fat, r.dr_kg_snf].some(v => v != null && parseFloat(v) < 0));
+
+  const bodyRows = lossRows.map((r, i) => `
     <tr style="background:${i % 2 ? '#f8fafc' : '#ffffff'};">
       ${td(`<b style="color:#005ba3;">${escH(r.tanker_number || '—')}</b>`)}
       ${td(escH(r.route_name || '—'))}
       ${td(escH(r.unloading_point || '—'))}
-      ${r.has_ack ? `${lossCell(r.dr_kgs)}${lossCell(r.dr_kg_fat)}${lossCell(r.dr_kg_snf)}`
-        : `${td('pending', 'text-align:center;color:#b45309;font-size:11px;')}${td('—', 'text-align:right;color:#cbd5e1;')}${td('—', 'text-align:right;color:#cbd5e1;')}`}
+      ${lossCell(r.dr_kgs)}${lossCell(r.dr_kg_fat)}${lossCell(r.dr_kg_snf)}
     </tr>`).join('');
 
-  const sum = k => rows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
+  const sum = k => lossRows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
 
   return `
   <div style="font-family:Segoe UI,Arial,sans-serif;max-width:700px;">
@@ -483,17 +487,19 @@ function buildTsEmailHtml(rows, reportDate, basis) {
     </div>
     <div style="border:1px solid #e2e8f0;border-top:none;padding:16px 20px;border-radius:0 0 10px 10px;">
       <p style="font-size:13px;margin:0 0 10px;">Dear Team,<br/>Summary of the Daily TS Report for <b>${escH(reportDate)}</b> — the full report is attached.</p>
-      <table style="border-collapse:collapse;width:100%;">
+      ${lossRows.length === 0
+        ? `<p style="font-size:13px;color:#15803d;font-weight:600;margin:0 0 10px;">No loss recorded against RMRD for any trip.</p>`
+        : `<table style="border-collapse:collapse;width:100%;">
         <tr style="background:#e0f2fe;">
           ${['Tanker', 'Route', 'Delivery Point', 'Qty Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
             .map(h => `<th style="padding:6px 8px;border:1px solid #e2e8f0;font-size:12px;color:#0f172a;text-align:left;">${h}</th>`).join('')}
         </tr>
         ${bodyRows}
         <tr style="background:#dbeafe;font-weight:700;">
-          ${td(`TOTAL — ${rows.length} trips`)}${td('')}${td('')}
+          ${td(`TOTAL — ${lossRows.length} trip${lossRows.length === 1 ? '' : 's'} with loss`)}${td('')}${td('')}
           ${lossCell(rN(sum('dr_kgs')))}${lossCell(rN(sum('dr_kg_fat')))}${lossCell(rN(sum('dr_kg_snf')))}
         </tr>
-      </table>
+      </table>`}
       <p style="font-size:11px;color:#9ca3af;margin:14px 0 0;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <b style="color:#6b7280;">Shreeja IT Team</b>.</p>
     </div>
   </div>`;
