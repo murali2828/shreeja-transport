@@ -464,22 +464,18 @@ function buildTsEmailHtml(rows, reportDate, basis) {
   const lossCell = v => v == null || parseFloat(v) >= 0 ? td('—', 'text-align:right;color:#cbd5e1;')
     : td(n0(v), 'text-align:right;font-weight:700;color:#dc2626;');
 
-  // A trip is shown if it has a loss on ANY of: Dispatch vs RMRD, or (once
-  // acknowledged) Ack vs RMRD Qty/FAT/SNF — otherwise dropped entirely.
-  // This catches trips like a Dispatch-vs-RMRD loss that later nets to a
-  // gain by acknowledgement time, which the Ack-vs-RMRD-only check missed.
-  const lossRows = rows.filter(r =>
-    (r.dd_kgs != null && parseFloat(r.dd_kgs) < 0) ||
-    (r.has_ack && [r.dr_kgs, r.dr_kg_fat, r.dr_kg_snf].some(v => v != null && parseFloat(v) < 0)));
+  // Ack Vs RMRD only: a trip is shown if that comparison has an actual loss
+  // on Qty/FAT/SNF Kgs — everything else (Dispatch vs RMRD, etc.) stays out
+  // of the email body and is only in the attached Excel.
+  const lossRows = rows.filter(r => r.has_ack &&
+    [r.dr_kgs, r.dr_kg_fat, r.dr_kg_snf].some(v => v != null && parseFloat(v) < 0));
 
   const bodyRows = lossRows.map((r, i) => `
     <tr style="background:${i % 2 ? '#f8fafc' : '#ffffff'};">
       ${td(`<b style="color:#005ba3;">${escH(r.tanker_number || '—')}</b>`)}
       ${td(escH(r.route_name || '—'))}
       ${td(escH(r.unloading_point || '—'))}
-      ${lossCell(r.dd_kgs)}
-      ${r.has_ack ? `${lossCell(r.dr_kgs)}${lossCell(r.dr_kg_fat)}${lossCell(r.dr_kg_snf)}`
-        : `${td('pending', 'text-align:center;color:#b45309;font-size:11px;')}${td('—', 'text-align:right;color:#cbd5e1;')}${td('—', 'text-align:right;color:#cbd5e1;')}`}
+      ${lossCell(r.dr_kgs)}${lossCell(r.dr_kg_fat)}${lossCell(r.dr_kg_snf)}
     </tr>`).join('');
 
   const sum = k => lossRows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
@@ -496,13 +492,13 @@ function buildTsEmailHtml(rows, reportDate, basis) {
         ? `<p style="font-size:13px;color:#15803d;font-weight:600;margin:0 0 10px;">No loss recorded against RMRD for any trip.</p>`
         : `<table style="border-collapse:collapse;width:100%;">
         <tr style="background:#e0f2fe;">
-          ${['Tanker', 'Route', 'Delivery Point', 'Dispatch Vs RMRD — Qty Loss in Kgs', 'Ackn Vs RMRD — Qty Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
+          ${['Tanker', 'Route', 'Delivery Point', 'Qty Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
             .map(h => `<th style="padding:6px 8px;border:1px solid #e2e8f0;font-size:12px;color:#0f172a;text-align:left;">${h}</th>`).join('')}
         </tr>
         ${bodyRows}
         <tr style="background:#dbeafe;font-weight:700;">
           ${td(`TOTAL — ${lossRows.length} trip${lossRows.length === 1 ? '' : 's'} with loss`)}${td('')}${td('')}
-          ${lossCell(rN(sum('dd_kgs')))}${lossCell(rN(sum('dr_kgs')))}${lossCell(rN(sum('dr_kg_fat')))}${lossCell(rN(sum('dr_kg_snf')))}
+          ${lossCell(rN(sum('dr_kgs')))}${lossCell(rN(sum('dr_kg_fat')))}${lossCell(rN(sum('dr_kg_snf')))}
         </tr>
       </table>`}
       <p style="font-size:11px;color:#9ca3af;margin:14px 0 0;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <b style="color:#6b7280;">Shreeja IT Team</b>.</p>
