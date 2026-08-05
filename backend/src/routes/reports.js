@@ -491,6 +491,7 @@ function buildTsEmailHtml(rows, reportDate, basis) {
     <tr style="background:${i % 2 ? '#f8fafc' : '#ffffff'};">
       ${td(`<b style="color:#005ba3;">${escH(r.tanker_number || '—')}</b>`)}
       ${td(escH(r.route_name || '—'))}
+      ${td(escH(r.unloading_point || '—'))}
       ${r.has_ack ? `${lossCell(r.dr_kgs)}${lossCell(r.dr_kg_fat)}${lossCell(r.dr_kg_snf)}`
         : `${td('pending', 'text-align:center;color:#b45309;font-size:11px;')}${td('—', 'text-align:right;color:#cbd5e1;')}${td('—', 'text-align:right;color:#cbd5e1;')}`}
     </tr>`).join('');
@@ -507,12 +508,12 @@ function buildTsEmailHtml(rows, reportDate, basis) {
       <p style="font-size:13px;margin:0 0 10px;">Dear Team,<br/>Summary of the Daily TS Report for <b>${escH(reportDate)}</b> — the full report is attached.</p>
       <table style="border-collapse:collapse;width:100%;">
         <tr style="background:#e0f2fe;">
-          ${['Tanker', 'Route', 'Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
+          ${['Tanker', 'Route', 'Delivery Point', 'Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
             .map(h => `<th style="padding:6px 8px;border:1px solid #e2e8f0;font-size:12px;color:#0f172a;text-align:left;">${h}</th>`).join('')}
         </tr>
         ${bodyRows}
         <tr style="background:#dbeafe;font-weight:700;">
-          ${td(`TOTAL — ${rows.length} trips`)}${td('')}
+          ${td(`TOTAL — ${rows.length} trips`)}${td('')}${td('')}
           ${lossCell(rN(sum('dr_kgs')))}${lossCell(rN(sum('dr_kg_fat')))}${lossCell(rN(sum('dr_kg_snf')))}
         </tr>
       </table>
