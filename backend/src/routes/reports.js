@@ -477,51 +477,43 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
 
 // Styled email body: branded header, stat chips, per-trip summary table with
 // red/green differences and a weighted TOTAL row. Full detail stays attached.
+// Email body shows only the Ack Vs RMRD comparison, in Kgs (no litres, no
+// Gain/Loss % — every value is labeled "Loss in ..." regardless of sign).
+// Full detail (Dispatch, all three diff groups, Fat%/SNF%) stays in the attachment.
 function buildTsEmailHtml(rows, reportDate, basis) {
   const escH = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const n0 = v => v == null ? '—' : Math.round(parseFloat(v)).toLocaleString('en-IN');
-  const acked = rows.filter(r => r.has_ack).length;
   const td = (v, extra = '') => `<td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:12px;${extra}">${v}</td>`;
-  const num = (v, extra = '') => td(n0(v), 'text-align:right;' + extra);
-  const diffCell = v => v == null ? td('—', 'text-align:right;color:#cbd5e1;')
-    : num(v, `font-weight:700;color:${parseFloat(v) < 0 ? '#dc2626' : '#15803d'};`);
+  const lossCell = v => v == null ? td('—', 'text-align:right;color:#cbd5e1;')
+    : td(n0(v), `text-align:right;font-weight:700;color:${parseFloat(v) < 0 ? '#dc2626' : '#15803d'};`);
 
   const bodyRows = rows.map((r, i) => `
     <tr style="background:${i % 2 ? '#f8fafc' : '#ffffff'};">
       ${td(`<b style="color:#005ba3;">${escH(r.tanker_number || '—')}</b>`)}
       ${td(escH(r.route_name || '—'))}
-      ${num(r.rmrd_litres)}${num(r.disp_litres)}
-      ${r.has_ack ? num(r.ack_litres) : td('pending', 'text-align:center;color:#b45309;font-size:11px;')}
-      ${diffCell(r.dd_litres)}${diffCell(r.da_litres)}${diffCell(r.dr_litres)}
+      ${r.has_ack ? `${lossCell(r.dr_kgs)}${lossCell(r.dr_kg_fat)}${lossCell(r.dr_kg_snf)}`
+        : `${td('pending', 'text-align:center;color:#b45309;font-size:11px;')}${td('—', 'text-align:right;color:#cbd5e1;')}${td('—', 'text-align:right;color:#cbd5e1;')}`}
     </tr>`).join('');
 
   const sum = k => rows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
-  const chip = (label, color, bg) =>
-    `<span style="display:inline-block;padding:4px 12px;border-radius:999px;background:${bg};color:${color};font-size:12px;font-weight:600;margin-right:8px;">${label}</span>`;
 
   return `
-  <div style="font-family:Segoe UI,Arial,sans-serif;max-width:860px;">
+  <div style="font-family:Segoe UI,Arial,sans-serif;max-width:700px;">
     <div style="background:#005ba3;color:#ffffff;padding:14px 20px;border-radius:10px 10px 0 0;">
       <div style="font-size:17px;font-weight:700;">Shreeja TMS — Daily TS Report</div>
       <div style="font-size:12px;opacity:.85;">${escH(reportDate)} · ${TS_BASIS_LABEL(basis)}</div>
     </div>
     <div style="border:1px solid #e2e8f0;border-top:none;padding:16px 20px;border-radius:0 0 10px 10px;">
       <p style="font-size:13px;margin:0 0 10px;">Dear Team,<br/>Summary of the Daily TS Report for <b>${escH(reportDate)}</b> — the full report is attached.</p>
-      <div style="margin:0 0 12px;">
-        ${chip(`${rows.length} trips`, '#1d4ed8', '#dbeafe')}
-        ${chip(`${acked} acknowledged`, '#15803d', '#dcfce7')}
-        ${chip(`${rows.length - acked} pending`, '#b45309', '#fef3c7')}
-      </div>
       <table style="border-collapse:collapse;width:100%;">
         <tr style="background:#e0f2fe;">
-          ${['Tanker', 'Route', 'RMRD (L)', 'Dispatch (L)', 'Ack (L)', 'Diff Dispatch vs RMRD (L)', 'Diff Ack vs Dispatch (L)', 'Diff Ackn vs RMRD (L)']
+          ${['Tanker', 'Route', 'Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
             .map(h => `<th style="padding:6px 8px;border:1px solid #e2e8f0;font-size:12px;color:#0f172a;text-align:left;">${h}</th>`).join('')}
         </tr>
         ${bodyRows}
         <tr style="background:#dbeafe;font-weight:700;">
           ${td(`TOTAL — ${rows.length} trips`)}${td('')}
-          ${num(sum('rmrd_litres'))}${num(sum('disp_litres'))}${num(sum('ack_litres'))}
-          ${diffCell(rN(sum('dd_litres')))}${diffCell(rN(sum('da_litres')))}${diffCell(rN(sum('dr_litres')))}
+          ${lossCell(rN(sum('dr_kgs')))}${lossCell(rN(sum('dr_kg_fat')))}${lossCell(rN(sum('dr_kg_snf')))}
         </tr>
       </table>
       <p style="font-size:11px;color:#9ca3af;margin:14px 0 0;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <b style="color:#6b7280;">Shreeja IT Team</b>.</p>
