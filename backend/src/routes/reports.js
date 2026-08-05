@@ -459,8 +459,10 @@ function buildTsEmailHtml(rows, reportDate, basis) {
   const escH = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const n0 = v => v == null ? '—' : Math.round(parseFloat(v)).toLocaleString('en-IN');
   const td = (v, extra = '') => `<td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:12px;${extra}">${v}</td>`;
-  const lossCell = v => v == null ? td('—', 'text-align:right;color:#cbd5e1;')
-    : td(n0(v), `text-align:right;font-weight:700;color:${parseFloat(v) < 0 ? '#dc2626' : '#15803d'};`);
+  // Only actual losses (negative values) are shown, always in red;
+  // zero/positive (a gain, not a loss) renders blank.
+  const lossCell = v => v == null || parseFloat(v) >= 0 ? td('—', 'text-align:right;color:#cbd5e1;')
+    : td(n0(v), 'text-align:right;font-weight:700;color:#dc2626;');
 
   const bodyRows = rows.map((r, i) => `
     <tr style="background:${i % 2 ? '#f8fafc' : '#ffffff'};">
@@ -483,7 +485,7 @@ function buildTsEmailHtml(rows, reportDate, basis) {
       <p style="font-size:13px;margin:0 0 10px;">Dear Team,<br/>Summary of the Daily TS Report for <b>${escH(reportDate)}</b> — the full report is attached.</p>
       <table style="border-collapse:collapse;width:100%;">
         <tr style="background:#e0f2fe;">
-          ${['Tanker', 'Route', 'Delivery Point', 'Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
+          ${['Tanker', 'Route', 'Delivery Point', 'Qty Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
             .map(h => `<th style="padding:6px 8px;border:1px solid #e2e8f0;font-size:12px;color:#0f172a;text-align:left;">${h}</th>`).join('')}
         </tr>
         ${bodyRows}
