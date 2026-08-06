@@ -1,5 +1,10 @@
 // backend/src/config/db.js
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// OID 1082 = DATE. Return the raw 'YYYY-MM-DD' string Postgres sends instead of letting
+// pg construct a local-midnight JS Date (which res.json() then serializes via toISOString()
+// into UTC — shifting a day whenever the process runs ahead of UTC, e.g. under TZ=Asia/Kolkata).
+types.setTypeParser(1082, val => val);
 
 const pool = new Pool({
   host:     process.env.DB_HOST     || 'localhost',
