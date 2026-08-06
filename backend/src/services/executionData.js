@@ -116,16 +116,11 @@ async function assertWithinCapacity(client, execId) {
     SELECT
       COALESCE((SELECT SUM(qty_litres) FROM trip_execution_bmcus
         WHERE execution_id=$1 AND is_deleted=FALSE),0) AS dispatch_l,
-      COALESCE((SELECT SUM(s.rmrd_qty) FROM trip_execution_bmcu_shifts s
-        JOIN trip_execution_bmcus b
-          ON b.execution_id=s.execution_id AND b.seq_no=s.bmcu_seq_no AND b.is_deleted=FALSE
-        WHERE s.execution_id=$1),0) AS rmrd_l,
       COALESCE((SELECT SUM(qty_litres) FROM trip_acknowledgements
         WHERE execution_id=$1),0) AS ack_l`, [execId]);
   const s = sums.rows[0];
 
   if (parseFloat(s.dispatch_l) > limit) throw capacityError('BMCU dispatch total', s.dispatch_l, capacity);
-  if (parseFloat(s.rmrd_l)     > limit) throw capacityError('RMRD shift total', s.rmrd_l, capacity);
   if (parseFloat(s.ack_l)      > limit) throw capacityError('Acknowledgement total', s.ack_l, capacity);
 }
 

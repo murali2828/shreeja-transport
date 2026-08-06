@@ -809,9 +809,7 @@ export default function ExecutionForm() {
     const fmtL = v => Math.round(v).toLocaleString('en-IN');
     const dispatch = bmcuRows.filter(r => !r.is_deleted)
       .reduce((s, r) => s + (parseFloat(r.qty_litres) || 0), 0);
-    const rmrd = shiftRows.reduce((s, r) => s + (parseFloat(r.rmrd_qty) || 0), 0);
     if (dispatch > limit) return `BMCU dispatch total ${fmtL(dispatch)} L exceeds 110% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(limit)} L)`;
-    if (rmrd > limit)     return `RMRD shift total ${fmtL(rmrd)} L exceeds 110% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(limit)} L)`;
     return null;
   };
 
