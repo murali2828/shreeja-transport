@@ -88,18 +88,18 @@ async function computeExecutionDistance(client, execId, userId) {
   return { total_km: total, legs, estimated_leg_count: estimated, incomplete };
 }
 
-// ─── 103% capacity guard ──────────────────────────────────────────────────────
-const CAPACITY_TOLERANCE = 1.03;
+// ─── 110% capacity guard (QA) ──────────────────────────────────────────────────
+const CAPACITY_TOLERANCE = 1.10;
 const fmtL = v => Math.round(parseFloat(v)).toLocaleString('en-IN');
 
 function capacityError(area, entered, capacity) {
   const limit = capacity * CAPACITY_TOLERANCE;
   return Object.assign(
-    new Error(`${area}: entered volume ${fmtL(entered)} L exceeds 103% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(limit)} L)`),
+    new Error(`${area}: entered volume ${fmtL(entered)} L exceeds 110% of tanker capacity ${fmtL(capacity)} L (limit ${fmtL(limit)} L)`),
     { code: 400 });
 }
 
-// Validates every volume area of an execution against 103% of the tanker's
+// Validates every volume area of an execution against 110% of the tanker's
 // registered capacity. Skipped when capacity is 0/NULL (legacy tankers).
 async function assertWithinCapacity(client, execId) {
   const cap = await client.query(`
@@ -237,7 +237,7 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     }
   }
 
-  // Capacity guard: no volume area may exceed 103% of the tanker's registered
+  // Capacity guard: no volume area may exceed 110% of the tanker's registered
   // capacity. Throws (code 400) → the caller's transaction rolls back. Covers
   // the PUT save AND change-request approval, since both route through here.
   await assertWithinCapacity(client, execId);
