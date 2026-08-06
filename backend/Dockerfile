@@ -3,8 +3,8 @@
 
 FROM node:20-alpine
 
-# Install wget for healthcheck
-RUN apk add --no-cache wget
+# Install wget for healthcheck; tzdata so TZ env (Asia/Kolkata) actually applies
+RUN apk add --no-cache wget tzdata
 
 WORKDIR /app
 
