@@ -13,9 +13,9 @@ const fmtD  = d => d ? String(d).slice(0, 10) : '—';
 const n2 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const n4 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 
-const M6 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['fat','Fat%'], ['snf','SNF%'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF']];
-const D5 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF'], ['pct','Gain/Loss %']];
-const D7 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['fat','Fat%'], ['snf','SNF%'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF'], ['pct','Gain/Loss %']];
+const M6 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['fat','Fat%'], ['snf','SNF%'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF'], ['ts','TS']];
+const D5 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF'], ['ts','TS'], ['pct','TS Gain/TS Loss %']];
+const D7 = [['litres','Qty Ltrs'], ['kgs','Qty Kgs'], ['fat','Fat%'], ['snf','SNF%'], ['kg_fat','Kg.Fat'], ['kg_snf','Kg.SNF'], ['ts','TS'], ['pct','TS Gain/TS Loss %']];
 const GROUPS = [
   { title: 'As per Dispatch',             prefix: 'disp', cls: 'bg-emerald-50', measures: M6 },
   { title: 'As per RMRD',                 prefix: 'rmrd', cls: 'bg-sky-50',     measures: M6 },

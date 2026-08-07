@@ -149,7 +149,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
     }
   }
 
-  return r.rows.map(row => {
+  const mapped = r.rows.map(row => {
     const rmrd = rmrdByExec[row.execution_id] || { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
     const hasAck = row.ack_count > 0;
     const hasExec = !!row.execution_id;
@@ -215,6 +215,21 @@ async function buildTsReport(reportDate, basis = 'plan') {
       dr_pct:    hasAck ? gain(d(row.ack_kg_fat, rmrd.kg_fat), d(row.ack_kg_snf, rmrd.kg_snf), rmrd.kg_fat, rmrd.kg_snf) : null,
     };
   });
+  // TS = Kg.Fat + Kg.SNF, per section and per difference group
+  for (const x of mapped) {
+    const ts = (a, b) => (a == null || b == null) ? null : rN(parseFloat(a) + parseFloat(b), 2);
+    x.disp_ts = ts(x.disp_kg_fat, x.disp_kg_snf);
+    x.rmrd_ts = ts(x.rmrd_kg_fat, x.rmrd_kg_snf);
+    x.ack_ts  = ts(x.ack_kg_fat,  x.ack_kg_snf);
+    x.dd_ts   = ts(x.dd_kg_fat,   x.dd_kg_snf);
+    x.da_ts   = ts(x.da_kg_fat,   x.da_kg_snf);
+    x.dr_ts   = ts(x.dr_kg_fat,   x.dr_kg_snf);
+  }
+  // Sort line items by delivery point (then tanker for a stable order)
+  mapped.sort((a, b) =>
+    String(a.unloading_point || '').localeCompare(String(b.unloading_point || '')) ||
+    String(a.tanker_number || '').localeCompare(String(b.tanker_number || '')));
+  return mapped;
 }
 
 const fmtDate = d => !d ? '' : (d.toISOString ? d.toISOString().slice(0, 10) : String(d).slice(0, 10));
@@ -222,16 +237,16 @@ const fmtDate = d => !d ? '' : (d.toISOString ? d.toISOString().slice(0, 10) : S
 // Styled workbook (ExcelJS) matching the on-screen layout:
 // title row, grouped two-row colored header, section fills, red/green
 // differences, frozen panes, Indian number formats, bold totals.
-const MEAS6 = ['Qty Ltrs', 'Qty Kgs', 'Fat%', 'SNF%', 'Kg.Fat', 'Kg.SNF'];
-const DIFF5 = ['Qty Ltrs', 'Qty Kgs', 'Kg.Fat', 'Kg.SNF', 'Gain/Loss %'];
-const DIFF7 = ['Qty Ltrs', 'Qty Kgs', 'Fat%', 'SNF%', 'Kg.Fat', 'Kg.SNF', 'Gain/Loss %'];
+const MEAS7 = ['Qty Ltrs', 'Qty Kgs', 'Fat%', 'SNF%', 'Kg.Fat', 'Kg.SNF', 'TS'];
+const DIFF6 = ['Qty Ltrs', 'Qty Kgs', 'Kg.Fat', 'Kg.SNF', 'TS', 'TS Gain/TS Loss %'];
+const DIFF8 = ['Qty Ltrs', 'Qty Kgs', 'Fat%', 'SNF%', 'Kg.Fat', 'Kg.SNF', 'TS', 'TS Gain/TS Loss %'];
 const TS_GROUPS = [
-  { title: 'As per Dispatch',              fill: 'FFDCFCE7', heads: MEAS6, keys: ['disp_litres','disp_kgs','disp_fat','disp_snf','disp_kg_fat','disp_kg_snf'] },
-  { title: 'As per RMRD',                  fill: 'FFE0F2FE', heads: MEAS6, keys: ['rmrd_litres','rmrd_kgs','rmrd_fat','rmrd_snf','rmrd_kg_fat','rmrd_kg_snf'] },
-  { title: 'As per Acknowledgement',       fill: 'FFEDE9FE', heads: MEAS6, keys: ['ack_litres','ack_kgs','ack_fat','ack_snf','ack_kg_fat','ack_kg_snf'] },
-  { title: 'Difference Dispatch Vs RMRD',  fill: 'FFFEF3C7', heads: DIFF5, keys: ['dd_litres','dd_kgs','dd_kg_fat','dd_kg_snf','dd_pct'], diff: true },
-  { title: 'Difference Ack Vs Dispatch',   fill: 'FFFFE4E6', heads: DIFF7, keys: ['da_litres','da_kgs','da_fat','da_snf','da_kg_fat','da_kg_snf','da_pct'], diff: true },
-  { title: 'Difference Ackn Vs RMRD',      fill: 'FFFDE68A', heads: DIFF7, keys: ['dr_litres','dr_kgs','dr_fat','dr_snf','dr_kg_fat','dr_kg_snf','dr_pct'], diff: true },
+  { title: 'As per Dispatch',              fill: 'FFDCFCE7', heads: MEAS7, keys: ['disp_litres','disp_kgs','disp_fat','disp_snf','disp_kg_fat','disp_kg_snf','disp_ts'] },
+  { title: 'As per RMRD',                  fill: 'FFE0F2FE', heads: MEAS7, keys: ['rmrd_litres','rmrd_kgs','rmrd_fat','rmrd_snf','rmrd_kg_fat','rmrd_kg_snf','rmrd_ts'] },
+  { title: 'As per Acknowledgement',       fill: 'FFEDE9FE', heads: MEAS7, keys: ['ack_litres','ack_kgs','ack_fat','ack_snf','ack_kg_fat','ack_kg_snf','ack_ts'] },
+  { title: 'Difference Dispatch Vs RMRD',  fill: 'FFFEF3C7', heads: DIFF6, keys: ['dd_litres','dd_kgs','dd_kg_fat','dd_kg_snf','dd_ts','dd_pct'], diff: true },
+  { title: 'Difference Ack Vs Dispatch',   fill: 'FFFFE4E6', heads: DIFF8, keys: ['da_litres','da_kgs','da_fat','da_snf','da_kg_fat','da_kg_snf','da_ts','da_pct'], diff: true },
+  { title: 'Difference Ackn Vs RMRD',      fill: 'FFFDE68A', heads: DIFF8, keys: ['dr_litres','dr_kgs','dr_fat','dr_snf','dr_kg_fat','dr_kg_snf','dr_ts','dr_pct'], diff: true },
 ];
 // Cumulative start offset of each group within the numeric columns
 let _off = 0;
@@ -280,10 +295,9 @@ const TS_BASIS_LABEL = basis =>
   : basis === 'ack_date' ? 'by Ack Date'
   : 'by Planning Date';
 
-function buildTsWorkbook(rows, reportDate, basis = 'plan') {
-  const wb = new ExcelJS.Workbook();
+function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
   const NINFO = INFO_HEADERS.length;
-  const ws = wb.addWorksheet('TS Report', { views: [{ state: 'frozen', xSplit: NINFO, ySplit: 3 }] });
+  const ws = wb.addWorksheet(sheetName, { views: [{ state: 'frozen', xSplit: NINFO, ySplit: 3 }] });
 
   // Column widths: 6 info + numeric measures
   ws.columns = [
@@ -385,7 +399,231 @@ function buildTsWorkbook(rows, reportDate, basis = 'plan') {
     });
   });
 
-  return wb;
+  return ws;
+}
+
+// List of YYYY-MM-DD strings from the 1st of the report month through reportDate.
+function monthToDate(reportDate) {
+  const [y, m, d] = reportDate.split('-').map(Number);
+  const days = [];
+  for (let i = 1; i <= d; i++)
+    days.push(`${y}-${String(m).padStart(2, '0')}-${String(i).padStart(2, '0')}`);
+  return days;
+}
+const ddmm = iso => `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
+
+// 'Milk Shifting Day Wise' sheet — internal-shifting entries across the given
+// dates, per the sample workbook: Date, Shifted BMCU Name (source), Shifted to
+// (receiving BMCU), Shift, Qty in Ltrs/Kgs, Fat %, Snf %, Fat Kgs, Snf Kgs.
+async function addMilkShiftingSheet(wb, days) {
+  const r = await query(`
+    SELECT tp.plan_for_date AS date, e.qty_litres, e.fat_pct, e.snf_pct,
+           sb.bmcu_name AS source_name, rb.bmcu_name AS dest_name,
+           teb.milk_date, teb.shift
+    FROM trip_execution_bmcu_entries e
+    JOIN trip_executions te ON te.id = e.execution_id
+    JOIN trip_plans tp      ON tp.id = te.trip_plan_id
+    LEFT JOIN bmcus sb ON sb.id = e.source_bmcu_id
+    LEFT JOIN bmcus rb ON rb.id = e.bmcu_id
+    LEFT JOIN trip_execution_bmcus teb
+      ON teb.execution_id = e.execution_id AND teb.seq_no = e.bmcu_seq_no AND teb.is_deleted = FALSE
+    WHERE e.kind = 'internal_shifting'
+      AND tp.plan_for_date = ANY($1::date[])
+    ORDER BY tp.plan_for_date, sb.bmcu_name`, [days]);
+
+  const ws = wb.addWorksheet('Milk Shifting Day Wise', { views: [{ state: 'frozen', ySplit: 2 }] });
+  ws.columns = [{ width: 12 }, { width: 22 }, { width: 22 }, { width: 8 },
+    { width: 12 }, { width: 12 }, { width: 8 }, { width: 8 }, { width: 11 }, { width: 11 }];
+
+  ws.mergeCells(1, 1, 1, 10);
+  const t = ws.getCell(1, 1);
+  t.value = `Milk Shifting Report — ${days[0]} to ${days[days.length - 1]}`;
+  t.font = { bold: true, size: 13, color: { argb: 'FF003A6B' } };
+  ws.getRow(1).height = 22;
+
+  const HEADS = ['Date', 'Shifted BMCU Name', 'Shifted to', 'Shift',
+    'Qty in Ltrs', 'Qty in Kgs', 'Fat %', 'Snf %', 'Fat Kgs', 'Snf Kgs'];
+  HEADS.forEach((h, i) => {
+    const c = ws.getCell(2, i + 1);
+    c.value = h;
+    c.font = { bold: true, color: { argb: HEADER_TEXT } };
+    c.fill = fillOf('FFE0F2FE');
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    c.border = BORDER;
+  });
+
+  let sumL = 0, sumKg = 0, sumFat = 0, sumSnf = 0;
+  r.rows.forEach((e, i) => {
+    const litres = parseFloat(e.qty_litres) || 0;
+    const kgs    = calcKgs(litres);
+    const kgFat  = calcKgFat(kgs, e.fat_pct);
+    const kgSnf  = calcKgSnf(kgs, e.snf_pct);
+    sumL += litres; sumKg += kgs; sumFat += kgFat; sumSnf += kgSnf;
+    const row = ws.getRow(3 + i);
+    const vals = [fmtDate(e.date), e.source_name || '', e.dest_name || '',
+      e.milk_date && e.shift ? shiftLabel(e.milk_date, e.shift) : '',
+      rN(litres, 2), rN(kgs, 2), rN(parseFloat(e.fat_pct), 2), rN(parseFloat(e.snf_pct), 2),
+      rN(kgFat, 2), rN(kgSnf, 2)];
+    vals.forEach((v, ci) => {
+      const c = row.getCell(ci + 1);
+      c.value = v ?? '';
+      c.border = BORDER;
+      if (ci >= 4) { c.numFmt = '#,##0.00'; c.alignment = { horizontal: 'right' }; }
+    });
+  });
+
+  const tri = 3 + r.rows.length;
+  ws.mergeCells(tri, 1, tri, 4);
+  const tl = ws.getCell(tri, 1);
+  tl.value = `TOTAL — ${r.rows.length} shiftings`;
+  tl.font = { bold: true, color: { argb: 'FF003A6B' } };
+  tl.fill = fillOf('FFDBEAFE'); tl.border = BORDER;
+  [rN(sumL, 2), rN(sumKg, 2), null, null, rN(sumFat, 2), rN(sumSnf, 2)].forEach((v, i) => {
+    const c = ws.getCell(tri, 5 + i);
+    c.value = v; c.numFmt = '#,##0.00'; c.border = BORDER;
+    c.fill = fillOf('FFDBEAFE'); c.font = { bold: true };
+    c.alignment = { horizontal: 'right' };
+  });
+}
+
+// 'Consolidated Report' sheet — one row per day (1st → report date), per the
+// sample workbook: daily totals for Dispatch / RMRD (with TS) / Acknowledgement
+// plus a Variation (Dispatch → Ack) group, and a grand-total row.
+function addConsolidatedSheet(wb, days, rowsByDay) {
+  const GROUPS = [
+    { title: 'As per Dispatch',        fill: 'FFDCFCE7', heads: ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Kg.Fat','Kg.SNF'] },
+    { title: 'As per RMRD',            fill: 'FFE0F2FE', heads: ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Kg.Fat','Kg.SNF','TS'] },
+    { title: 'As per Acknowledgement', fill: 'FFEDE9FE', heads: ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Kg.Fat','Kg.SNF'] },
+    { title: 'Variation As per Dispatch to Ack', fill: 'FFFDE68A', heads: ['Qty Ltrs','Kg.Fat','Kg.SNF','TS','TS Gain/TS Loss %'], diff: true },
+  ];
+  const NCOLS = 2 + GROUPS.reduce((s, g) => s + g.heads.length, 0);
+
+  const ws = wb.addWorksheet('Consolidated Report', { views: [{ state: 'frozen', xSplit: 2, ySplit: 3 }] });
+  ws.columns = [{ width: 6 }, { width: 12 }, ...Array(NCOLS - 2).fill({ width: 12 })];
+
+  ws.mergeCells(1, 1, 1, NCOLS);
+  const t = ws.getCell(1, 1);
+  t.value = `Daily Milk Procurement Total Solids Variation Report — ${days[0]} to ${days[days.length - 1]}`;
+  t.font = { bold: true, size: 13, color: { argb: 'FF003A6B' } };
+  ws.getRow(1).height = 22;
+
+  ['S.No', 'Date'].forEach((h, i) => {
+    ws.mergeCells(2, i + 1, 3, i + 1);
+    const c = ws.getCell(2, i + 1);
+    c.value = h; c.font = { bold: true, color: { argb: HEADER_TEXT } };
+    c.fill = fillOf('FFF3F4F6'); c.border = BORDER;
+    c.alignment = { vertical: 'middle', horizontal: 'center' };
+    ws.getCell(3, i + 1).border = BORDER;
+  });
+  let col = 3;
+  for (const g of GROUPS) {
+    g.start = col;
+    ws.mergeCells(2, col, 2, col + g.heads.length - 1);
+    const gc = ws.getCell(2, col);
+    gc.value = g.title; gc.font = { bold: true, color: { argb: HEADER_TEXT } };
+    gc.fill = fillOf(g.fill); gc.alignment = { vertical: 'middle', horizontal: 'center' };
+    g.heads.forEach((h, i) => {
+      const c = ws.getCell(3, col + i);
+      c.value = h; c.font = { bold: true, size: 10, color: { argb: HEADER_TEXT } };
+      c.fill = fillOf(g.fill); c.border = BORDER;
+      c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      ws.getCell(2, col + i).border = BORDER;
+    });
+    col += g.heads.length;
+  }
+  ws.getRow(2).height = 20;
+
+  // Daily totals from each day's TS rows (weighted % via tsTotal semantics).
+  const dayTotals = day => {
+    const rows = rowsByDay[day] || [];
+    const sum = k => rows.reduce((s, x) => s + (parseFloat(x[k]) || 0), 0);
+    const w = (part, kgs) => sum(kgs) > 0 ? sum(part) / sum(kgs) * 100 : null;
+    const daKgFat = sum('da_kg_fat'), daKgSnf = sum('da_kg_snf');
+    const dispTs = sum('disp_kg_fat') + sum('disp_kg_snf');
+    return {
+      disp: [sum('disp_litres'), sum('disp_kgs'), w('disp_kg_fat','disp_kgs'), w('disp_kg_snf','disp_kgs'), sum('disp_kg_fat'), sum('disp_kg_snf')],
+      rmrd: [sum('rmrd_litres'), sum('rmrd_kgs'), w('rmrd_kg_fat','rmrd_kgs'), w('rmrd_kg_snf','rmrd_kgs'), sum('rmrd_kg_fat'), sum('rmrd_kg_snf'), sum('rmrd_kg_fat') + sum('rmrd_kg_snf')],
+      ack:  [sum('ack_litres'), sum('ack_kgs'), w('ack_kg_fat','ack_kgs'), w('ack_kg_snf','ack_kgs'), sum('ack_kg_fat'), sum('ack_kg_snf')],
+      vari: [sum('da_litres'), daKgFat, daKgSnf, daKgFat + daKgSnf, dispTs > 0 ? (daKgFat + daKgSnf) / dispTs * 100 : null],
+    };
+  };
+
+  days.forEach((day, ri) => {
+    const row = ws.getRow(4 + ri);
+    const tot = dayTotals(day);
+    [ri + 1, ddmm(day)].forEach((v, i) => {
+      const c = row.getCell(i + 1);
+      c.value = v; c.border = BORDER;
+      c.alignment = { horizontal: i === 0 ? 'center' : 'left' };
+    });
+    GROUPS.forEach(g => {
+      const vals = g.title.startsWith('As per Dispatch') ? tot.disp
+        : g.title.startsWith('As per RMRD') ? tot.rmrd
+        : g.title.startsWith('As per Ack') ? tot.ack : tot.vari;
+      vals.forEach((v, i) => {
+        const c = row.getCell(g.start + i);
+        c.value = v == null ? null : rN(v, 2);
+        c.numFmt = '#,##0.00'; c.border = BORDER;
+        c.alignment = { horizontal: 'right' }; c.fill = fillOf(g.fill);
+        if (g.diff && v != null) c.font = { bold: true, color: { argb: v < 0 ? RED : GREEN } };
+      });
+    });
+  });
+
+  // Grand total row (sums across days; % re-weighted from the summed parts)
+  const tri = 4 + days.length;
+  ws.mergeCells(tri, 1, tri, 2);
+  const tl = ws.getCell(tri, 1);
+  tl.value = 'TOTAL';
+  tl.font = { bold: true, color: { argb: 'FF003A6B' } };
+  tl.fill = fillOf('FFDBEAFE'); tl.border = BORDER;
+  const allTot = days.map(dayTotals);
+  const sumIdx = (sec, i) => allTot.reduce((s, t2) => s + (parseFloat(t2[sec][i]) || 0), 0);
+  const wPct = (sec, kgPartIdx, kgsIdx) => {
+    const kgs = sumIdx(sec, kgsIdx);
+    return kgs > 0 ? sumIdx(sec, kgPartIdx) / kgs * 100 : null;
+  };
+  const grand = {
+    disp: [sumIdx('disp',0), sumIdx('disp',1), wPct('disp',4,1), wPct('disp',5,1), sumIdx('disp',4), sumIdx('disp',5)],
+    rmrd: [sumIdx('rmrd',0), sumIdx('rmrd',1), wPct('rmrd',4,1), wPct('rmrd',5,1), sumIdx('rmrd',4), sumIdx('rmrd',5), sumIdx('rmrd',6)],
+    ack:  [sumIdx('ack',0),  sumIdx('ack',1),  wPct('ack',4,1),  wPct('ack',5,1),  sumIdx('ack',4),  sumIdx('ack',5)],
+    vari: (() => {
+      const f = sumIdx('vari',1), s2 = sumIdx('vari',2);
+      const dispTs = sumIdx('disp',4) + sumIdx('disp',5);
+      return [sumIdx('vari',0), f, s2, f + s2, dispTs > 0 ? (f + s2) / dispTs * 100 : null];
+    })(),
+  };
+  GROUPS.forEach(g => {
+    const vals = g.title.startsWith('As per Dispatch') ? grand.disp
+      : g.title.startsWith('As per RMRD') ? grand.rmrd
+      : g.title.startsWith('As per Ack') ? grand.ack : grand.vari;
+    vals.forEach((v, i) => {
+      const c = ws.getCell(tri, g.start + i);
+      c.value = v == null ? null : rN(v, 2);
+      c.numFmt = '#,##0.00';
+      c.border = { ...BORDER, top: { style: 'double', color: { argb: 'FF94A3B8' } } };
+      c.alignment = { horizontal: 'right' }; c.fill = fillOf('FFDBEAFE');
+      c.font = g.diff && v != null
+        ? { bold: true, color: { argb: v < 0 ? RED : GREEN } }
+        : { bold: true, color: { argb: 'FF003A6B' } };
+    });
+  });
+}
+
+// Full TS workbook: one day sheet per date (1st of month → report date, current
+// TS format), then Milk Shifting Day Wise, Consolidated Report, and the report
+// date's BMCU breakup.
+async function buildTsWorkbookFull(reportDate, basis = 'plan') {
+  const wb = new ExcelJS.Workbook();
+  const days = monthToDate(reportDate);
+  const rowsByDay = {};
+  for (const day of days) rowsByDay[day] = await buildTsReport(day, basis);
+  for (const day of days) addTsSheet(wb, rowsByDay[day], ddmm(day), day, basis);
+  await addMilkShiftingSheet(wb, days);
+  addConsolidatedSheet(wb, days, rowsByDay);
+  const breakup = await buildBmcuBreakup(reportDate);
+  addBmcuBreakupSheet(wb, breakup);
+  return { wb, rows: rowsByDay[reportDate] };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -441,8 +679,7 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
   const basis = req.query.date_basis || 'plan';
   if (!report_date) return res.status(400).json({ error: 'report_date required' });
   try {
-    const rows = await buildTsReport(report_date, basis);
-    const wb   = buildTsWorkbook(rows, report_date, basis);
+    const { wb } = await buildTsWorkbookFull(report_date, basis);
     const buf  = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=ts_report_${report_date}.xlsx`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -480,6 +717,13 @@ function buildTsEmailHtml(rows, reportDate, basis) {
 
   const sum = k => lossRows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
 
+  // Headline: net TS (Kg.Fat + Kg.SNF) difference Ack vs RMRD across ALL trips
+  const totalTs = rows.reduce((s, r) =>
+    s + (parseFloat(r.dr_kg_fat) || 0) + (parseFloat(r.dr_kg_snf) || 0), 0);
+  const tsLine = totalTs >= 0
+    ? `<p style="font-size:14px;font-weight:700;color:#15803d;margin:0 0 10px;">Total TS Gain for ${escH(reportDate)}: ${rN(totalTs, 2).toLocaleString('en-IN')} Kg</p>`
+    : `<p style="font-size:14px;font-weight:700;color:#dc2626;margin:0 0 10px;">Total TS Loss for ${escH(reportDate)}: ${rN(Math.abs(totalTs), 2).toLocaleString('en-IN')} Kg</p>`;
+
   return `
   <div style="font-family:Segoe UI,Arial,sans-serif;max-width:700px;">
     <div style="background:#005ba3;color:#ffffff;padding:14px 20px;border-radius:10px 10px 0 0;">
@@ -487,6 +731,7 @@ function buildTsEmailHtml(rows, reportDate, basis) {
       <div style="font-size:12px;opacity:.85;">${escH(reportDate)} · ${TS_BASIS_LABEL(basis)}</div>
     </div>
     <div style="border:1px solid #e2e8f0;border-top:none;padding:16px 20px;border-radius:0 0 10px 10px;">
+      ${tsLine}
       <p style="font-size:13px;margin:0 0 10px;">Dear Team,<br/>Summary of the Daily TS Report for <b>${escH(reportDate)}</b> — the full report is attached.</p>
       ${lossRows.length === 0
         ? `<p style="font-size:13px;color:#15803d;font-weight:600;margin:0 0 10px;">No loss recorded against RMRD for any trip.</p>`
@@ -520,8 +765,7 @@ router.post('/send-email', authenticate, async (req, res) => {
     if (!recipients.rows.length)
       return res.status(400).json({ error: 'No active email recipients configured' });
 
-    const rows = await buildTsReport(report_date, basis);
-    const wb   = buildTsWorkbook(rows, report_date, basis);
+    const { wb, rows } = await buildTsWorkbookFull(report_date, basis);
     const buf  = Buffer.from(await wb.xlsx.writeBuffer());
 
     const acked = rows.filter(r => r.has_ack).length;
@@ -752,8 +996,7 @@ const BK_MEASURES = ['Qty Lts', 'Qty Kgs', 'Fat', 'SNF', 'KG Fat', 'KG SNF'];
 const M6 = m => [m.litres, m.kgs, m.fat, m.snf, m.kg_fat, m.kg_snf];
 const D4 = d => [d.kgs, d.litres, d.kg_fat, d.kg_snf, d.pct];
 
-function buildBmcuBreakupWorkbook(data) {
-  const wb = new ExcelJS.Workbook();
+function addBmcuBreakupSheet(wb, data) {
   const ws = wb.addWorksheet('BMCU breakup', { views: [{ state: 'frozen', xSplit: 5, ySplit: 3 }] });
   // Cols: 1 Route, 2 Lifting Date, 3 Tanker, 4 BMCU Code, 5 BMCU Name, 6 Compartment,
   //       7-12 dispatch, 13 Shift, 14-19 RMRD, 20-23 diff
@@ -892,6 +1135,12 @@ function buildBmcuBreakupWorkbook(data) {
       rIdx++;
     }
   }
+  return ws;
+}
+
+function buildBmcuBreakupWorkbook(data) {
+  const wb = new ExcelJS.Workbook();
+  addBmcuBreakupSheet(wb, data);
   return wb;
 }
 
