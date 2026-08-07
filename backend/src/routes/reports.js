@@ -297,7 +297,7 @@ const TS_BASIS_LABEL = basis =>
 
 function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
   const NINFO = INFO_HEADERS.length;
-  const ws = wb.addWorksheet(sheetName, { views: [{ state: 'frozen', xSplit: NINFO, ySplit: 3 }] });
+  const ws = wb.addWorksheet(sheetName);
 
   // Column widths: 6 info + numeric measures
   ws.columns = [
@@ -431,7 +431,7 @@ async function addMilkShiftingSheet(wb, days) {
       AND tp.plan_for_date = ANY($1::date[])
     ORDER BY tp.plan_for_date, sb.bmcu_name`, [days]);
 
-  const ws = wb.addWorksheet('Milk Shifting Day Wise', { views: [{ state: 'frozen', ySplit: 2 }] });
+  const ws = wb.addWorksheet('Milk Shifting Day Wise');
   ws.columns = [{ width: 12 }, { width: 22 }, { width: 22 }, { width: 8 },
     { width: 12 }, { width: 12 }, { width: 8 }, { width: 8 }, { width: 11 }, { width: 11 }];
 
@@ -498,7 +498,7 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
   ];
   const NCOLS = 2 + GROUPS.reduce((s, g) => s + g.heads.length, 0);
 
-  const ws = wb.addWorksheet('Consolidated Report', { views: [{ state: 'frozen', xSplit: 2, ySplit: 3 }] });
+  const ws = wb.addWorksheet('Consolidated Report');
   ws.columns = [{ width: 6 }, { width: 12 }, ...Array(NCOLS - 2).fill({ width: 12 })];
 
   ws.mergeCells(1, 1, 1, NCOLS);
@@ -623,7 +623,7 @@ async function buildTsWorkbookFull(reportDate, basis = 'plan') {
   addConsolidatedSheet(wb, days, rowsByDay);
   const breakup = await buildBmcuBreakup(reportDate);
   addBmcuBreakupSheet(wb, breakup);
-  return { wb, rows: rowsByDay[reportDate] };
+  return { wb, rows: rowsByDay[reportDate], breakup };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -687,12 +687,10 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Styled email body: branded header, stat chips, per-trip summary table with
-// red/green differences and a weighted TOTAL row. Full detail stays attached.
-// Email body shows only the Ack Vs RMRD comparison, in Kgs (no litres, no
-// Gain/Loss % — every value is labeled "Loss in ..." regardless of sign).
-// Full detail (Dispatch, all three diff groups, Fat%/SNF%) stays in the attachment.
-function buildTsEmailHtml(rows, reportDate, basis) {
+// Styled email body: branded header, headline TS gain/loss, then a BMCU-wise
+// loss table (Dispatch Vs RMRD per BMCU, losses only) with a subtotal row.
+// Full detail (all trips/groups/sheets) stays in the attachment.
+function buildTsEmailHtml(rows, breakup, reportDate, basis) {
   const escH = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const n0 = v => v == null ? '—' : Math.round(parseFloat(v)).toLocaleString('en-IN');
   const td = (v, extra = '') => `<td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:12px;${extra}">${v}</td>`;
@@ -701,21 +699,27 @@ function buildTsEmailHtml(rows, reportDate, basis) {
   const lossCell = v => v == null || parseFloat(v) >= 0 ? td('—', 'text-align:right;color:#cbd5e1;')
     : td(n0(v), 'text-align:right;font-weight:700;color:#dc2626;');
 
-  // Ack Vs RMRD only: a trip is shown if that comparison has an actual loss
-  // on Qty/FAT/SNF Kgs — everything else (Dispatch vs RMRD, etc.) stays out
-  // of the email body and is only in the attached Excel.
-  const lossRows = rows.filter(r => r.has_ack &&
-    [r.dr_kgs, r.dr_kg_fat, r.dr_kg_snf].some(v => v != null && parseFloat(v) < 0));
+  // BMCU-wise losses only: one row per BMCU whose Dispatch Vs RMRD difference
+  // shows an actual loss on Qty Kgs / Kg.Fat / Kg.SNF.
+  const lossRows = [];
+  for (const t of (breakup?.trips || [])) {
+    for (const b of t.bmcus) {
+      if ([b.diff.kgs, b.diff.kg_fat, b.diff.kg_snf].some(v => v != null && parseFloat(v) < 0)) {
+        lossRows.push({ ...b, tanker_number: t.tanker_number, route_name: t.route_name });
+      }
+    }
+  }
+  lossRows.sort((a, b) => String(a.bmcu_name).localeCompare(String(b.bmcu_name)));
 
-  const bodyRows = lossRows.map((r, i) => `
+  const bodyRows = lossRows.map((b, i) => `
     <tr style="background:${i % 2 ? '#f8fafc' : '#ffffff'};">
-      ${td(`<b style="color:#005ba3;">${escH(r.tanker_number || '—')}</b>`)}
-      ${td(escH(r.route_name || '—'))}
-      ${td(escH(r.unloading_point || '—'))}
-      ${lossCell(r.dr_kgs)}${lossCell(r.dr_kg_fat)}${lossCell(r.dr_kg_snf)}
+      ${td(`<b style="color:#005ba3;">${escH(b.bmcu_code || '—')}</b> ${escH(b.bmcu_name || '')}`)}
+      ${td(escH(b.tanker_number || '—'))}
+      ${td(escH(b.route_name || '—'))}
+      ${lossCell(b.diff.kgs)}${lossCell(b.diff.kg_fat)}${lossCell(b.diff.kg_snf)}
     </tr>`).join('');
 
-  const sum = k => lossRows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
+  const sum = k => lossRows.reduce((s, b) => s + (parseFloat(b.diff[k]) || 0), 0);
 
   // Headline: net TS (Kg.Fat + Kg.SNF) difference Ack vs RMRD across ALL trips
   const totalTs = rows.reduce((s, r) =>
@@ -734,16 +738,16 @@ function buildTsEmailHtml(rows, reportDate, basis) {
       ${tsLine}
       <p style="font-size:13px;margin:0 0 10px;">Dear Team,<br/>Summary of the Daily TS Report for <b>${escH(reportDate)}</b> — the full report is attached.</p>
       ${lossRows.length === 0
-        ? `<p style="font-size:13px;color:#15803d;font-weight:600;margin:0 0 10px;">No loss recorded against RMRD for any trip.</p>`
+        ? `<p style="font-size:13px;color:#15803d;font-weight:600;margin:0 0 10px;">No BMCU recorded a loss against RMRD.</p>`
         : `<table style="border-collapse:collapse;width:100%;">
         <tr style="background:#e0f2fe;">
-          ${['Tanker', 'Route', 'Delivery Point', 'Qty Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
+          ${['BMCU', 'Tanker', 'Route', 'Qty Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
             .map(h => `<th style="padding:6px 8px;border:1px solid #e2e8f0;font-size:12px;color:#0f172a;text-align:left;">${h}</th>`).join('')}
         </tr>
         ${bodyRows}
         <tr style="background:#dbeafe;font-weight:700;">
-          ${td(`TOTAL — ${lossRows.length} trip${lossRows.length === 1 ? '' : 's'} with loss`)}${td('')}${td('')}
-          ${lossCell(rN(sum('dr_kgs')))}${lossCell(rN(sum('dr_kg_fat')))}${lossCell(rN(sum('dr_kg_snf')))}
+          ${td(`SUB TOTAL — ${lossRows.length} BMCU${lossRows.length === 1 ? '' : 's'} with loss`)}${td('')}${td('')}
+          ${lossCell(rN(sum('kgs')))}${lossCell(rN(sum('kg_fat')))}${lossCell(rN(sum('kg_snf')))}
         </tr>
       </table>`}
       <p style="font-size:11px;color:#9ca3af;margin:14px 0 0;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <b style="color:#6b7280;">Shreeja IT Team</b>.</p>
@@ -765,7 +769,7 @@ router.post('/send-email', authenticate, async (req, res) => {
     if (!recipients.rows.length)
       return res.status(400).json({ error: 'No active email recipients configured' });
 
-    const { wb, rows } = await buildTsWorkbookFull(report_date, basis);
+    const { wb, rows, breakup } = await buildTsWorkbookFull(report_date, basis);
     const buf  = Buffer.from(await wb.xlsx.writeBuffer());
 
     const acked = rows.filter(r => r.has_ack).length;
@@ -774,7 +778,7 @@ router.post('/send-email', authenticate, async (req, res) => {
       from:    process.env.SMTP_FROM,
       to:      recipients.rows.map(r => `${r.full_name} <${r.email}>`).join(', '),
       subject: `Daily TS Report — ${report_date} (${TS_BASIS_LABEL(basis)})`,
-      html: buildTsEmailHtml(rows, report_date, basis),
+      html: buildTsEmailHtml(rows, breakup, report_date, basis),
       attachments: [{
         filename: `ts_report_${report_date}.xlsx`,
         content: buf,
@@ -997,7 +1001,7 @@ const M6 = m => [m.litres, m.kgs, m.fat, m.snf, m.kg_fat, m.kg_snf];
 const D4 = d => [d.kgs, d.litres, d.kg_fat, d.kg_snf, d.pct];
 
 function addBmcuBreakupSheet(wb, data) {
-  const ws = wb.addWorksheet('BMCU breakup', { views: [{ state: 'frozen', xSplit: 5, ySplit: 3 }] });
+  const ws = wb.addWorksheet('BMCU breakup');
   // Cols: 1 Route, 2 Lifting Date, 3 Tanker, 4 BMCU Code, 5 BMCU Name, 6 Compartment,
   //       7-12 dispatch, 13 Shift, 14-19 RMRD, 20-23 diff
   ws.columns = [
