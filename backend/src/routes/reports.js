@@ -687,19 +687,34 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Styled email body: branded header, headline TS gain/loss, then a BMCU-wise
-// loss table (Dispatch Vs RMRD per BMCU, losses only) with a subtotal row.
+// Styled email body: branded header, headline TS gain/loss, the per-trip
+// Ack Vs RMRD loss table (with total), then a BMCU-wise Dispatch Vs RMRD loss
+// table (losses only) with a subtotal row.
 // Full detail (all trips/groups/sheets) stays in the attachment.
 function buildTsEmailHtml(rows, breakup, reportDate, basis) {
   const escH = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const n0 = v => v == null ? '—' : Math.round(parseFloat(v)).toLocaleString('en-IN');
   const td = (v, extra = '') => `<td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:12px;${extra}">${v}</td>`;
+  const th = h => `<th style="padding:6px 8px;border:1px solid #e2e8f0;font-size:12px;color:#0f172a;text-align:left;">${h}</th>`;
   // Only actual losses (negative values) are shown, always in red;
   // zero/positive (a gain, not a loss) renders blank.
   const lossCell = v => v == null || parseFloat(v) >= 0 ? td('—', 'text-align:right;color:#cbd5e1;')
     : td(n0(v), 'text-align:right;font-weight:700;color:#dc2626;');
 
-  // BMCU-wise losses only: one row per BMCU whose Dispatch Vs RMRD difference
+  // Per-trip losses (Ack Vs RMRD): a trip is shown if that comparison has an
+  // actual loss on Qty/FAT/SNF Kgs.
+  const tripLoss = rows.filter(r => r.has_ack &&
+    [r.dr_kgs, r.dr_kg_fat, r.dr_kg_snf].some(v => v != null && parseFloat(v) < 0));
+  const tripBody = tripLoss.map((r, i) => `
+    <tr style="background:${i % 2 ? '#f8fafc' : '#ffffff'};">
+      ${td(`<b style="color:#005ba3;">${escH(r.tanker_number || '—')}</b>`)}
+      ${td(escH(r.route_name || '—'))}
+      ${td(escH(r.unloading_point || '—'))}
+      ${lossCell(r.dr_kgs)}${lossCell(r.dr_kg_fat)}${lossCell(r.dr_kg_snf)}
+    </tr>`).join('');
+  const tripSum = k => tripLoss.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
+
+  // BMCU-wise losses (Dispatch Vs RMRD): one row per BMCU whose difference
   // shows an actual loss on Qty Kgs / Kg.Fat / Kg.SNF.
   const lossRows = [];
   for (const t of (breakup?.trips || [])) {
@@ -737,12 +752,25 @@ function buildTsEmailHtml(rows, breakup, reportDate, basis) {
     <div style="border:1px solid #e2e8f0;border-top:none;padding:16px 20px;border-radius:0 0 10px 10px;">
       ${tsLine}
       <p style="font-size:13px;margin:0 0 10px;">Dear Team,<br/>Summary of the Daily TS Report for <b>${escH(reportDate)}</b> — the full report is attached.</p>
+      ${tripLoss.length === 0
+        ? `<p style="font-size:13px;color:#15803d;font-weight:600;margin:0 0 10px;">No loss recorded against RMRD for any trip.</p>`
+        : `<p style="font-size:13px;font-weight:700;color:#0f172a;margin:0 0 6px;">Trip wise losses (Ack Vs RMRD)</p>
+      <table style="border-collapse:collapse;width:100%;margin:0 0 14px;">
+        <tr style="background:#e0f2fe;">
+          ${['Tanker', 'Route', 'Delivery Point', 'Qty Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs'].map(th).join('')}
+        </tr>
+        ${tripBody}
+        <tr style="background:#dbeafe;font-weight:700;">
+          ${td(`TOTAL — ${tripLoss.length} trip${tripLoss.length === 1 ? '' : 's'} with loss`)}${td('')}${td('')}
+          ${lossCell(rN(tripSum('dr_kgs')))}${lossCell(rN(tripSum('dr_kg_fat')))}${lossCell(rN(tripSum('dr_kg_snf')))}
+        </tr>
+      </table>`}
       ${lossRows.length === 0
         ? `<p style="font-size:13px;color:#15803d;font-weight:600;margin:0 0 10px;">No BMCU recorded a loss against RMRD.</p>`
-        : `<table style="border-collapse:collapse;width:100%;">
+        : `<p style="font-size:13px;font-weight:700;color:#0f172a;margin:0 0 6px;">BMCU wise losses (Dispatch Vs RMRD)</p>
+      <table style="border-collapse:collapse;width:100%;">
         <tr style="background:#e0f2fe;">
-          ${['BMCU', 'Tanker', 'Route', 'Qty Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs']
-            .map(h => `<th style="padding:6px 8px;border:1px solid #e2e8f0;font-size:12px;color:#0f172a;text-align:left;">${h}</th>`).join('')}
+          ${['BMCU', 'Tanker', 'Route', 'Qty Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs'].map(th).join('')}
         </tr>
         ${bodyRows}
         <tr style="background:#dbeafe;font-weight:700;">
