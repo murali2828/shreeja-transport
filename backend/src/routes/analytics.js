@@ -160,7 +160,7 @@ router.get('/summary', authenticate, async (req, res) => {
   try {
     const params = [from, to, dp];
 
-    const [kpis, daily, tankers, plants] = await Promise.all([
+    const [kpis, daily, tankers, plants, routes] = await Promise.all([
       query(`WITH ${baseTripsCte} SELECT ${aggSelect} FROM per_trip`, params),
       query(`WITH ${baseTripsCte}
         SELECT plan_for_date::text AS date, ${aggSelect}
@@ -173,6 +173,10 @@ router.get('/summary', authenticate, async (req, res) => {
         SELECT delivery_point, ${aggSelect}
         FROM per_trip GROUP BY delivery_point
         ORDER BY SUM(ack_kgs) DESC NULLS LAST`, params),
+      query(`WITH ${baseTripsCte}
+        SELECT route_name, ${aggSelect}
+        FROM per_trip WHERE route_name IS NOT NULL
+        GROUP BY route_name ORDER BY SUM((ack_kg_fat+ack_kg_snf)-(rmrd_kg_fat+rmrd_kg_snf)) FILTER (WHERE has_ack) NULLS LAST`, params),
     ]);
 
     // BMCU leaderboard — Dispatch Vs RMRD per BMCU (ack is trip-level only).
@@ -259,11 +263,95 @@ router.get('/summary', authenticate, async (req, res) => {
       daily: daily.rows.map(r => ({ date: r.date, ...mapAgg(r) })),
       tankers: tankers.rows.map(r => ({ tanker_number: r.tanker_number, ...mapAgg(r) })),
       delivery_points: plants.rows.map(r => ({ delivery_point: r.delivery_point || '—', ...mapAgg(r) })),
+      routes: routes.rows.map(r => ({ route_name: r.route_name, ...mapAgg(r) })),
       bmcus: bmcuRows,
     });
   } catch (err) {
     console.error('Analytics summary error:', err);
     res.status(500).json({ error: 'Failed to build analytics summary' });
+  }
+});
+
+// ─── Drill-down: trips behind any dashboard figure ───────────────────────────
+// Filters compose: date range (+ optional single date), delivery point id,
+// route name, tanker number. Returns one row per trip with the three section
+// totals and gains — each row links back to its execution screen.
+router.get('/trips', authenticate, async (req, res) => {
+  const { from, to } = req.query;
+  const dp = req.query.delivery_point_id ? parseInt(req.query.delivery_point_id) : null;
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
+  try {
+    const params = [from, to, dp];
+    const extra = [];
+    if (req.query.date)          { params.push(req.query.date);          extra.push(`plan_for_date = $${params.length}`); }
+    if (req.query.route_name)    { params.push(req.query.route_name);    extra.push(`route_name = $${params.length}`); }
+    if (req.query.tanker_number) { params.push(req.query.tanker_number); extra.push(`tanker_number = $${params.length}`); }
+    if (req.query.delivery_point){ params.push(req.query.delivery_point);extra.push(`COALESCE(delivery_point,'—') = $${params.length}`); }
+    const where = extra.length ? `WHERE ${extra.join(' AND ')}` : '';
+
+    const r = await query(`WITH ${baseTripsCte}
+      SELECT plan_for_date::text AS date, execution_id, tanker_number, route_name,
+             delivery_point, has_ack,
+             disp_litres, disp_kgs, rmrd_litres, rmrd_kgs, ack_litres, ack_kgs,
+             CASE WHEN has_ack THEN ack_kgs - rmrd_kgs END AS qty_gain_kgs,
+             CASE WHEN has_ack THEN (ack_kg_fat+ack_kg_snf) - (rmrd_kg_fat+rmrd_kg_snf) END AS ts_gain,
+             CASE WHEN has_ack AND (rmrd_kg_fat+rmrd_kg_snf) > 0
+               THEN ((ack_kg_fat+ack_kg_snf) - (rmrd_kg_fat+rmrd_kg_snf)) / (rmrd_kg_fat+rmrd_kg_snf) * 100 END AS ts_gain_pct
+      FROM per_trip ${where}
+      ORDER BY plan_for_date, tanker_number`, params);
+
+    res.json(r.rows.map(x => ({
+      date: x.date, execution_id: x.execution_id, tanker_number: x.tanker_number,
+      route_name: x.route_name, delivery_point: x.delivery_point || '—', has_ack: x.has_ack,
+      disp_litres: rN(x.disp_litres), disp_kgs: rN(x.disp_kgs),
+      rmrd_litres: rN(x.rmrd_litres), rmrd_kgs: rN(x.rmrd_kgs),
+      ack_litres: rN(x.ack_litres), ack_kgs: rN(x.ack_kgs),
+      qty_gain_kgs: rN(x.qty_gain_kgs), ts_gain: rN(x.ts_gain), ts_gain_pct: rN(x.ts_gain_pct, 3),
+    })));
+  } catch (err) {
+    console.error('Analytics trips error:', err);
+    res.status(500).json({ error: 'Failed to load trips' });
+  }
+});
+
+// ─── Drill-down: one BMCU's Dispatch Vs RMRD per trip ────────────────────────
+router.get('/bmcu-detail', authenticate, async (req, res) => {
+  const { from, to, bmcu_code } = req.query;
+  const dp = req.query.delivery_point_id ? parseInt(req.query.delivery_point_id) : null;
+  if (!from || !to || !bmcu_code)
+    return res.status(400).json({ error: 'from, to and bmcu_code are required' });
+  try {
+    const params = [from, to, dp, bmcu_code];
+    const r = await query(`WITH ${baseTripsCte}
+      SELECT tr.plan_for_date::text AS date, tr.execution_id, tr.tanker_number,
+             tr.route_name, tr.delivery_point,
+             SUM(teb.qty_kgs) AS disp_kgs,
+             SUM(teb.kg_fat + teb.kg_snf) AS disp_ts,
+             COALESCE(SUM(sh.rmrd_kgs),0) AS rmrd_kgs,
+             COALESCE(SUM(sh.rmrd_ts),0)  AS rmrd_ts
+      FROM trips tr
+      JOIN trip_execution_bmcus teb
+        ON teb.execution_id = tr.execution_id AND teb.is_deleted=FALSE
+      JOIN bmcus b ON b.id = teb.bmcu_id AND b.bmcu_code = $4
+      LEFT JOIN LATERAL (
+        SELECT SUM(s.rmrd_qty * ${KG}) AS rmrd_kgs,
+               SUM(s.rmrd_qty * ${KG} * (COALESCE(s.rmrd_fat_pct,0)+COALESCE(s.rmrd_snf_pct,0)) / 100) AS rmrd_ts
+        FROM trip_execution_bmcu_shifts s
+        WHERE s.execution_id = teb.execution_id AND s.bmcu_seq_no = teb.seq_no
+      ) sh ON TRUE
+      GROUP BY tr.plan_for_date, tr.execution_id, tr.tanker_number, tr.route_name, tr.delivery_point
+      ORDER BY tr.plan_for_date`, params);
+
+    res.json(r.rows.map(x => ({
+      date: x.date, execution_id: x.execution_id, tanker_number: x.tanker_number,
+      route_name: x.route_name, delivery_point: x.delivery_point || '—',
+      disp_kgs: rN(x.disp_kgs), rmrd_kgs: rN(x.rmrd_kgs),
+      qty_gain_kgs: rN(parseFloat(x.disp_kgs) - parseFloat(x.rmrd_kgs)),
+      ts_gain: rN(parseFloat(x.disp_ts) - parseFloat(x.rmrd_ts)),
+    })));
+  } catch (err) {
+    console.error('Analytics bmcu-detail error:', err);
+    res.status(500).json({ error: 'Failed to load BMCU detail' });
   }
 });
 

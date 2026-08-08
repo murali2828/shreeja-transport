@@ -1,8 +1,12 @@
-// Analytics dashboard (Phase 1): date-range KPIs, daily TS gain/loss trend,
-// BMCU / tanker leaderboards and delivery-point performance.
-import { useState } from 'react';
+// Analytics dashboard (Phase 1+2): date-range KPIs, daily TS gain/loss trend,
+// route / tanker / BMCU leaderboards and delivery-point performance — every
+// figure drills down to the trips behind it, and each trip links to its
+// execution screen.
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getAnalyticsSummary, getDeliveryPoints } from '../../api';
+import { useNavigate } from 'react-router-dom';
+import api, { getAnalyticsSummary, getDeliveryPoints } from '../../api';
+import { X, ArrowUpDown, ExternalLink } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis,
   Tooltip, CartesianGrid, Cell, ReferenceLine,
@@ -27,24 +31,57 @@ function Kpi({ label, value, sub, color }) {
   );
 }
 
-function LeaderTable({ title, rows, cols, note }) {
+// Sortable, clickable leaderboard table. Click a header to sort; click a row
+// to drill down into the trips behind it.
+function LeaderTable({ title, rows, cols, note, defaultSort, onRowClick, maxRows = 12 }) {
+  const [sort, setSort] = useState(defaultSort || null); // {key, dir}
+  const [showAll, setShowAll] = useState(false);
+
+  const sorted = useMemo(() => {
+    if (!sort) return rows;
+    const val = r => {
+      const c = cols.find(c2 => c2.key === sort.key);
+      const v = c?.sortVal ? c.sortVal(r) : r[sort.key];
+      return v == null ? (sort.dir === 'asc' ? Infinity : -Infinity) : v;
+    };
+    return [...rows].sort((a, b) => {
+      const av = val(a), bv = val(b);
+      if (typeof av === 'string' || typeof bv === 'string')
+        return sort.dir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+      return sort.dir === 'asc' ? av - bv : bv - av;
+    });
+  }, [rows, sort, cols]);
+
+  const shown = showAll ? sorted : sorted.slice(0, maxRows);
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 overflow-x-auto">
-      <div className="font-semibold text-sm text-gray-700 mb-2">{title}</div>
-      {note && <div className="text-[11px] text-gray-400 mb-2">{note}</div>}
-      <table className="w-full text-xs">
+      <div className="font-semibold text-sm text-gray-700">{title}</div>
+      {note && <div className="text-[11px] text-gray-400 mt-0.5 mb-1">{note}</div>}
+      <table className="w-full text-xs mt-1.5">
         <thead>
-          <tr className="text-left text-gray-500 border-b">
-            {cols.map(c => <th key={c.key} className={`py-1.5 pr-3 ${c.right ? 'text-right' : ''}`}>{c.label}</th>)}
+          <tr className="text-left text-gray-500 border-b select-none">
+            {cols.map(c => (
+              <th key={c.key}
+                  className={`py-1.5 pr-3 cursor-pointer hover:text-gray-800 ${c.right ? 'text-right' : ''}`}
+                  onClick={() => setSort(s => ({ key: c.key, dir: s?.key === c.key && s.dir === 'desc' ? 'asc' : 'desc' }))}>
+                {c.label}
+                {sort?.key === c.key
+                  ? <span className="ml-0.5 text-blue-600">{sort.dir === 'desc' ? '↓' : '↑'}</span>
+                  : <ArrowUpDown size={9} className="inline ml-0.5 opacity-40" />}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {rows.length === 0 && <tr><td colSpan={cols.length} className="py-3 text-gray-400">No data</td></tr>}
-          {rows.map((r, i) => (
-            <tr key={i} className="border-b border-gray-50">
+          {shown.length === 0 && <tr><td colSpan={cols.length} className="py-3 text-gray-400">No data</td></tr>}
+          {shown.map((r, i) => (
+            <tr key={i}
+                className={`border-b border-gray-50 ${onRowClick ? 'cursor-pointer hover:bg-blue-50' : ''}`}
+                onClick={onRowClick ? () => onRowClick(r) : undefined}>
               {cols.map(c => (
                 <td key={c.key} className={`py-1.5 pr-3 ${c.right ? 'text-right tabular-nums' : ''}`}
-                    style={c.gain ? { color: gainColor(r[c.key]), fontWeight: 600 } : {}}>
+                    style={c.gain ? { color: gainColor(c.sortVal ? c.sortVal(r) : r[c.key]), fontWeight: 600 } : {}}>
                   {c.fmt ? c.fmt(r[c.key], r) : (r[c.key] ?? '—')}
                 </td>
               ))}
@@ -52,14 +89,113 @@ function LeaderTable({ title, rows, cols, note }) {
           ))}
         </tbody>
       </table>
+      {sorted.length > maxRows && (
+        <button className="text-[11px] text-blue-600 mt-2 hover:underline" onClick={() => setShowAll(v => !v)}>
+          {showAll ? 'Show less' : `Show all ${sorted.length}`}
+        </button>
+      )}
     </div>
   );
 }
+
+// Drill-down overlay: trips (or a BMCU's per-trip detail) behind a clicked figure.
+function DrillPanel({ drill, from, to, dp, onClose }) {
+  const navigate = useNavigate();
+  const isBmcu = drill.type === 'bmcu';
+  const { data, isLoading } = useQuery({
+    queryKey: ['analytics-drill', drill, from, to, dp],
+    queryFn: () => {
+      const base = { from, to, delivery_point_id: dp || undefined };
+      if (isBmcu) return api.get('/analytics/bmcu-detail', { params: { ...base, bmcu_code: drill.value } }).then(r => r.data);
+      const p = { ...base };
+      if (drill.type === 'date')           p.date = drill.value;
+      if (drill.type === 'route')          p.route_name = drill.value;
+      if (drill.type === 'tanker')         p.tanker_number = drill.value;
+      if (drill.type === 'delivery_point') p.delivery_point = drill.value;
+      return api.get('/analytics/trips', { params: p }).then(r => r.data);
+    },
+  });
+
+  const rows = data || [];
+  const sum = k => rows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center p-4 md:p-10" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-5xl max-h-[85vh] overflow-auto p-5"
+           onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <div>
+            <div className="font-bold text-gray-800">{drill.label}</div>
+            <div className="text-[11px] text-gray-400">
+              {from} → {to} · {rows.length} trip{rows.length === 1 ? '' : 's'}
+              {isBmcu ? ' · Dispatch Vs RMRD for this BMCU' : ' · gains on acknowledged trips (Ack Vs RMRD)'}
+            </div>
+          </div>
+          <button className="p-1.5 rounded-lg hover:bg-gray-100" onClick={onClose}><X size={16}/></button>
+        </div>
+        {isLoading ? <div className="py-8 text-gray-400 text-sm">Loading…</div> : (
+          <table className="w-full text-xs mt-2">
+            <thead>
+              <tr className="text-left text-gray-500 border-b">
+                <th className="py-1.5 pr-3">Date</th>
+                <th className="py-1.5 pr-3">Tanker</th>
+                <th className="py-1.5 pr-3">Route</th>
+                <th className="py-1.5 pr-3">Delivery Point</th>
+                {!isBmcu && <th className="py-1.5 pr-3 text-right">Dispatch Kg</th>}
+                {isBmcu  && <th className="py-1.5 pr-3 text-right">Dispatch Kg</th>}
+                <th className="py-1.5 pr-3 text-right">RMRD Kg</th>
+                {!isBmcu && <th className="py-1.5 pr-3 text-right">Ack Kg</th>}
+                <th className="py-1.5 pr-3 text-right">Qty +/− Kg</th>
+                <th className="py-1.5 pr-3 text-right">TS +/− Kg</th>
+                <th className="py-1.5 pr-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className="border-b border-gray-50 hover:bg-blue-50 cursor-pointer"
+                    onClick={() => navigate(`/execution/${r.execution_id}`)}>
+                  <td className="py-1.5 pr-3">{r.date}</td>
+                  <td className="py-1.5 pr-3 font-semibold text-blue-700">{r.tanker_number || '—'}</td>
+                  <td className="py-1.5 pr-3">{r.route_name || '—'}</td>
+                  <td className="py-1.5 pr-3">{r.delivery_point}</td>
+                  <td className="py-1.5 pr-3 text-right tabular-nums">{nf(r.disp_kgs)}</td>
+                  <td className="py-1.5 pr-3 text-right tabular-nums">{nf(r.rmrd_kgs)}</td>
+                  {!isBmcu && <td className="py-1.5 pr-3 text-right tabular-nums">{r.has_ack ? nf(r.ack_kgs) : 'pending'}</td>}
+                  <td className="py-1.5 pr-3 text-right tabular-nums font-semibold" style={{ color: gainColor(r.qty_gain_kgs) }}>{nf(r.qty_gain_kgs)}</td>
+                  <td className="py-1.5 pr-3 text-right tabular-nums font-semibold" style={{ color: gainColor(r.ts_gain) }}>{nf(r.ts_gain, 1)}</td>
+                  <td className="py-1.5"><ExternalLink size={11} className="text-gray-300"/></td>
+                </tr>
+              ))}
+              <tr className="font-bold bg-blue-50">
+                <td className="py-1.5 pr-3" colSpan={4}>TOTAL</td>
+                <td className="py-1.5 pr-3 text-right tabular-nums">{nf(sum('disp_kgs'))}</td>
+                <td className="py-1.5 pr-3 text-right tabular-nums">{nf(sum('rmrd_kgs'))}</td>
+                {!isBmcu && <td className="py-1.5 pr-3 text-right tabular-nums">{nf(sum('ack_kgs'))}</td>}
+                <td className="py-1.5 pr-3 text-right tabular-nums" style={{ color: gainColor(sum('qty_gain_kgs')) }}>{nf(sum('qty_gain_kgs'))}</td>
+                <td className="py-1.5 pr-3 text-right tabular-nums" style={{ color: gainColor(sum('ts_gain')) }}>{nf(sum('ts_gain'), 1)}</td>
+                <td/>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const GAIN_COLS = [
+  { key: 'trips', label: 'Trips', right: true },
+  { key: 'ack_kgs', label: 'Delivered (Kg)', right: true, fmt: (_, r) => nf(r.ack?.kgs), sortVal: r => r.ack?.kgs },
+  { key: 'qty_gain_kgs', label: 'Qty Gain/Loss (Kg)', right: true, gain: true, fmt: v => nf(v) },
+  { key: 'ts_gain', label: 'TS Gain/Loss (Kg)', right: true, gain: true, fmt: v => nf(v, 1) },
+  { key: 'ts_gain_pct', label: 'TS %', right: true, gain: true, fmt: v => v == null ? '—' : nf(v, 3) + ' %' },
+];
 
 export default function Analytics() {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo]     = useState(today());
   const [dp, setDp]     = useState('');
+  const [drill, setDrill] = useState(null); // {type, value, label}
 
   const { data: dps } = useQuery({
     queryKey: ['delivery-points'],
@@ -73,10 +209,6 @@ export default function Analytics() {
 
   const k = data?.kpis;
   const daily = (data?.daily || []).map(d => ({ ...d, label: d.date.slice(8, 10) + '/' + d.date.slice(5, 7) }));
-  const worstBmcus = (data?.bmcus || []).filter(b => (b.ts_gain ?? 0) < 0).slice(0, 10);
-  const bestBmcus  = [...(data?.bmcus || [])].filter(b => (b.ts_gain ?? 0) > 0).reverse().slice(0, 10);
-  const tankers    = data?.tankers || [];
-  const worstTankers = tankers.filter(t => (t.ts_gain ?? 0) < 0).slice(0, 10);
 
   const presets = [
     { label: 'Today', from: today(), to: today() },
@@ -90,7 +222,10 @@ export default function Analytics() {
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <h2 className="page-title">Analytics</h2>
-          <p className="text-xs text-gray-500">Gain / loss analytics · Ack Vs RMRD basis {isFetching && '· loading…'}</p>
+          <p className="text-xs text-gray-500">
+            Gain / loss analytics · Ack Vs RMRD basis · click any row or bar to drill down
+            {isFetching && ' · loading…'}
+          </p>
         </div>
         <div className="flex-1" />
         {presets.map(p => (
@@ -121,9 +256,9 @@ export default function Analytics() {
              sub={`${nf(k?.stage_unload_kgs)} at unloading`} />
       </div>
 
-      {/* Daily trend */}
+      {/* Daily trend — click a bar to open that day's trips */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-        <div className="font-semibold text-sm text-gray-700 mb-2">Daily TS Gain / Loss (Kg)</div>
+        <div className="font-semibold text-sm text-gray-700 mb-2">Daily TS Gain / Loss (Kg) — click a day to drill down</div>
         <ResponsiveContainer width="100%" height={260}>
           <ComposedChart data={daily}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -131,7 +266,8 @@ export default function Analytics() {
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip formatter={(v, n) => [nf(v, 1), n]} />
             <ReferenceLine y={0} stroke="#94a3b8" />
-            <Bar dataKey="ts_gain" name="TS gain/loss">
+            <Bar dataKey="ts_gain" name="TS gain/loss" cursor="pointer"
+                 onClick={d => d?.date && setDrill({ type: 'date', value: d.date, label: `Trips on ${d.date}` })}>
               {daily.map((d, i) => <Cell key={i} fill={gainColor(d.ts_gain)} />)}
             </Bar>
             <Line dataKey="qty_gain_kgs" name="Qty gain/loss (Kg)" stroke="#2563eb" dot={false} strokeWidth={2} />
@@ -142,23 +278,29 @@ export default function Analytics() {
       {/* Delivery point performance */}
       <LeaderTable
         title="Delivery Point Performance"
-        note="Delivered = acknowledged quantity at the plant · Gain/Loss = Ack − RMRD (acknowledged trips)"
+        note="Delivered = acknowledged quantity at the plant · Gain/Loss = Ack − RMRD · click a row for its trips"
         rows={data?.delivery_points || []}
-        cols={[
-          { key: 'delivery_point', label: 'Delivery Point' },
-          { key: 'trips', label: 'Trips', right: true },
-          { key: 'ack_litres_show', label: 'Delivered (L)', right: true, fmt: (_, r) => nf(r.ack?.litres) },
-          { key: 'ack_kgs_show', label: 'Delivered (Kg)', right: true, fmt: (_, r) => nf(r.ack?.kgs) },
-          { key: 'qty_gain_kgs', label: 'Qty Gain/Loss (Kg)', right: true, gain: true, fmt: v => nf(v) },
-          { key: 'ts_gain', label: 'TS Gain/Loss (Kg)', right: true, gain: true, fmt: v => nf(v, 1) },
-          { key: 'ts_gain_pct', label: 'TS %', right: true, gain: true, fmt: v => v == null ? '—' : nf(v, 3) + ' %' },
-        ]}
+        defaultSort={{ key: 'ack_kgs', dir: 'desc' }}
+        onRowClick={r => setDrill({ type: 'delivery_point', value: r.delivery_point, label: `Trips delivered to ${r.delivery_point}` })}
+        cols={[{ key: 'delivery_point', label: 'Delivery Point' }, ...GAIN_COLS]}
+      />
+
+      {/* Routes */}
+      <LeaderTable
+        title="Route Performance (Ack Vs RMRD · worst first)"
+        note="Click a route for its trips · sort any column"
+        rows={data?.routes || []}
+        defaultSort={{ key: 'ts_gain', dir: 'asc' }}
+        onRowClick={r => setDrill({ type: 'route', value: r.route_name, label: `Trips on route ${r.route_name}` })}
+        cols={[{ key: 'route_name', label: 'Route' }, ...GAIN_COLS]}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <LeaderTable
           title="Worst BMCUs (TS loss · Dispatch Vs RMRD)"
-          rows={worstBmcus}
+          rows={(data?.bmcus || []).filter(b => (b.ts_gain ?? 0) < 0)}
+          defaultSort={{ key: 'ts_gain', dir: 'asc' }}
+          onRowClick={r => setDrill({ type: 'bmcu', value: r.bmcu_code, label: `${r.bmcu_code} — ${r.bmcu_name}` })}
           cols={[
             { key: 'bmcu_code', label: 'Code' },
             { key: 'bmcu_name', label: 'BMCU' },
@@ -170,7 +312,9 @@ export default function Analytics() {
         />
         <LeaderTable
           title="Best BMCUs (TS gain · Dispatch Vs RMRD)"
-          rows={bestBmcus}
+          rows={(data?.bmcus || []).filter(b => (b.ts_gain ?? 0) > 0)}
+          defaultSort={{ key: 'ts_gain', dir: 'desc' }}
+          onRowClick={r => setDrill({ type: 'bmcu', value: r.bmcu_code, label: `${r.bmcu_code} — ${r.bmcu_name}` })}
           cols={[
             { key: 'bmcu_code', label: 'Code' },
             { key: 'bmcu_name', label: 'BMCU' },
@@ -184,18 +328,20 @@ export default function Analytics() {
 
       <LeaderTable
         title="Tanker Performance (Ack Vs RMRD · worst first)"
-        rows={worstTankers.length ? worstTankers : tankers.slice(0, 10)}
+        note="TS loss / 1000 L normalizes small vs large tankers · click a tanker for its trips"
+        rows={data?.tankers || []}
+        defaultSort={{ key: 'ts_gain', dir: 'asc' }}
+        onRowClick={r => setDrill({ type: 'tanker', value: r.tanker_number, label: `Trips of tanker ${r.tanker_number}` })}
         cols={[
           { key: 'tanker_number', label: 'Tanker' },
-          { key: 'trips', label: 'Trips', right: true },
-          { key: 'ack_kgs_show', label: 'Delivered (Kg)', right: true, fmt: (_, r) => nf(r.ack?.kgs) },
-          { key: 'qty_gain_kgs', label: 'Qty Gain/Loss (Kg)', right: true, gain: true, fmt: v => nf(v) },
-          { key: 'ts_gain', label: 'TS Gain/Loss (Kg)', right: true, gain: true, fmt: v => nf(v, 1) },
-          { key: 'ts_gain_pct', label: 'TS %', right: true, gain: true, fmt: v => v == null ? '—' : nf(v, 3) + ' %' },
-          { key: 'per_1000', label: 'TS loss / 1000 L', right: true, gain: true,
+          ...GAIN_COLS,
+          { key: 'per_1000', label: 'TS / 1000 L', right: true, gain: true,
+            sortVal: r => r.ack?.litres > 0 && r.ts_gain != null ? r.ts_gain / r.ack.litres * 1000 : null,
             fmt: (_, r) => r.ack?.litres > 0 && r.ts_gain != null ? nf(r.ts_gain / r.ack.litres * 1000, 2) : '—' },
         ]}
       />
+
+      {drill && <DrillPanel drill={drill} from={from} to={to} dp={dp} onClose={() => setDrill(null)} />}
     </div>
   );
 }
