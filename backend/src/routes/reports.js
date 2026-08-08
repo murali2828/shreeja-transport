@@ -687,11 +687,10 @@ router.get('/daily-ts/excel', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Styled email body: branded header, headline TS gain/loss, the per-trip
-// Ack Vs RMRD loss table (with total), then a BMCU-wise Dispatch Vs RMRD loss
-// table (losses only) with a subtotal row.
+// Styled email body: branded header, headline TS gain/loss, and the per-trip
+// Ack Vs RMRD loss table (losses only) with its TOTAL row.
 // Full detail (all trips/groups/sheets) stays in the attachment.
-function buildTsEmailHtml(rows, breakup, reportDate, basis) {
+function buildTsEmailHtml(rows, reportDate, basis) {
   const escH = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const n0 = v => v == null ? '—' : Math.round(parseFloat(v)).toLocaleString('en-IN');
   const td = (v, extra = '') => `<td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:12px;${extra}">${v}</td>`;
@@ -713,28 +712,6 @@ function buildTsEmailHtml(rows, breakup, reportDate, basis) {
       ${lossCell(r.dr_kgs)}${lossCell(r.dr_kg_fat)}${lossCell(r.dr_kg_snf)}
     </tr>`).join('');
   const tripSum = k => tripLoss.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
-
-  // BMCU-wise losses (Dispatch Vs RMRD): one row per BMCU whose difference
-  // shows an actual loss on Qty Kgs / Kg.Fat / Kg.SNF.
-  const lossRows = [];
-  for (const t of (breakup?.trips || [])) {
-    for (const b of t.bmcus) {
-      if ([b.diff.kgs, b.diff.kg_fat, b.diff.kg_snf].some(v => v != null && parseFloat(v) < 0)) {
-        lossRows.push({ ...b, tanker_number: t.tanker_number, route_name: t.route_name });
-      }
-    }
-  }
-  lossRows.sort((a, b) => String(a.bmcu_name).localeCompare(String(b.bmcu_name)));
-
-  const bodyRows = lossRows.map((b, i) => `
-    <tr style="background:${i % 2 ? '#f8fafc' : '#ffffff'};">
-      ${td(`<b style="color:#005ba3;">${escH(b.bmcu_code || '—')}</b> ${escH(b.bmcu_name || '')}`)}
-      ${td(escH(b.tanker_number || '—'))}
-      ${td(escH(b.route_name || '—'))}
-      ${lossCell(b.diff.kgs)}${lossCell(b.diff.kg_fat)}${lossCell(b.diff.kg_snf)}
-    </tr>`).join('');
-
-  const sum = k => lossRows.reduce((s, b) => s + (parseFloat(b.diff[k]) || 0), 0);
 
   // Headline: net TS (Kg.Fat + Kg.SNF) difference Ack vs RMRD across ALL trips
   const totalTs = rows.reduce((s, r) =>
@@ -765,19 +742,6 @@ function buildTsEmailHtml(rows, breakup, reportDate, basis) {
           ${lossCell(rN(tripSum('dr_kgs')))}${lossCell(rN(tripSum('dr_kg_fat')))}${lossCell(rN(tripSum('dr_kg_snf')))}
         </tr>
       </table>`}
-      ${lossRows.length === 0
-        ? `<p style="font-size:13px;color:#15803d;font-weight:600;margin:0 0 10px;">No BMCU recorded a loss against RMRD.</p>`
-        : `<p style="font-size:13px;font-weight:700;color:#0f172a;margin:0 0 6px;">BMCU wise losses (Dispatch Vs RMRD)</p>
-      <table style="border-collapse:collapse;width:100%;">
-        <tr style="background:#e0f2fe;">
-          ${['BMCU', 'Tanker', 'Route', 'Qty Loss in Kgs', 'Loss in FAT Kgs', 'Loss in SNF Kgs'].map(th).join('')}
-        </tr>
-        ${bodyRows}
-        <tr style="background:#dbeafe;font-weight:700;">
-          ${td(`SUB TOTAL — ${lossRows.length} BMCU${lossRows.length === 1 ? '' : 's'} with loss`)}${td('')}${td('')}
-          ${lossCell(rN(sum('kgs')))}${lossCell(rN(sum('kg_fat')))}${lossCell(rN(sum('kg_snf')))}
-        </tr>
-      </table>`}
       <p style="font-size:11px;color:#9ca3af;margin:14px 0 0;">This is an automated message from Shreeja TMS · Developed &amp; maintained by <b style="color:#6b7280;">Shreeja IT Team</b>.</p>
     </div>
   </div>`;
@@ -797,7 +761,7 @@ router.post('/send-email', authenticate, async (req, res) => {
     if (!recipients.rows.length)
       return res.status(400).json({ error: 'No active email recipients configured' });
 
-    const { wb, rows, breakup } = await buildTsWorkbookFull(report_date, basis);
+    const { wb, rows } = await buildTsWorkbookFull(report_date, basis);
     const buf  = Buffer.from(await wb.xlsx.writeBuffer());
 
     const acked = rows.filter(r => r.has_ack).length;
@@ -806,7 +770,7 @@ router.post('/send-email', authenticate, async (req, res) => {
       from:    process.env.SMTP_FROM,
       to:      recipients.rows.map(r => `${r.full_name} <${r.email}>`).join(', '),
       subject: `Daily TS Report — ${report_date} (${TS_BASIS_LABEL(basis)})`,
-      html: buildTsEmailHtml(rows, breakup, report_date, basis),
+      html: buildTsEmailHtml(rows, report_date, basis),
       attachments: [{
         filename: `ts_report_${report_date}.xlsx`,
         content: buf,
