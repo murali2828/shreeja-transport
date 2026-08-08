@@ -182,7 +182,7 @@ async function buildSummary(params) {
   const [from, to, dp] = params;
   {
 
-    const [kpis, daily, tankers, plants, routes] = await Promise.all([
+    const [kpis, daily, tankers, plants, routes, shifts, dows] = await Promise.all([
       query(`WITH ${baseTripsCte} SELECT ${aggSelect} FROM per_trip`, params),
       query(`WITH ${baseTripsCte}
         SELECT plan_for_date::text AS date, ${aggSelect}
@@ -199,6 +199,25 @@ async function buildSummary(params) {
         SELECT route_name, ${aggSelect}
         FROM per_trip WHERE route_name IS NOT NULL
         GROUP BY route_name ORDER BY SUM((ack_kg_fat+ack_kg_snf)-(rmrd_kg_fat+rmrd_kg_snf)) FILTER (WHERE has_ack) NULLS LAST`, params),
+      // Shift-wise: classify each trip by the RMRD shifts it lifted (AM/PM/Mixed)
+      query(`WITH ${baseTripsCte},
+        trip_shift AS (
+          SELECT pt.*, (
+            SELECT CASE WHEN COUNT(DISTINCT s.shift) > 1 THEN 'Mixed'
+                        ELSE COALESCE(MAX(s.shift), '—') END
+            FROM trip_execution_bmcu_shifts s
+            JOIN trip_execution_bmcus b2
+              ON b2.execution_id=s.execution_id AND b2.seq_no=s.bmcu_seq_no AND b2.is_deleted=FALSE
+            WHERE s.execution_id = pt.execution_id
+          ) AS shift_kind
+          FROM per_trip pt
+        )
+        SELECT shift_kind, ${aggSelect} FROM trip_shift GROUP BY shift_kind ORDER BY shift_kind`, params),
+      // Day-of-week pattern
+      query(`WITH ${baseTripsCte}
+        SELECT TRIM(TO_CHAR(plan_for_date, 'Day')) AS dow,
+               EXTRACT(ISODOW FROM plan_for_date)::int AS dow_n, ${aggSelect}
+        FROM per_trip GROUP BY 1, 2 ORDER BY 2`, params),
     ]);
 
     // BMCU leaderboard — Dispatch Vs RMRD per BMCU (ack is trip-level only).
@@ -353,6 +372,8 @@ async function buildSummary(params) {
       tankers: tankers.rows.map(r => ({ tanker_number: r.tanker_number, ...mapAgg(r) })),
       delivery_points: plants.rows.map(r => ({ delivery_point: r.delivery_point || '—', ...mapAgg(r) })),
       routes: routes.rows.map(r => ({ route_name: r.route_name, ...mapAgg(r) })),
+      shifts: shifts.rows.map(r => ({ shift_kind: r.shift_kind, ...mapAgg(r) })),
+      day_of_week: dows.rows.map(r => ({ dow: r.dow, dow_n: r.dow_n, ...mapAgg(r) })),
       bmcus: bmcuRows,
     });
   }

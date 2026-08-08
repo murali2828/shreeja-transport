@@ -304,6 +304,10 @@ const GAIN_COLS = [
   { key: 'qty_gain_kgs', label: 'Qty Gain/Loss (Kg)', right: true, gain: true, fmt: v => nf(v) },
   { key: 'ts_gain', label: 'TS Gain/Loss (Kg)', right: true, gain: true, fmt: v => nf(v, 1) },
   { key: 'ts_gain_pct', label: 'TS %', right: true, gain: true, fmt: v => v == null ? '—' : nf(v, 3) + ' %' },
+  { key: 'stage_transit_kgs', label: 'Transit +/− (Kg)', right: true, gain: true, fmt: v => nf(v) },
+  { key: 'stage_unload_kgs', label: 'Unload +/− (Kg)', right: true, gain: true, fmt: v => nf(v) },
+  { key: 'avg_fat', label: 'Fat %', right: true, fmt: v => v == null ? '—' : nf(v, 2) },
+  { key: 'avg_snf', label: 'SNF %', right: true, fmt: v => v == null ? '—' : nf(v, 2) },
 ];
 
 export default function Analytics() {
@@ -313,6 +317,7 @@ export default function Analytics() {
   const [route, setRoute]   = useState('');
   const [tanker, setTanker] = useState('');
   const [drill, setDrill] = useState(null); // {type, value, label}
+  const [trendMode, setTrendMode] = useState('kg'); // 'kg' | 'pct'
 
   const { data: dps } = useQuery({
     queryKey: ['delivery-points'],
@@ -641,7 +646,16 @@ export default function Analytics() {
            style={{ borderColor: C.violet + '2e', borderLeft: `4px solid ${C.violet}` }}>
         <div className="font-semibold text-sm mb-2 flex items-center gap-2" style={{ color: C.ink }}>
           <span className="inline-block w-2 h-2 rounded-full" style={{ background: C.violet }} />
-          Daily TS Gain / Loss (Kg) — click a day to drill down
+          Daily TS Gain / Loss ({trendMode === 'kg' ? 'Kg' : '%'}) — click a day to drill down
+          <span className="ml-2 inline-flex rounded-lg overflow-hidden border" style={{ borderColor: C.violet + '55' }}>
+            {['kg', 'pct'].map(m => (
+              <button key={m} onClick={e => { e.stopPropagation(); setTrendMode(m); }}
+                className="px-2 py-0.5 text-[11px] font-semibold"
+                style={trendMode === m ? { background: C.violet, color: '#fff' } : { background: '#fff', color: C.violet }}>
+                {m === 'kg' ? 'Kg' : '%'}
+              </button>
+            ))}
+          </span>
           {!showTrend && daily.length > 0 && (
             <span className="text-[11px] font-normal" style={{ color: '#78716c' }}>
               · {daily.length} day{daily.length === 1 ? '' : 's'} only — widen the range for a trend
@@ -655,11 +669,13 @@ export default function Analytics() {
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip formatter={(v, n) => [nf(v, 1), n]} />
             <ReferenceLine y={0} stroke={C.neutral} />
-            <Bar dataKey="ts_gain" name="TS gain/loss" cursor="pointer"
+            <Bar dataKey={trendMode === 'kg' ? 'ts_gain' : 'ts_gain_pct'}
+                 name={trendMode === 'kg' ? 'TS gain/loss (Kg)' : 'TS gain/loss (%)'} cursor="pointer"
                  onClick={d => d?.date && setDrill({ type: 'date', value: d.date, label: `Trips on ${d.date}` })}>
-              {daily.map((d, i) => <Cell key={i} fill={gainColor(d.ts_gain)} />)}
+              {daily.map((d, i) => <Cell key={i} fill={gainColor(trendMode === 'kg' ? d.ts_gain : d.ts_gain_pct)} />)}
             </Bar>
-            {showTrend && <Line dataKey="qty_gain_kgs" name="Qty gain/loss (Kg)" stroke={C.line} dot={false} strokeWidth={2} />}
+            {showTrend && trendMode === 'kg' &&
+              <Line dataKey="qty_gain_kgs" name="Qty gain/loss (Kg)" stroke={C.line} dot={false} strokeWidth={2} />}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -685,6 +701,25 @@ export default function Analytics() {
         onRowClick={r => setDrill({ type: 'route', value: r.route_name, label: `Trips on route ${r.route_name}` })}
         cols={[{ key: 'route_name', label: 'Route' }, ...GAIN_COLS]}
       />
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <LeaderTable
+          title="Shift Wise (milk shifts lifted: AM / PM / Mixed)"
+          accent={C.violet}
+          note="A trip is Mixed when it lifted both AM and PM shift milk"
+          rows={data?.shifts || []}
+          maxRows={5}
+          cols={[{ key: 'shift_kind', label: 'Shift' }, ...GAIN_COLS.slice(0, 5)]}
+        />
+        <LeaderTable
+          title="Day of Week Pattern"
+          accent={C.teal}
+          note="Recurring weekday losses point to staffing / handling patterns"
+          rows={data?.day_of_week || []}
+          maxRows={7}
+          cols={[{ key: 'dow', label: 'Day' }, ...GAIN_COLS.slice(0, 5)]}
+        />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <LeaderTable
