@@ -46,6 +46,8 @@ const delta = (cur, prev, unit = 'Kg', d = 0) => {
   return `${arrow} ${nf(Math.abs(diff), d)} ${unit} vs prev period`;
 };
 const tint = hex => hex + '14'; // ~8% alpha wash for card backgrounds
+// Capacity-fill bands: >=80% green, 60-80 amber, <60 red
+const fillColor = pct => pct == null ? C.neutral : pct >= 80 ? C.gain : pct >= 60 ? AMBER : C.loss;
 
 function Kpi({ label, value, sub, color, accent }) {
   const a = accent || C.teal;
@@ -329,6 +331,13 @@ export default function Analytics() {
     enabled: !!from && !!to,
   });
 
+  const { data: util } = useQuery({
+    queryKey: ['analytics-util', from, to, dp, route, tanker],
+    queryFn: () => api.get('/analytics/utilisation', { params: { from, to, delivery_point_id: dp || undefined,
+      route_name: route || undefined, tanker_number: tanker || undefined } }).then(r => r.data),
+    enabled: !!from && !!to,
+  });
+
   const exportExcel = () => {
     api.get('/analytics/export', {
       params: { from, to, delivery_point_id: dp || undefined,
@@ -505,6 +514,46 @@ export default function Analytics() {
             sortVal: r => r.disp?.litres, fmt: (_, r) => nf(r.disp?.litres) },
           { key: 'l_per_km', label: 'L / KM', right: true, fmt: v => nf(v, 1) },
           { key: 'trip_cost', label: 'Cost (₹)', right: true, fmt: v => v ? nf(v) : '—' },
+        ]}
+      />
+
+      {/* Tanker utilisation — fill % on ACK quantity */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Kpi label="Fleet Capacity Utilisation" accent={fillColor(util?.fleet?.avg_fill_pct)}
+             color={fillColor(util?.fleet?.avg_fill_pct)}
+             value={util?.fleet?.avg_fill_pct != null ? `${nf(util.fleet.avg_fill_pct, 1)} %` : '—'}
+             sub="Ack qty vs capacity, trip-weighted" />
+        <Kpi label="Most Utilised Tanker" accent={C.gain}
+             value={util?.fleet?.most_utilised?.tanker_number || '—'}
+             sub={util?.fleet?.most_utilised ? `${nf(util.fleet.most_utilised.fill_pct, 1)} % avg fill` : ''} />
+        <Kpi label="Least Utilised Tanker" accent={C.amber}
+             value={util?.fleet?.least_utilised?.tanker_number || '—'}
+             sub={util?.fleet?.least_utilised ? `${nf(util.fleet.least_utilised.fill_pct, 1)} % avg fill` : ''} />
+        <Kpi label="Unused Tankers" accent={util?.fleet?.zero_trip ? C.loss : C.gain}
+             color={util?.fleet?.zero_trip ? C.loss : C.gain}
+             value={nf(util?.fleet?.zero_trip)}
+             sub={`of ${nf(util?.fleet?.tankers)} tankers — zero trips this period`} />
+      </div>
+
+      <LeaderTable
+        title="Tanker Utilisation"
+        accent={C.violet}
+        note={`Fill % = acknowledged qty ÷ capacity per trip (dispatch stands in for unacked trips) · ${nf(util?.period_days)} day period · click a tanker for its trips`}
+        rows={util?.tankers || []}
+        defaultSort={{ key: 'avg_fill_pct', dir: 'asc' }}
+        onRowClick={r => r.trips > 0 && setDrill({ type: 'tanker', value: r.tanker_number, label: `Trips of tanker ${r.tanker_number}` })}
+        cols={[
+          { key: 'tanker_number', label: 'Tanker' },
+          { key: 'capacity_litres', label: 'Capacity (L)', right: true, fmt: v => nf(v) },
+          { key: 'trips', label: 'Trips', right: true },
+          { key: 'active_days', label: 'Active Days', right: true },
+          { key: 'idle_days', label: 'Idle Days', right: true,
+            fmt: (v, r) => <span style={{ color: v > 0 && r.trips === 0 ? C.loss : undefined }}>{nf(v)}</span> },
+          { key: 'maintenance_days', label: 'Maint. Days', right: true, fmt: v => nf(v, 1) },
+          { key: 'trips_per_active_day', label: 'Trips / Active Day', right: true, fmt: v => nf(v, 2) },
+          { key: 'ack_litres', label: 'Ack Qty (L)', right: true, fmt: v => nf(v) },
+          { key: 'avg_fill_pct', label: 'Avg Fill %', right: true,
+            fmt: v => <span style={{ color: fillColor(v), fontWeight: 700 }}>{v == null ? '—' : nf(v, 1) + ' %'}</span> },
         ]}
       />
 

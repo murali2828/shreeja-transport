@@ -464,6 +464,100 @@ router.get('/alerts', authenticate, async (req, res) => {
   }
 });
 
+// ─── Tanker utilisation ──────────────────────────────────────────────────────
+// Per tanker over the range: trips, active days, idle days, maintenance days,
+// capacity fill % (ACK quantity vs capacity on acknowledged trips — dispatch
+// used as fallback for unacked trips), trips per active day. Includes tankers
+// with ZERO trips so unused fleet is visible.
+router.get('/utilisation', authenticate, async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
+  try {
+    const params = filterParams(req);
+    const periodDays = Math.round(
+      (new Date(to + 'T00:00:00Z') - new Date(from + 'T00:00:00Z')) / 86400000) + 1;
+
+    const r = await query(`WITH ${baseTripsCte},
+      per_tanker AS (
+        SELECT tanker_id,
+               COUNT(*)::int AS trips,
+               COUNT(*) FILTER (WHERE has_ack)::int AS acked_trips,
+               COUNT(DISTINCT plan_for_date)::int AS active_days,
+               SUM(ack_litres)  AS ack_litres,
+               SUM(disp_litres) AS disp_litres,
+               SUM(ack_litres)  FILTER (WHERE has_ack) AS acked_litres,
+               SUM(disp_litres) FILTER (WHERE NOT has_ack) AS unacked_disp_litres,
+               SUM(km) AS km
+        FROM per_trip GROUP BY tanker_id
+      ),
+      maint AS (
+        SELECT tanker_id, SUM(GREATEST(0, EXTRACT(EPOCH FROM (
+                 LEAST(COALESCE(returned_at, NOW()), ($2::date + 1)::timestamptz)
+                 - GREATEST(issued_at, $1::date::timestamptz))) / 86400)) AS days
+        FROM non_trip_gate_passes
+        WHERE reason='Maintainance'
+          AND issued_at < ($2::date + 1)::timestamptz
+          AND COALESCE(returned_at, NOW()) > $1::date::timestamptz
+        GROUP BY tanker_id
+      )
+      SELECT t.id, t.tanker_number, t.capacity_litres,
+             COALESCE(pt.trips,0) AS trips, COALESCE(pt.acked_trips,0) AS acked_trips,
+             COALESCE(pt.active_days,0) AS active_days,
+             COALESCE(pt.acked_litres,0) AS acked_litres,
+             COALESCE(pt.unacked_disp_litres,0) AS unacked_disp_litres,
+             COALESCE(pt.disp_litres,0) AS disp_litres,
+             COALESCE(pt.km,0) AS km,
+             COALESCE(m.days,0) AS maintenance_days
+      FROM tankers t
+      LEFT JOIN per_tanker pt ON pt.tanker_id = t.id
+      LEFT JOIN maint m ON m.tanker_id = t.id
+      WHERE ($5::text IS NULL OR t.tanker_number = $5::text)
+      ORDER BY t.tanker_number`, params);
+
+    const rows = r.rows.map(x => {
+      const cap = parseFloat(x.capacity_litres) || 0;
+      // Fill % basis: ACK litres on acked trips; dispatch litres stand in for
+      // trips not yet acknowledged so fresh days don't read as empty runs.
+      const filledL = parseFloat(x.acked_litres) + parseFloat(x.unacked_disp_litres);
+      const fillPct = cap > 0 && x.trips > 0 ? rN(filledL / (cap * x.trips) * 100, 1) : null;
+      const idle = Math.max(0, periodDays - x.active_days - Math.round(parseFloat(x.maintenance_days)));
+      return {
+        tanker_number: x.tanker_number, capacity_litres: rN(cap),
+        trips: x.trips, acked_trips: x.acked_trips,
+        active_days: x.active_days, idle_days: idle,
+        maintenance_days: rN(x.maintenance_days, 1),
+        trips_per_active_day: x.active_days > 0 ? rN(x.trips / x.active_days, 2) : null,
+        ack_litres: rN(x.acked_litres), disp_litres: rN(x.disp_litres), km: rN(x.km, 1),
+        avg_fill_pct: fillPct,
+      };
+    });
+
+    // Fleet KPIs (capacity-weighted fill over tankers that ran)
+    const ran = rows.filter(x => x.trips > 0 && x.capacity_litres > 0);
+    const fleetFill = ran.length
+      ? rN(ran.reduce((s2, x) => s2 + (x.avg_fill_pct ?? 0) * x.trips, 0)
+           / ran.reduce((s2, x) => s2 + x.trips, 0), 1)
+      : null;
+    const most = ran.length ? ran.reduce((a, b) => ((b.avg_fill_pct ?? 0) > (a.avg_fill_pct ?? 0) ? b : a)) : null;
+    const least = ran.length ? ran.reduce((a, b) => ((b.avg_fill_pct ?? 101) < (a.avg_fill_pct ?? 101) ? b : a)) : null;
+
+    res.json({
+      period_days: periodDays,
+      fleet: {
+        tankers: rows.length, ran: ran.length,
+        zero_trip: rows.filter(x => x.trips === 0).length,
+        avg_fill_pct: fleetFill,
+        most_utilised: most ? { tanker_number: most.tanker_number, fill_pct: most.avg_fill_pct } : null,
+        least_utilised: least ? { tanker_number: least.tanker_number, fill_pct: least.avg_fill_pct } : null,
+      },
+      tankers: rows,
+    });
+  } catch (err) {
+    console.error('Analytics utilisation error:', err);
+    res.status(500).json({ error: 'Failed to build utilisation' });
+  }
+});
+
 // ─── Drill-down: trips behind any dashboard figure ───────────────────────────
 // Filters compose: date range (+ optional single date), delivery point id,
 // route name, tanker number. Returns one row per trip with the three section
