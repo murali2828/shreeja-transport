@@ -616,16 +616,19 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
 }
 
 // 'Plant Wise TS Variation' sheet — the report date's trips consolidated by
-// starting point → delivery point (per the sample "Daily Milk Procurement Total
-// Solid variation Report"): one section per delivery point, each row a trip
-// with Ack (scale reading) and Dispatch (truck sheet) measure groups, a green
-// subtotal per section and a yellow grand TOTAL.
+// starting point → delivery point (layout per the sample "Daily Milk
+// Procurement Total Solid variation Report", measures in the portal's TS
+// terminology): one section per delivery point, each row a trip with
+// As per Dispatch / As per RMRD / As per Acknowledgement measure groups,
+// a green subtotal per section and a yellow grand TOTAL.
 function addPlantConsolidatedSheet(wb, rows, reportDate) {
   const GROUPS = [
-    { title: 'As per Scale Reading Quantity', fill: 'FFEDE9FE',
-      keys: ['ack_litres','ack_kgs','ack_fat','ack_snf','ack_kg_fat','ack_kg_snf'] },
-    { title: 'As per Truck Sheet', fill: 'FFDCFCE7',
+    { title: 'As per Dispatch', fill: 'FFDCFCE7',
       keys: ['disp_litres','disp_kgs','disp_fat','disp_snf','disp_kg_fat','disp_kg_snf'] },
+    { title: 'As per RMRD', fill: 'FFE0F2FE',
+      keys: ['rmrd_litres','rmrd_kgs','rmrd_fat','rmrd_snf','rmrd_kg_fat','rmrd_kg_snf'] },
+    { title: 'As per Acknowledgement', fill: 'FFEDE9FE',
+      keys: ['ack_litres','ack_kgs','ack_fat','ack_snf','ack_kg_fat','ack_kg_snf'] },
   ];
   const MEAS_HEADS = ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Kg.Fat','Kg.SNF'];
   const INFO = ['S.No','Started From','Receiver','Milk Lifting Date','Ack Date','Tanker Number','Route Name'];
