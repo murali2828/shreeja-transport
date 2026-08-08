@@ -615,6 +615,130 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
   });
 }
 
+// 'Plant Wise TS Variation' sheet — the report date's trips consolidated by
+// starting point → delivery point (per the sample "Daily Milk Procurement Total
+// Solid variation Report"): one section per delivery point, each row a trip
+// with Ack (scale reading) and Dispatch (truck sheet) measure groups, a green
+// subtotal per section and a yellow grand TOTAL.
+function addPlantConsolidatedSheet(wb, rows, reportDate) {
+  const GROUPS = [
+    { title: 'As per Scale Reading Quantity', fill: 'FFEDE9FE',
+      keys: ['ack_litres','ack_kgs','ack_fat','ack_snf','ack_kg_fat','ack_kg_snf'] },
+    { title: 'As per Truck Sheet', fill: 'FFDCFCE7',
+      keys: ['disp_litres','disp_kgs','disp_fat','disp_snf','disp_kg_fat','disp_kg_snf'] },
+  ];
+  const MEAS_HEADS = ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Kg.Fat','Kg.SNF'];
+  const INFO = ['S.No','Started From','Receiver','Milk Lifting Date','Ack Date','Tanker Number','Route Name'];
+  const NCOLS = INFO.length + GROUPS.length * MEAS_HEADS.length;
+
+  const ws = wb.addWorksheet('Plant Wise TS Variation');
+  ws.columns = [{ width: 6 }, { width: 18 }, { width: 18 }, { width: 14 }, { width: 12 }, { width: 16 }, { width: 20 },
+    ...Array(NCOLS - INFO.length).fill({ width: 11 })];
+
+  ws.mergeCells(1, 1, 1, NCOLS);
+  const t = ws.getCell(1, 1);
+  t.value = `Daily Milk Procurement Total Solid Variation Report On ${reportDate}`;
+  t.font = { bold: true, size: 13, color: { argb: 'FF003A6B' } };
+  ws.getRow(1).height = 22;
+
+  INFO.forEach((h, i) => {
+    ws.mergeCells(2, i + 1, 3, i + 1);
+    const c = ws.getCell(2, i + 1);
+    c.value = h; c.font = { bold: true, color: { argb: HEADER_TEXT } };
+    c.fill = fillOf('FFF3F4F6'); c.border = BORDER;
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    ws.getCell(3, i + 1).border = BORDER;
+  });
+  let col = INFO.length + 1;
+  for (const g of GROUPS) {
+    g.start = col;
+    ws.mergeCells(2, col, 2, col + MEAS_HEADS.length - 1);
+    const gc = ws.getCell(2, col);
+    gc.value = g.title; gc.font = { bold: true, color: { argb: HEADER_TEXT } };
+    gc.fill = fillOf(g.fill); gc.alignment = { vertical: 'middle', horizontal: 'center' };
+    MEAS_HEADS.forEach((h, i) => {
+      const c = ws.getCell(3, col + i);
+      c.value = h; c.font = { bold: true, size: 10, color: { argb: HEADER_TEXT } };
+      c.fill = fillOf(g.fill); c.border = BORDER;
+      c.alignment = { vertical: 'middle', horizontal: 'center' };
+      ws.getCell(2, col + i).border = BORDER;
+    });
+    col += MEAS_HEADS.length;
+  }
+  ws.getRow(2).height = 20;
+
+  // Group the day's rows by delivery point (rows arrive sorted by it already).
+  const byPlant = new Map();
+  for (const r of rows) {
+    const k = r.unloading_point || '—';
+    if (!byPlant.has(k)) byPlant.set(k, []);
+    byPlant.get(k).push(r);
+  }
+
+  const numCell = (c, v) => {
+    c.value = v == null ? null : rN(parseFloat(v), 2);
+    c.numFmt = '#,##0.00'; c.border = BORDER; c.alignment = { horizontal: 'right' };
+  };
+  const w = (grp, part, kgs) => {
+    const kg = grp.reduce((s, r) => s + (parseFloat(r[kgs]) || 0), 0);
+    return kg > 0 ? grp.reduce((s, r) => s + (parseFloat(r[part]) || 0), 0) / kg * 100 : null;
+  };
+  const sums = (grp, k) => grp.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
+  const totVals = grp => GROUPS.map(g => [
+    sums(grp, g.keys[0]), sums(grp, g.keys[1]),
+    w(grp, g.keys[4], g.keys[1]), w(grp, g.keys[5], g.keys[1]),
+    sums(grp, g.keys[4]), sums(grp, g.keys[5]),
+  ]);
+
+  let ri = 4;
+  for (const [plant, grp] of byPlant) {
+    // Section band: delivery point name
+    ws.mergeCells(ri, 1, ri, NCOLS);
+    const band = ws.getCell(ri, 1);
+    band.value = plant;
+    band.font = { bold: true, color: { argb: 'FF7C2D12' } };
+    band.fill = fillOf('FFFED7AA');
+    band.alignment = { horizontal: 'center' };
+    band.border = BORDER;
+    ri++;
+
+    grp.forEach((r, i) => {
+      const row = ws.getRow(ri);
+      [i + 1, r.starting_point, r.unloading_point, fmtDate(r.lifting_date), fmtDate(r.ack_date),
+       r.tanker_number, r.route_name].forEach((v, ci) => {
+        const c = row.getCell(ci + 1);
+        c.value = v ?? '';
+        c.border = BORDER;
+        c.alignment = { horizontal: ci === 0 ? 'center' : 'left' };
+      });
+      GROUPS.forEach(g => g.keys.forEach((k, ki) => numCell(row.getCell(g.start + ki), r[k])));
+      ri++;
+    });
+
+    // Green subtotal for the section
+    const st = ws.getRow(ri);
+    ws.mergeCells(ri, 1, ri, INFO.length);
+    const sl = st.getCell(1);
+    sl.value = `${plant} Total`; sl.font = { bold: true };
+    sl.fill = fillOf('FFBBF7D0'); sl.border = BORDER;
+    totVals(grp).forEach((vals, gi) => vals.forEach((v, i) => {
+      const c = st.getCell(GROUPS[gi].start + i);
+      numCell(c, v); c.font = { bold: true }; c.fill = fillOf('FFBBF7D0');
+    }));
+    ri++;
+  }
+
+  // Yellow grand total
+  ws.mergeCells(ri, 1, ri, INFO.length);
+  const gl = ws.getCell(ri, 1);
+  gl.value = 'TOTAL'; gl.font = { bold: true, color: { argb: 'FF713F12' } };
+  gl.fill = fillOf('FFFEF08A'); gl.border = BORDER;
+  totVals(rows).forEach((vals, gi) => vals.forEach((v, i) => {
+    const c = ws.getCell(ri, GROUPS[gi].start + i);
+    numCell(c, v); c.font = { bold: true }; c.fill = fillOf('FFFEF08A');
+  }));
+}
+
 // Full TS workbook: one day sheet per date (1st of month → report date, current
 // TS format), then Milk Shifting Day Wise, Consolidated Report, and the report
 // date's BMCU breakup.
@@ -626,6 +750,7 @@ async function buildTsWorkbookFull(reportDate, basis = 'plan') {
   for (const day of days) addTsSheet(wb, rowsByDay[day], ddmm(day), day, basis);
   await addMilkShiftingSheet(wb, days);
   addConsolidatedSheet(wb, days, rowsByDay);
+  addPlantConsolidatedSheet(wb, rowsByDay[reportDate], reportDate);
   const breakup = await buildBmcuBreakup(reportDate);
   addBmcuBreakupSheet(wb, breakup);
   return { wb, rows: rowsByDay[reportDate], breakup };
