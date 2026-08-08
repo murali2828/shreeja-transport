@@ -217,4 +217,7 @@ export const getOptimizeSessions   = (p)     => api.get('/optimize/sessions', { 
 export const getOptimizeSession    = (id)    => api.get(`/optimize/sessions/${id}`);
 export const getOptimizeCompare    = (p)     => api.get('/optimize/compare', { params: p });
 
+// ── Analytics ─────────────────────────────────────────────────────────────────
+export const getAnalyticsSummary  = (p)     => api.get('/analytics/summary', { params: p });
+
 export default api;

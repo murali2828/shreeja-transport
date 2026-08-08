@@ -102,6 +102,7 @@ export default function Sidebar({ collapsed = false }) {
         <NavSection label={collapsed ? '' : 'Reports'}>
           {ni('/reports', <BarChart2 size={15}/>, 'Daily TS Report')}
           {ni('/reports/bmcu-breakup', <BarChart2 size={15}/>, 'BMCU Break Up')}
+          {ni('/reports/analytics', <BarChart2 size={15}/>, 'Analytics')}
           {ni('/reports/trip-durations', <BarChart2 size={15}/>, 'Trip Durations')}
           {ni('/reports/day-utilisation', <BarChart2 size={15}/>, 'Day Utilisation')}
           {isAdmin && ni('/reports/audit', <Users size={15}/>, 'User Activity')}

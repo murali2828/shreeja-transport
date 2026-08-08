@@ -36,6 +36,7 @@ app.use('/api/masters',    require('./routes/masters'));
 app.use('/api/plans',      require('./routes/plans'));
 app.use('/api/executions', require('./routes/executions'));
 app.use('/api/reports',    require('./routes/reports'));
+app.use('/api/analytics',  require('./routes/analytics'));
 app.use('/api/distances',  require('./routes/distances'));
 app.use('/api/optimize',   require('./routes/optimize'));
 app.use('/api/vendors',    require('./routes/vendors'));

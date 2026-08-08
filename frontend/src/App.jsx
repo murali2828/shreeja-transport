@@ -40,6 +40,7 @@ import TankerPosition       from './pages/execution/TankerPosition';
 
 // Reports
 import DailyTSReport   from './pages/reports/DailyTSReport';
+import Analytics       from './pages/reports/Analytics';
 import AuditLog        from './pages/reports/AuditLog';
 import BmcuBreakup     from './pages/reports/BmcuBreakup';
 import TripDurations   from './pages/reports/TripDurations';
@@ -136,6 +137,7 @@ function AppRoutes() {
 
         {/* Reports — all roles */}
         <Route path="reports" element={<DailyTSReport/>}/>
+        <Route path="reports/analytics" element={<Analytics/>}/>
         <Route path="reports/bmcu-breakup" element={<BmcuBreakup/>}/>
         <Route path="reports/trip-durations" element={<TripDurations/>}/>
         <Route path="reports/day-utilisation" element={<DayUtilisation/>}/>

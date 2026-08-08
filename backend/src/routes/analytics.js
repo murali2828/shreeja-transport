@@ -1,0 +1,270 @@
+// backend/src/routes/analytics.js
+// Phase-1 analytics: KPI summary, daily trend, BMCU / tanker leaderboards and
+// delivery-point performance over a date range (trip_plans.plan_for_date).
+//
+// Measurement points per trip (same math as the Daily TS Report):
+//   RMRD     = shift rows (litres → kgs ×1.0285) ± adjustment entries
+//              (Left Over −, Lifted +, New MPP +, Internal Shifting ±)
+//   Dispatch = all non-deleted trip_execution_bmcus rows (stored kgs/fat/snf)
+//   Ack      = trip_acknowledgements (stored kgs/fat/snf)
+// Qty gain/loss = Ack − RMRD (kgs); TS = Kg.Fat + Kg.SNF; TS gain/loss % uses
+// the confirmed formula (diff TS / base TS × 100).
+const express = require('express');
+const router  = express.Router();
+const { query } = require('../config/db');
+const { authenticate } = require('../middleware/auth');
+
+const KG = 1.0285;
+const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
+
+// Shared filter: closed/complete executions of published plans in the range.
+// Optional delivery-point filter narrows every panel.
+const baseTripsCte = `
+  trips AS (
+    SELECT tp.id AS plan_id, tp.plan_for_date, tp.delivery_point_id,
+           te.id AS execution_id, t.id AS tanker_id, t.tanker_number,
+           rm.route_name, dp.name AS delivery_point,
+           EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id=te.id) AS has_ack
+    FROM trip_plans tp
+    JOIN trip_executions te ON te.trip_plan_id = tp.id
+    LEFT JOIN tankers t          ON t.id  = tp.tanker_id
+    LEFT JOIN route_masters rm   ON rm.id = tp.route_id
+    LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
+    WHERE tp.plan_for_date BETWEEN $1 AND $2
+      AND tp.status NOT IN ('cancelled','deleted')
+      AND ($3::int IS NULL OR tp.delivery_point_id = $3::int)
+  ),
+  disp AS (
+    SELECT teb.execution_id,
+           SUM(teb.qty_litres) AS litres, SUM(teb.qty_kgs) AS kgs,
+           SUM(teb.kg_fat) AS kg_fat, SUM(teb.kg_snf) AS kg_snf
+    FROM trip_execution_bmcus teb
+    WHERE teb.execution_id IN (SELECT execution_id FROM trips) AND teb.is_deleted=FALSE
+    GROUP BY teb.execution_id
+  ),
+  rmrd_shift AS (
+    SELECT s.execution_id,
+           SUM(s.rmrd_qty) AS litres,
+           SUM(s.rmrd_qty * ${KG}) AS kgs,
+           SUM(s.rmrd_qty * ${KG} * COALESCE(s.rmrd_fat_pct,0) / 100) AS kg_fat,
+           SUM(s.rmrd_qty * ${KG} * COALESCE(s.rmrd_snf_pct,0) / 100) AS kg_snf
+    FROM trip_execution_bmcu_shifts s
+    JOIN trip_execution_bmcus b
+      ON b.execution_id=s.execution_id AND b.seq_no=s.bmcu_seq_no AND b.is_deleted=FALSE
+    WHERE s.execution_id IN (SELECT execution_id FROM trips)
+    GROUP BY s.execution_id
+  ),
+  rmrd_adj AS (
+    SELECT e.execution_id,
+           SUM(sgn.v * e.qty_litres) AS litres,
+           SUM(sgn.v * e.qty_litres * ${KG}) AS kgs,
+           SUM(sgn.v * e.qty_litres * ${KG} * COALESCE(e.fat_pct,0) / 100) AS kg_fat,
+           SUM(sgn.v * e.qty_litres * ${KG} * COALESCE(e.snf_pct,0) / 100) AS kg_snf
+    FROM trip_execution_bmcu_entries e
+    JOIN trip_execution_bmcus pb
+      ON pb.execution_id=e.execution_id AND pb.seq_no=e.bmcu_seq_no AND pb.is_deleted=FALSE
+    CROSS JOIN LATERAL (SELECT CASE
+        WHEN e.kind='balance_milk' AND e.category='Left Over milk' THEN -1
+        WHEN e.kind='balance_milk' AND e.category='Lifted milk'    THEN  1
+        WHEN e.kind='new_mpp'                                      THEN  1
+        WHEN e.kind='internal_shifting'                            THEN  1
+        ELSE 0 END AS v) sgn
+    WHERE e.execution_id IN (SELECT execution_id FROM trips) AND e.qty_litres IS NOT NULL
+    GROUP BY e.execution_id
+  ),
+  shift_ded AS (
+    -- Internal shifting: milk added to the receiving trip above must be
+    -- deducted from the trip carrying the SOURCE plant (prefer the same trip).
+    SELECT tgt.execution_id,
+           SUM(e.qty_litres) AS litres,
+           SUM(e.qty_litres * ${KG}) AS kgs,
+           SUM(e.qty_litres * ${KG} * COALESCE(e.fat_pct,0)/100) AS kg_fat,
+           SUM(e.qty_litres * ${KG} * COALESCE(e.snf_pct,0)/100) AS kg_snf
+    FROM trip_execution_bmcu_entries e
+    JOIN trip_execution_bmcus pb
+      ON pb.execution_id=e.execution_id AND pb.seq_no=e.bmcu_seq_no AND pb.is_deleted=FALSE
+    JOIN LATERAL (
+      SELECT teb2.execution_id
+      FROM trip_execution_bmcus teb2
+      WHERE teb2.bmcu_id = e.source_bmcu_id AND teb2.is_deleted=FALSE
+        AND teb2.execution_id IN (SELECT execution_id FROM trips)
+      ORDER BY (teb2.execution_id = e.execution_id) DESC
+      LIMIT 1
+    ) tgt ON TRUE
+    WHERE e.kind='internal_shifting' AND e.qty_litres IS NOT NULL
+      AND e.execution_id IN (SELECT execution_id FROM trips)
+    GROUP BY tgt.execution_id
+  ),
+  ack AS (
+    SELECT ta.execution_id,
+           SUM(ta.qty_litres) AS litres, SUM(ta.qty_kgs) AS kgs,
+           SUM(ta.kg_fat) AS kg_fat, SUM(ta.kg_snf) AS kg_snf
+    FROM trip_acknowledgements ta
+    WHERE ta.execution_id IN (SELECT execution_id FROM trips)
+    GROUP BY ta.execution_id
+  ),
+  per_trip AS (
+    SELECT tr.*,
+      COALESCE(d.litres,0)  AS disp_litres,  COALESCE(d.kgs,0)  AS disp_kgs,
+      COALESCE(d.kg_fat,0)  AS disp_kg_fat,  COALESCE(d.kg_snf,0) AS disp_kg_snf,
+      COALESCE(rs.litres,0) + COALESCE(ra.litres,0) - COALESCE(sd.litres,0) AS rmrd_litres,
+      COALESCE(rs.kgs,0)    + COALESCE(ra.kgs,0)    - COALESCE(sd.kgs,0)    AS rmrd_kgs,
+      COALESCE(rs.kg_fat,0) + COALESCE(ra.kg_fat,0) - COALESCE(sd.kg_fat,0) AS rmrd_kg_fat,
+      COALESCE(rs.kg_snf,0) + COALESCE(ra.kg_snf,0) - COALESCE(sd.kg_snf,0) AS rmrd_kg_snf,
+      COALESCE(a.litres,0)  AS ack_litres,  COALESCE(a.kgs,0)  AS ack_kgs,
+      COALESCE(a.kg_fat,0)  AS ack_kg_fat,  COALESCE(a.kg_snf,0) AS ack_kg_snf
+    FROM trips tr
+    LEFT JOIN disp d        ON d.execution_id  = tr.execution_id
+    LEFT JOIN rmrd_shift rs ON rs.execution_id = tr.execution_id
+    LEFT JOIN rmrd_adj ra   ON ra.execution_id = tr.execution_id
+    LEFT JOIN shift_ded sd  ON sd.execution_id = tr.execution_id
+    LEFT JOIN ack a         ON a.execution_id  = tr.execution_id
+  )`;
+
+// Aggregate a set of per_trip rows into the section sums the panels share.
+// Gains only use acknowledged trips (unacked would skew everything negative).
+const aggSelect = `
+  COUNT(*)::int AS trips,
+  COUNT(*) FILTER (WHERE has_ack)::int AS acked_trips,
+  SUM(disp_litres) AS disp_litres, SUM(disp_kgs) AS disp_kgs,
+  SUM(disp_kg_fat) AS disp_kg_fat, SUM(disp_kg_snf) AS disp_kg_snf,
+  SUM(rmrd_litres) AS rmrd_litres, SUM(rmrd_kgs) AS rmrd_kgs,
+  SUM(rmrd_kg_fat) AS rmrd_kg_fat, SUM(rmrd_kg_snf) AS rmrd_kg_snf,
+  SUM(ack_litres)  AS ack_litres,  SUM(ack_kgs)  AS ack_kgs,
+  SUM(ack_kg_fat)  AS ack_kg_fat,  SUM(ack_kg_snf) AS ack_kg_snf,
+  SUM(ack_kgs    - rmrd_kgs)    FILTER (WHERE has_ack) AS qty_gain_kgs,
+  SUM(ack_litres - rmrd_litres) FILTER (WHERE has_ack) AS qty_gain_litres,
+  SUM((ack_kg_fat+ack_kg_snf) - (rmrd_kg_fat+rmrd_kg_snf)) FILTER (WHERE has_ack) AS ts_gain,
+  SUM(rmrd_kg_fat+rmrd_kg_snf) FILTER (WHERE has_ack) AS ts_base,
+  SUM(disp_kgs - rmrd_kgs) AS stage_transit_kgs,
+  SUM(ack_kgs  - disp_kgs) FILTER (WHERE has_ack) AS stage_unload_kgs`;
+
+const mapAgg = r => ({
+  trips: r.trips, acked_trips: r.acked_trips,
+  disp:  { litres: rN(r.disp_litres), kgs: rN(r.disp_kgs), kg_fat: rN(r.disp_kg_fat), kg_snf: rN(r.disp_kg_snf) },
+  rmrd:  { litres: rN(r.rmrd_litres), kgs: rN(r.rmrd_kgs), kg_fat: rN(r.rmrd_kg_fat), kg_snf: rN(r.rmrd_kg_snf) },
+  ack:   { litres: rN(r.ack_litres),  kgs: rN(r.ack_kgs),  kg_fat: rN(r.ack_kg_fat),  kg_snf: rN(r.ack_kg_snf) },
+  qty_gain_kgs: rN(r.qty_gain_kgs), qty_gain_litres: rN(r.qty_gain_litres),
+  ts_gain: rN(r.ts_gain),
+  ts_gain_pct: parseFloat(r.ts_base) > 0 ? rN(parseFloat(r.ts_gain) / parseFloat(r.ts_base) * 100, 3) : null,
+  stage_transit_kgs: rN(r.stage_transit_kgs),
+  stage_unload_kgs:  rN(r.stage_unload_kgs),
+  avg_fat: parseFloat(r.ack_kgs) > 0 ? rN(parseFloat(r.ack_kg_fat) / parseFloat(r.ack_kgs) * 100) : null,
+  avg_snf: parseFloat(r.ack_kgs) > 0 ? rN(parseFloat(r.ack_kg_snf) / parseFloat(r.ack_kgs) * 100) : null,
+});
+
+router.get('/summary', authenticate, async (req, res) => {
+  const { from, to } = req.query;
+  const dp = req.query.delivery_point_id ? parseInt(req.query.delivery_point_id) : null;
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
+  try {
+    const params = [from, to, dp];
+
+    const [kpis, daily, tankers, plants] = await Promise.all([
+      query(`WITH ${baseTripsCte} SELECT ${aggSelect} FROM per_trip`, params),
+      query(`WITH ${baseTripsCte}
+        SELECT plan_for_date::text AS date, ${aggSelect}
+        FROM per_trip GROUP BY plan_for_date ORDER BY plan_for_date`, params),
+      query(`WITH ${baseTripsCte}
+        SELECT tanker_number, ${aggSelect}
+        FROM per_trip WHERE tanker_number IS NOT NULL
+        GROUP BY tanker_number ORDER BY SUM((ack_kg_fat+ack_kg_snf)-(rmrd_kg_fat+rmrd_kg_snf)) FILTER (WHERE has_ack) NULLS LAST`, params),
+      query(`WITH ${baseTripsCte}
+        SELECT delivery_point, ${aggSelect}
+        FROM per_trip GROUP BY delivery_point
+        ORDER BY SUM(ack_kgs) DESC NULLS LAST`, params),
+    ]);
+
+    // BMCU leaderboard — Dispatch Vs RMRD per BMCU (ack is trip-level only).
+    const bmcus = await query(`WITH ${baseTripsCte},
+      bm_disp AS (
+        SELECT teb.bmcu_id, b.bmcu_code, b.bmcu_name,
+               SUM(teb.qty_litres) AS disp_litres, SUM(teb.qty_kgs) AS disp_kgs,
+               SUM(teb.kg_fat) AS disp_kg_fat, SUM(teb.kg_snf) AS disp_kg_snf
+        FROM trip_execution_bmcus teb
+        JOIN bmcus b ON b.id = teb.bmcu_id
+        WHERE teb.execution_id IN (SELECT execution_id FROM trips) AND teb.is_deleted=FALSE
+        GROUP BY teb.bmcu_id, b.bmcu_code, b.bmcu_name
+      ),
+      bm_rmrd AS (
+        SELECT teb.bmcu_id,
+               SUM(s.rmrd_qty) AS litres, SUM(s.rmrd_qty * ${KG}) AS kgs,
+               SUM(s.rmrd_qty * ${KG} * COALESCE(s.rmrd_fat_pct,0)/100) AS kg_fat,
+               SUM(s.rmrd_qty * ${KG} * COALESCE(s.rmrd_snf_pct,0)/100) AS kg_snf
+        FROM trip_execution_bmcu_shifts s
+        JOIN trip_execution_bmcus teb
+          ON teb.execution_id=s.execution_id AND teb.seq_no=s.bmcu_seq_no AND teb.is_deleted=FALSE
+        WHERE s.execution_id IN (SELECT execution_id FROM trips)
+        GROUP BY teb.bmcu_id
+      ),
+      bm_adj AS (
+        SELECT pb.bmcu_id,
+               SUM(sgn.v * e.qty_litres) AS litres,
+               SUM(sgn.v * e.qty_litres * ${KG}) AS kgs,
+               SUM(sgn.v * e.qty_litres * ${KG} * COALESCE(e.fat_pct,0)/100) AS kg_fat,
+               SUM(sgn.v * e.qty_litres * ${KG} * COALESCE(e.snf_pct,0)/100) AS kg_snf
+        FROM trip_execution_bmcu_entries e
+        JOIN trip_execution_bmcus pb
+          ON pb.execution_id=e.execution_id AND pb.seq_no=e.bmcu_seq_no AND pb.is_deleted=FALSE
+        CROSS JOIN LATERAL (SELECT CASE
+            WHEN e.kind='balance_milk' AND e.category='Left Over milk' THEN -1
+            WHEN e.kind='balance_milk' AND e.category='Lifted milk'    THEN  1
+            WHEN e.kind='new_mpp'                                      THEN  1
+            WHEN e.kind='internal_shifting'                            THEN  1
+            ELSE 0 END AS v) sgn
+        WHERE e.execution_id IN (SELECT execution_id FROM trips) AND e.qty_litres IS NOT NULL
+        GROUP BY pb.bmcu_id
+      ),
+      bm_shift_ded AS (
+        -- Internal shifting deducts from the SOURCE BMCU's RMRD.
+        SELECT e.source_bmcu_id AS bmcu_id,
+               SUM(e.qty_litres) AS litres, SUM(e.qty_litres * ${KG}) AS kgs,
+               SUM(e.qty_litres * ${KG} * COALESCE(e.fat_pct,0)/100) AS kg_fat,
+               SUM(e.qty_litres * ${KG} * COALESCE(e.snf_pct,0)/100) AS kg_snf
+        FROM trip_execution_bmcu_entries e
+        JOIN trip_execution_bmcus pb
+          ON pb.execution_id=e.execution_id AND pb.seq_no=e.bmcu_seq_no AND pb.is_deleted=FALSE
+        WHERE e.kind='internal_shifting' AND e.qty_litres IS NOT NULL
+          AND e.source_bmcu_id IS NOT NULL
+          AND e.execution_id IN (SELECT execution_id FROM trips)
+        GROUP BY e.source_bmcu_id
+      )
+      SELECT d.bmcu_code, d.bmcu_name,
+        d.disp_litres, d.disp_kgs, d.disp_kg_fat, d.disp_kg_snf,
+        COALESCE(r.litres,0)+COALESCE(a.litres,0)-COALESCE(sd.litres,0) AS rmrd_litres,
+        COALESCE(r.kgs,0)+COALESCE(a.kgs,0)-COALESCE(sd.kgs,0)          AS rmrd_kgs,
+        COALESCE(r.kg_fat,0)+COALESCE(a.kg_fat,0)-COALESCE(sd.kg_fat,0) AS rmrd_kg_fat,
+        COALESCE(r.kg_snf,0)+COALESCE(a.kg_snf,0)-COALESCE(sd.kg_snf,0) AS rmrd_kg_snf
+      FROM bm_disp d
+      LEFT JOIN bm_rmrd r ON r.bmcu_id=d.bmcu_id
+      LEFT JOIN bm_adj a  ON a.bmcu_id=d.bmcu_id
+      LEFT JOIN bm_shift_ded sd ON sd.bmcu_id=d.bmcu_id`, params);
+
+    const bmcuRows = bmcus.rows.map(b => {
+      const tsDiff = (parseFloat(b.disp_kg_fat) + parseFloat(b.disp_kg_snf))
+                   - (parseFloat(b.rmrd_kg_fat) + parseFloat(b.rmrd_kg_snf));
+      const tsBase = parseFloat(b.rmrd_kg_fat) + parseFloat(b.rmrd_kg_snf);
+      return {
+        bmcu_code: b.bmcu_code, bmcu_name: b.bmcu_name,
+        rmrd_kgs: rN(b.rmrd_kgs), disp_kgs: rN(b.disp_kgs),
+        qty_gain_kgs: rN(parseFloat(b.disp_kgs) - parseFloat(b.rmrd_kgs)),
+        ts_gain: rN(tsDiff),
+        ts_gain_pct: tsBase > 0 ? rN(tsDiff / tsBase * 100, 3) : null,
+      };
+    }).sort((a, b) => (a.ts_gain ?? 0) - (b.ts_gain ?? 0));
+
+    res.json({
+      from, to, delivery_point_id: dp,
+      kpis: mapAgg(kpis.rows[0]),
+      daily: daily.rows.map(r => ({ date: r.date, ...mapAgg(r) })),
+      tankers: tankers.rows.map(r => ({ tanker_number: r.tanker_number, ...mapAgg(r) })),
+      delivery_points: plants.rows.map(r => ({ delivery_point: r.delivery_point || '—', ...mapAgg(r) })),
+      bmcus: bmcuRows,
+    });
+  } catch (err) {
+    console.error('Analytics summary error:', err);
+    res.status(500).json({ error: 'Failed to build analytics summary' });
+  }
+});
+
+module.exports = router;
