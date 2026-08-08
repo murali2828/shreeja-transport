@@ -127,10 +127,15 @@ async function buildTsReport(reportDate, basis = 'plan') {
       acc.kg_snf += sign * calcKgSnf(kgs, snf);
     };
 
+    // Only entries whose parent BMCU row is still live — deleting a BMCU row
+    // used to leave its entries behind, and counting those orphans applied the
+    // adjustment (e.g. a Left Over deduction) twice.
     const er = await query(`
-      SELECT execution_id, kind, category, qty_litres, fat_pct, snf_pct, source_bmcu_id
-      FROM trip_execution_bmcu_entries
-      WHERE execution_id = ANY($1)`, [execIds]);
+      SELECT e.execution_id, e.kind, e.category, e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id
+      FROM trip_execution_bmcu_entries e
+      JOIN trip_execution_bmcus b
+        ON b.execution_id=e.execution_id AND b.seq_no=e.bmcu_seq_no AND b.is_deleted=FALSE
+      WHERE e.execution_id = ANY($1)`, [execIds]);
     for (const e of er.rows) {
       if (!e.qty_litres) continue;
       if (e.kind === 'balance_milk' && e.category === 'Left Over milk') {
@@ -425,7 +430,7 @@ async function addMilkShiftingSheet(wb, days) {
     JOIN trip_plans tp      ON tp.id = te.trip_plan_id
     LEFT JOIN bmcus sb ON sb.id = e.source_bmcu_id
     LEFT JOIN bmcus rb ON rb.id = e.bmcu_id
-    LEFT JOIN trip_execution_bmcus teb
+    JOIN trip_execution_bmcus teb
       ON teb.execution_id = e.execution_id AND teb.seq_no = e.bmcu_seq_no AND teb.is_deleted = FALSE
     WHERE e.kind = 'internal_shifting'
       AND tp.plan_for_date = ANY($1::date[])
@@ -849,11 +854,15 @@ async function buildBmcuBreakup(reportDate) {
     ORDER BY tebs.milk_date, tebs.shift`, [execIds]);
 
   // Adjustment entries (balance/lifted/new MPP/shifting) with source plant info.
+  // Entries whose parent BMCU row was deleted are excluded — they're stale
+  // leftovers and would double-count adjustments.
   const er = await query(`
     SELECT e.execution_id, e.bmcu_seq_no, e.kind, e.category,
            e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id,
            sb.bmcu_code AS source_bmcu_code, sb.bmcu_name AS source_bmcu_name
     FROM trip_execution_bmcu_entries e
+    JOIN trip_execution_bmcus pb
+      ON pb.execution_id=e.execution_id AND pb.seq_no=e.bmcu_seq_no AND pb.is_deleted=FALSE
     LEFT JOIN bmcus sb ON sb.id=e.source_bmcu_id
     WHERE e.execution_id = ANY($1)
     ORDER BY e.id`, [execIds]);

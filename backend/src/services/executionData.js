@@ -141,6 +141,12 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     for (const bm of bmcus) {
       if (bm.is_deleted) {
         await client.query('UPDATE trip_execution_bmcus SET is_deleted=TRUE WHERE id=$1', [bm.id]);
+        // Remove the row's sub-entries too — orphaned entries would otherwise
+        // keep applying their RMRD adjustments (e.g. Left Over) in reports.
+        await client.query(
+          `DELETE FROM trip_execution_bmcu_entries
+           WHERE execution_id=$1 AND bmcu_seq_no=(SELECT seq_no FROM trip_execution_bmcus WHERE id=$2)`,
+          [execId, bm.id]);
         continue;
       }
       const kgs    = calcKgs(bm.qty_litres);
