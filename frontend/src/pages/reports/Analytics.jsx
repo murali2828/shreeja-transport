@@ -527,7 +527,7 @@ export default function Analytics() {
       />
 
       {/* Tanker utilisation — fill % on ACK quantity */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <Kpi label="Fleet Capacity Utilisation" accent={fillColor(util?.fleet?.avg_fill_pct)}
              color={fillColor(util?.fleet?.avg_fill_pct)}
              value={util?.fleet?.avg_fill_pct != null ? `${nf(util.fleet.avg_fill_pct, 1)} %` : '—'}
@@ -542,7 +542,33 @@ export default function Analytics() {
              color={util?.fleet?.zero_trip ? C.loss : C.gain}
              value={nf(util?.fleet?.zero_trip)}
              sub={`of ${nf(util?.fleet?.tankers)} tankers — zero trips this period`} />
+        <Kpi label="Highest Utilised Route" accent={C.gain}
+             value={util?.route_extremes?.highest?.route_name || '—'}
+             sub={util?.route_extremes?.highest ? `${nf(util.route_extremes.highest.fill_pct, 1)} % fill · ${nf(util.route_extremes.highest.trips)} trips` : ''} />
+        <Kpi label="Lowest Utilised Route" accent={C.loss}
+             color={util?.route_extremes?.lowest ? fillColor(util.route_extremes.lowest.fill_pct) : C.ink}
+             value={util?.route_extremes?.lowest?.route_name || '—'}
+             sub={util?.route_extremes?.lowest ? `${nf(util.route_extremes.lowest.fill_pct, 1)} % fill · ${nf(util.route_extremes.lowest.trips)} trips` : ''} />
       </div>
+
+      <LeaderTable
+        title="Route Utilisation (fill % of tanker capacity · lowest first)"
+        accent={C.amber}
+        note="Fill % = acknowledged qty (dispatch for unacked trips) ÷ tanker capacity across the route's trips · low fill = oversized tankers or thin routes · click a route for its trips"
+        rows={util?.routes || []}
+        defaultSort={{ key: 'fill_pct', dir: 'asc' }}
+        onRowClick={r => setDrill({ type: 'route', value: r.route_name, label: `Trips on route ${r.route_name}` })}
+        cols={[
+          { key: 'route_name', label: 'Route' },
+          { key: 'trips', label: 'Trips', right: true },
+          { key: 'tankers', label: 'Tankers Used', right: true },
+          { key: 'capacity_litres', label: 'Capacity Offered (L)', right: true, fmt: v => nf(v) },
+          { key: 'filled_litres', label: 'Milk Carried (L)', right: true, fmt: v => nf(v) },
+          { key: 'km', label: 'KM', right: true, fmt: v => nf(v) },
+          { key: 'fill_pct', label: 'Fill %', right: true,
+            fmt: v => <span style={{ color: fillColor(v), fontWeight: 700 }}>{v == null ? '—' : nf(v, 1) + ' %'}</span> },
+        ]}
+      />
 
       <LeaderTable
         title="Tanker Utilisation"

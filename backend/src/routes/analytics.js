@@ -532,6 +532,25 @@ router.get('/utilisation', authenticate, async (req, res) => {
       };
     });
 
+    // Route utilisation: fill % of tanker capacity per route (ack qty basis,
+    // dispatch standing in for unacked trips).
+    const rr = await query(`WITH ${baseTripsCte}
+      SELECT route_name,
+             COUNT(*)::int AS trips,
+             COUNT(DISTINCT tanker_id)::int AS tankers,
+             SUM(capacity_litres) AS capacity_l,
+             SUM(CASE WHEN has_ack THEN ack_litres ELSE disp_litres END) AS filled_l,
+             SUM(km) AS km
+      FROM per_trip
+      WHERE route_name IS NOT NULL AND COALESCE(capacity_litres,0) > 0
+      GROUP BY route_name`, params);
+    const routeRows = rr.rows.map(x => ({
+      route_name: x.route_name, trips: x.trips, tankers: x.tankers,
+      capacity_litres: rN(x.capacity_l), filled_litres: rN(x.filled_l),
+      km: rN(x.km, 1),
+      fill_pct: parseFloat(x.capacity_l) > 0 ? rN(parseFloat(x.filled_l) / parseFloat(x.capacity_l) * 100, 1) : null,
+    })).sort((a, b) => (a.fill_pct ?? 0) - (b.fill_pct ?? 0));
+
     // Fleet KPIs (capacity-weighted fill over tankers that ran)
     const ran = rows.filter(x => x.trips > 0 && x.capacity_litres > 0);
     const fleetFill = ran.length
@@ -549,6 +568,11 @@ router.get('/utilisation', authenticate, async (req, res) => {
         avg_fill_pct: fleetFill,
         most_utilised: most ? { tanker_number: most.tanker_number, fill_pct: most.avg_fill_pct } : null,
         least_utilised: least ? { tanker_number: least.tanker_number, fill_pct: least.avg_fill_pct } : null,
+      },
+      routes: routeRows,
+      route_extremes: {
+        highest: routeRows.length ? routeRows[routeRows.length - 1] : null,
+        lowest:  routeRows.length ? routeRows[0] : null,
       },
       tankers: rows,
     });
