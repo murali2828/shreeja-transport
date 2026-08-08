@@ -48,6 +48,8 @@ const delta = (cur, prev, unit = 'Kg', d = 0) => {
 const tint = hex => hex + '14'; // ~8% alpha wash for card backgrounds
 // Capacity-fill bands: >=80% green, 60-80 amber, <60 red
 const fillColor = pct => pct == null ? C.neutral : pct >= 80 ? C.gain : pct >= 60 ? AMBER : C.loss;
+// Freshness bands (avg shifts lifted per collection): <=1.5 green, <=2.5 amber, worse red
+const shiftsColor = v => v == null ? C.neutral : v <= 1.5 ? C.gain : v <= 2.5 ? AMBER : C.loss;
 
 function Kpi({ label, value, sub, color, accent }) {
   const a = accent || C.teal;
@@ -338,6 +340,13 @@ export default function Analytics() {
     enabled: !!from && !!to,
   });
 
+  const { data: fresh2 } = useQuery({
+    queryKey: ['analytics-freshness', from, to, dp, route, tanker],
+    queryFn: () => api.get('/analytics/freshness', { params: { from, to, delivery_point_id: dp || undefined,
+      route_name: route || undefined, tanker_number: tanker || undefined } }).then(r => r.data),
+    enabled: !!from && !!to,
+  });
+
   const exportExcel = () => {
     api.get('/analytics/export', {
       params: { from, to, delivery_point_id: dp || undefined,
@@ -554,6 +563,50 @@ export default function Analytics() {
           { key: 'ack_litres', label: 'Ack Qty (L)', right: true, fmt: v => nf(v) },
           { key: 'avg_fill_pct', label: 'Avg Fill %', right: true,
             fmt: v => <span style={{ color: fillColor(v), fontWeight: 700 }}>{v == null ? '—' : nf(v, 1) + ' %'}</span> },
+        ]}
+      />
+
+      {/* Milk freshness — shifts of milk lifted per BMCU collection */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Kpi label="Avg Shifts / Collection" accent={shiftsColor(fresh2?.kpi?.avg_shifts)}
+             color={shiftsColor(fresh2?.kpi?.avg_shifts)}
+             value={fresh2?.kpi?.avg_shifts != null ? nf(fresh2.kpi.avg_shifts, 2) : '—'}
+             sub={`ideal 1.00 · ${nf(fresh2?.kpi?.collections)} BMCU collections`} />
+        <Kpi label="Fresh Collections" accent={C.gain}
+             color={fresh2?.kpi?.fresh_pct != null && fresh2.kpi.fresh_pct < 50 ? C.loss : C.gain}
+             value={fresh2?.kpi?.fresh_pct != null ? `${nf(fresh2.kpi.fresh_pct, 1)} %` : '—'}
+             sub="single-shift lifts (no mixing)" />
+        <Kpi label="3+ Shift Lifts" accent={fresh2?.kpi?.three_plus ? C.loss : C.gain}
+             color={fresh2?.kpi?.three_plus ? C.loss : C.gain}
+             value={nf(fresh2?.kpi?.three_plus)}
+             sub="collections mixing 3 or more shifts" />
+        <Kpi label="Avg Milk Age at Lifting" accent={C.violet}
+             color={fresh2?.kpi?.avg_age_days != null && fresh2.kpi.avg_age_days > 1 ? C.loss : C.ink}
+             value={fresh2?.kpi?.avg_age_days != null ? `${nf(fresh2.kpi.avg_age_days, 1)} days` : '—'}
+             sub="lifting date − oldest shift in the load" />
+      </div>
+
+      <LeaderTable
+        title="BMCU Milk Freshness (worst first — most shifts held per lift)"
+        accent={C.berry}
+        note="Shifts / collection = RMRD shift rows lifted together · age = days between oldest shift and lifting · click a BMCU for its trips"
+        rows={fresh2?.bmcus || []}
+        defaultSort={{ key: 'avg_shifts', dir: 'desc' }}
+        onRowClick={r => setDrill({ type: 'bmcu', value: r.bmcu_code, label: `${r.bmcu_code} — ${r.bmcu_name}` })}
+        cols={[
+          { key: 'bmcu_code', label: 'Code' },
+          { key: 'bmcu_name', label: 'BMCU' },
+          { key: 'collections', label: 'Collections', right: true },
+          { key: 'avg_shifts', label: 'Avg Shifts / Lift', right: true,
+            fmt: v => <span style={{ color: shiftsColor(v), fontWeight: 700 }}>{nf(v, 2)}</span> },
+          { key: 'max_shifts', label: 'Max Shifts', right: true },
+          { key: 'single_shift_pct', label: 'Fresh Lifts %', right: true,
+            fmt: v => <span style={{ color: v >= 50 ? C.gain : C.loss, fontWeight: 600 }}>{nf(v, 1)} %</span> },
+          { key: 'three_plus', label: '3+ Shift Lifts', right: true,
+            fmt: v => <span style={{ color: v > 0 ? C.loss : undefined }}>{nf(v)}</span> },
+          { key: 'avg_age_days', label: 'Avg Age (days)', right: true, fmt: v => nf(v, 1) },
+          { key: 'max_age_days', label: 'Max Age (days)', right: true },
+          { key: 'rmrd_litres', label: 'RMRD (L)', right: true, fmt: v => nf(v) },
         ]}
       />
 

@@ -558,6 +558,71 @@ router.get('/utilisation', authenticate, async (req, res) => {
   }
 });
 
+// ─── Milk freshness: shifts of milk lifted per BMCU collection ───────────────
+// Ideally a tanker lifts ONE shift's milk from a BMCU (fresh). Each extra
+// shift sitting in the BMCU at lifting time means fresh milk mixed with older
+// milk. Per collection = one non-deleted trip_execution_bmcus block; its shift
+// rows are the shifts lifted together. Milk age = lifting date − oldest
+// milk_date in the block.
+router.get('/freshness', authenticate, async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
+  try {
+    const params = filterParams(req);
+    const r = await query(`WITH ${baseTripsCte},
+      collections AS (
+        SELECT teb.execution_id, teb.seq_no, teb.bmcu_id,
+               b.bmcu_code, b.bmcu_name, tr.plan_for_date,
+               COUNT(s.*)::int AS shifts,
+               SUM(s.rmrd_qty) AS rmrd_litres,
+               MIN(s.milk_date) AS oldest_milk_date
+        FROM trip_execution_bmcus teb
+        JOIN trips tr ON tr.execution_id = teb.execution_id
+        JOIN bmcus b  ON b.id = teb.bmcu_id
+        LEFT JOIN trip_execution_bmcu_shifts s
+          ON s.execution_id = teb.execution_id AND s.bmcu_seq_no = teb.seq_no
+        WHERE teb.is_deleted = FALSE
+        GROUP BY teb.execution_id, teb.seq_no, teb.bmcu_id, b.bmcu_code, b.bmcu_name, tr.plan_for_date
+        HAVING COUNT(s.*) > 0
+      )
+      SELECT bmcu_code, bmcu_name,
+        COUNT(*)::int AS collections,
+        AVG(shifts) AS avg_shifts,
+        MAX(shifts)::int AS max_shifts,
+        COUNT(*) FILTER (WHERE shifts = 1)::int AS single_shift,
+        COUNT(*) FILTER (WHERE shifts >= 3)::int AS three_plus,
+        SUM(rmrd_litres) AS rmrd_litres,
+        AVG(GREATEST(0, plan_for_date - oldest_milk_date)) AS avg_age_days,
+        MAX(GREATEST(0, plan_for_date - oldest_milk_date))::int AS max_age_days
+      FROM collections
+      GROUP BY bmcu_code, bmcu_name
+      ORDER BY AVG(shifts) DESC`, params);
+
+    const rows = r.rows.map(x => ({
+      bmcu_code: x.bmcu_code, bmcu_name: x.bmcu_name,
+      collections: x.collections,
+      avg_shifts: rN(x.avg_shifts, 2), max_shifts: x.max_shifts,
+      single_shift_pct: rN(x.single_shift / x.collections * 100, 1),
+      three_plus: x.three_plus,
+      rmrd_litres: rN(x.rmrd_litres),
+      avg_age_days: rN(x.avg_age_days, 1), max_age_days: x.max_age_days,
+    }));
+
+    const totC = rows.reduce((s2, x) => s2 + x.collections, 0);
+    const kpi = {
+      collections: totC,
+      avg_shifts: totC ? rN(rows.reduce((s2, x) => s2 + x.avg_shifts * x.collections, 0) / totC, 2) : null,
+      fresh_pct: totC ? rN(rows.reduce((s2, x) => s2 + x.single_shift_pct / 100 * x.collections, 0) / totC * 100, 1) : null,
+      three_plus: rows.reduce((s2, x) => s2 + x.three_plus, 0),
+      avg_age_days: totC ? rN(rows.reduce((s2, x) => s2 + (x.avg_age_days ?? 0) * x.collections, 0) / totC, 1) : null,
+    };
+    res.json({ kpi, bmcus: rows });
+  } catch (err) {
+    console.error('Analytics freshness error:', err);
+    res.status(500).json({ error: 'Failed to build freshness analytics' });
+  }
+});
+
 // ─── Drill-down: trips behind any dashboard figure ───────────────────────────
 // Filters compose: date range (+ optional single date), delivery point id,
 // route name, tanker number. Returns one row per trip with the three section
