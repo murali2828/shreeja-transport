@@ -5,8 +5,8 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import api, { getAnalyticsSummary, getDeliveryPoints } from '../../api';
-import { X, ArrowUpDown, ExternalLink } from 'lucide-react';
+import api, { getAnalyticsSummary, getDeliveryPoints, getRoutes, getTankers } from '../../api';
+import { X, ArrowUpDown, ExternalLink, Download, RefreshCw } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis,
   Tooltip, CartesianGrid, Cell, ReferenceLine,
@@ -29,6 +29,22 @@ const C = {
   ink: '#1c1917', paper: '#fdfcfa',
 };
 const gainColor = v => v == null ? C.neutral : v < 0 ? C.loss : C.gain;
+const AMBER = '#b45309';
+// Spec thresholds: TS% green >= 0, amber 0..-0.15%, red < -0.15%;
+// qty green >= 0, amber within -0.1% of RMRD kgs, red beyond.
+const tsStatusColor = pct => pct == null ? C.neutral : pct >= 0 ? C.gain : pct >= -0.15 ? AMBER : C.loss;
+const qtyStatusColor = (kgs, rmrdKgs) => {
+  if (kgs == null) return C.neutral;
+  if (kgs >= 0) return C.gain;
+  return rmrdKgs > 0 && Math.abs(kgs) / rmrdKgs * 100 <= 0.1 ? AMBER : C.loss;
+};
+// "vs previous period" delta line for a KPI sub-label
+const delta = (cur, prev, unit = 'Kg', d = 0) => {
+  if (cur == null || prev == null) return null;
+  const diff = cur - prev;
+  const arrow = diff > 0 ? '▲' : diff < 0 ? '▼' : '•';
+  return `${arrow} ${nf(Math.abs(diff), d)} ${unit} vs prev period`;
+};
 const tint = hex => hex + '14'; // ~8% alpha wash for card backgrounds
 
 function Kpi({ label, value, sub, color, accent }) {
@@ -117,13 +133,14 @@ function LeaderTable({ title, rows, cols, note, defaultSort, onRowClick, maxRows
 }
 
 // Drill-down overlay: trips (or a BMCU's per-trip detail) behind a clicked figure.
-function DrillPanel({ drill, from, to, dp, onClose }) {
+function DrillPanel({ drill, from, to, dp, route, tanker, onClose }) {
   const navigate = useNavigate();
   const isBmcu = drill.type === 'bmcu';
   const { data, isLoading } = useQuery({
-    queryKey: ['analytics-drill', drill, from, to, dp],
+    queryKey: ['analytics-drill', drill, from, to, dp, route, tanker],
     queryFn: () => {
-      const base = { from, to, delivery_point_id: dp || undefined };
+      const base = { from, to, delivery_point_id: dp || undefined,
+        route_name: route || undefined, tanker_number: tanker || undefined };
       if (isBmcu) return api.get('/analytics/bmcu-detail', { params: { ...base, bmcu_code: drill.value } }).then(r => r.data);
       const p = { ...base };
       if (drill.type === 'date')           p.date = drill.value;
@@ -203,12 +220,13 @@ function DrillPanel({ drill, from, to, dp, onClose }) {
 
 // Exceptions bar: pending acks / over-capacity loads / big single-trip TS
 // losses. Each card expands into the offending trips (click → execution).
-function AlertsRow({ from, to, dp }) {
+function AlertsRow({ from, to, dp, route, tanker }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(null); // 'pending' | 'overcap' | 'loss'
   const { data } = useQuery({
-    queryKey: ['analytics-alerts', from, to, dp],
-    queryFn: () => api.get('/analytics/alerts', { params: { from, to, delivery_point_id: dp || undefined } }).then(r => r.data),
+    queryKey: ['analytics-alerts', from, to, dp, route, tanker],
+    queryFn: () => api.get('/analytics/alerts', { params: { from, to, delivery_point_id: dp || undefined,
+      route_name: route || undefined, tanker_number: tanker || undefined } }).then(r => r.data),
     enabled: !!from && !!to,
   });
   if (!data) return null;
@@ -288,20 +306,49 @@ export default function Analytics() {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo]     = useState(today());
   const [dp, setDp]     = useState('');
+  const [route, setRoute]   = useState('');
+  const [tanker, setTanker] = useState('');
   const [drill, setDrill] = useState(null); // {type, value, label}
 
   const { data: dps } = useQuery({
     queryKey: ['delivery-points'],
     queryFn: () => getDeliveryPoints().then(r => r.data),
   });
-  const { data, isFetching } = useQuery({
-    queryKey: ['analytics', from, to, dp],
-    queryFn: () => getAnalyticsSummary({ from, to, delivery_point_id: dp || undefined }).then(r => r.data),
+  const { data: routesList } = useQuery({
+    queryKey: ['routes-list'],
+    queryFn: () => getRoutes().then(r => r.data),
+  });
+  const { data: tankersList } = useQuery({
+    queryKey: ['tankers-list'],
+    queryFn: () => getTankers().then(r => r.data),
+  });
+  const { data, isFetching, isError, refetch } = useQuery({
+    queryKey: ['analytics', from, to, dp, route, tanker],
+    queryFn: () => getAnalyticsSummary({ from, to, delivery_point_id: dp || undefined,
+      route_name: route || undefined, tanker_number: tanker || undefined }).then(r => r.data),
     enabled: !!from && !!to,
   });
 
+  const exportExcel = () => {
+    api.get('/analytics/export', {
+      params: { from, to, delivery_point_id: dp || undefined,
+        route_name: route || undefined, tanker_number: tanker || undefined },
+      responseType: 'blob',
+    }).then(r => {
+      const url = URL.createObjectURL(r.data);
+      const a = document.createElement('a');
+      a.href = url; a.download = `analytics_${from}_${to}.xlsx`; a.click();
+      URL.revokeObjectURL(url);
+    });
+  };
+
   const k = data?.kpis;
+  const pk = data?.prev_period?.kpis;
   const daily = (data?.daily || []).map(d => ({ ...d, label: d.date.slice(8, 10) + '/' + d.date.slice(5, 7) }));
+  const showTrend = daily.length >= 3; // never present <3 points as a trend
+  const freshness = data?.freshness?.last_ack_entry
+    ? new Date(data.freshness.last_ack_entry).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+    : null;
 
   const presets = [
     { label: 'Today', from: today(), to: today() },
@@ -319,6 +366,11 @@ export default function Analytics() {
             Gain / loss analytics · Ack Vs RMRD basis · click any row or bar to drill down
             {isFetching && ' · loading…'}
           </p>
+          {freshness && (
+            <p className="text-[11px]" style={{ color: C.teal }}>
+              Data as of {freshness} (last acknowledgement entry)
+            </p>
+          )}
         </div>
         <div className="flex-1" />
         {presets.map(p => (
@@ -337,26 +389,64 @@ export default function Analytics() {
           <option value="">All delivery points</option>
           {(dps || []).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
+        <select className="input text-xs" value={route} onChange={e => setRoute(e.target.value)}>
+          <option value="">All routes</option>
+          {(routesList || []).map(r => <option key={r.id} value={r.route_name}>{r.route_name}</option>)}
+        </select>
+        <select className="input text-xs" value={tanker} onChange={e => setTanker(e.target.value)}>
+          <option value="">All tankers</option>
+          {(tankersList || []).map(t2 => <option key={t2.id} value={t2.tanker_number}>{t2.tanker_number}</option>)}
+        </select>
+        <button className="text-xs px-2.5 py-1.5 rounded-lg text-white flex items-center gap-1.5"
+                style={{ background: C.teal }} onClick={exportExcel}>
+          <Download size={12}/> Excel
+        </button>
       </div>
 
+      {isError && (
+        <div className="rounded-xl p-3 text-xs font-semibold border flex items-center justify-between"
+             style={{ background: tint(C.loss), borderColor: C.loss + '55', color: C.loss }}>
+          <span>Could not load analytics — the server may be busy or unreachable.</span>
+          <button className="px-2.5 py-1 rounded-lg text-white flex items-center gap-1.5"
+                  style={{ background: C.loss }} onClick={() => refetch()}>
+            <RefreshCw size={11}/> Retry
+          </button>
+        </div>
+      )}
+
       {/* Alerts / exceptions — never buried */}
-      <AlertsRow from={from} to={to} dp={dp} />
+      <AlertsRow from={from} to={to} dp={dp} route={route} tanker={tanker} />
 
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Kpi label="Trips" value={nf(k?.trips)} sub={`${nf(k?.acked_trips)} acknowledged`} accent={C.violet} />
-        <Kpi label="Milk Handled (Dispatch)" value={`${nf(k?.disp?.kgs)} Kg`} sub={`${nf(k?.disp?.litres)} L`} accent={C.amber} />
-        <Kpi label="Delivered (Ack)" value={`${nf(k?.ack?.kgs)} Kg`} sub={`${nf(k?.ack?.litres)} L`} accent={C.teal} />
-        <Kpi label="Qty Gain / Loss" value={`${nf(k?.qty_gain_kgs)} Kg`} color={gainColor(k?.qty_gain_kgs)}
-             accent={gainColor(k?.qty_gain_kgs)} sub={`${nf(k?.qty_gain_litres)} L · Ack − RMRD`} />
-        <Kpi label="TS Gain / Loss" value={`${nf(k?.ts_gain, 1)} Kg`} color={gainColor(k?.ts_gain)}
-             accent={gainColor(k?.ts_gain)} sub={k?.ts_gain_pct != null ? `${nf(k.ts_gain_pct, 3)} %` : ''} />
+        <Kpi label="Trips" value={nf(k?.trips)} accent={C.violet}
+             sub={`${nf(k?.acked_trips)} acknowledged${pk?.trips != null ? ` · ${nf(pk.trips)} prev period` : ''}`} />
+        <Kpi label="Milk Handled (Dispatch)" value={`${nf(k?.disp?.kgs)} Kg`} accent={C.amber}
+             sub={delta(k?.disp?.kgs, pk?.disp?.kgs) || `${nf(k?.disp?.litres)} L`} />
+        <Kpi label="Delivered (Ack)" value={`${nf(k?.ack?.kgs)} Kg`} accent={C.teal}
+             sub={delta(k?.ack?.kgs, pk?.ack?.kgs) || `${nf(k?.ack?.litres)} L`} />
+        <Kpi label="Qty Gain / Loss" value={`${nf(k?.qty_gain_kgs)} Kg`}
+             color={qtyStatusColor(k?.qty_gain_kgs, k?.rmrd?.kgs)} accent={qtyStatusColor(k?.qty_gain_kgs, k?.rmrd?.kgs)}
+             sub={delta(k?.qty_gain_kgs, pk?.qty_gain_kgs) || `${nf(k?.qty_gain_litres)} L · Ack − RMRD`} />
+        <Kpi label="TS Gain / Loss" value={`${nf(k?.ts_gain, 1)} Kg`}
+             color={tsStatusColor(k?.ts_gain_pct)} accent={tsStatusColor(k?.ts_gain_pct)}
+             sub={`${k?.ts_gain_pct != null ? nf(k.ts_gain_pct, 3) + ' %' : ''}${delta(k?.ts_gain, pk?.ts_gain, 'Kg', 1) ? ' · ' + delta(k?.ts_gain, pk?.ts_gain, 'Kg', 1) : ''}`} />
         <Kpi label="Stage Split (Kg)" value={`${nf(k?.stage_transit_kgs)} transit`} color={gainColor(k?.stage_transit_kgs)}
              accent={C.berry} sub={`${nf(k?.stage_unload_kgs)} at unloading`} />
       </div>
 
       {/* Cost & operations row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <Kpi label="BMCU Collection" accent={data?.compliance?.pct == null ? C.teal
+               : data.compliance.pct > 95 ? C.gain : data.compliance.pct >= 85 ? AMBER : C.loss}
+             color={data?.compliance?.pct == null ? C.ink
+               : data.compliance.pct > 95 ? C.gain : data.compliance.pct >= 85 ? AMBER : C.loss}
+             value={data?.compliance?.pct != null ? `${nf(data.compliance.pct, 1)} %` : '—'}
+             sub={data?.compliance ? `${nf(data.compliance.collected)} of ${nf(data.compliance.planned)} planned BMCU visits` : ''} />
+        <Kpi label="Fat / SNF Drift" accent={C.violet}
+             color={(Math.abs(k?.fat_drift ?? 0) > 0.05 || Math.abs(k?.snf_drift ?? 0) > 0.05) ? C.loss : C.gain}
+             value={k?.fat_drift != null ? `${k.fat_drift > 0 ? '+' : ''}${nf(k.fat_drift, 3)} F` : '—'}
+             sub={k?.snf_drift != null ? `${k.snf_drift > 0 ? '+' : ''}${nf(k.snf_drift, 3)} SNF · Ack% − RMRD%` : 'weighted Ack% − RMRD%'} />
         <Kpi label="Transport Cost" accent={C.amber}
              value={`₹ ${nf(k?.trip_cost)}`}
              sub={k?.cost_per_1000l != null ? `₹ ${nf(k.cost_per_1000l)} / 1000 L dispatched` : 'per-km rate × trip km'} />
@@ -377,6 +467,11 @@ export default function Analytics() {
         <div className="font-semibold text-sm mb-2 flex items-center gap-2" style={{ color: C.ink }}>
           <span className="inline-block w-2 h-2 rounded-full" style={{ background: C.violet }} />
           Daily TS Gain / Loss (Kg) — click a day to drill down
+          {!showTrend && daily.length > 0 && (
+            <span className="text-[11px] font-normal" style={{ color: '#78716c' }}>
+              · {daily.length} day{daily.length === 1 ? '' : 's'} only — widen the range for a trend
+            </span>
+          )}
         </div>
         <ResponsiveContainer width="100%" height={260}>
           <ComposedChart data={daily}>
@@ -389,7 +484,7 @@ export default function Analytics() {
                  onClick={d => d?.date && setDrill({ type: 'date', value: d.date, label: `Trips on ${d.date}` })}>
               {daily.map((d, i) => <Cell key={i} fill={gainColor(d.ts_gain)} />)}
             </Bar>
-            <Line dataKey="qty_gain_kgs" name="Qty gain/loss (Kg)" stroke={C.line} dot={false} strokeWidth={2} />
+            {showTrend && <Line dataKey="qty_gain_kgs" name="Qty gain/loss (Kg)" stroke={C.line} dot={false} strokeWidth={2} />}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -465,7 +560,7 @@ export default function Analytics() {
         ]}
       />
 
-      {drill && <DrillPanel drill={drill} from={from} to={to} dp={dp} onClose={() => setDrill(null)} />}
+      {drill && <DrillPanel drill={drill} from={from} to={to} dp={dp} route={route} tanker={tanker} onClose={() => setDrill(null)} />}
     </div>
   );
 }

@@ -15,6 +15,13 @@ const { query } = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 
 const KG = 1.0285;
+// Common query-filter parsing: [from, to, delivery_point_id, route_name, tanker_number]
+const filterParams = req => [
+  req.query.from, req.query.to,
+  req.query.delivery_point_id ? parseInt(req.query.delivery_point_id) : null,
+  req.query.route_name || null,
+  req.query.tanker_number || null,
+];
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 
 // Shared filter: closed/complete executions of published plans in the range.
@@ -35,6 +42,8 @@ const baseTripsCte = `
     WHERE tp.plan_for_date BETWEEN $1 AND $2
       AND tp.status NOT IN ('cancelled','deleted')
       AND ($3::int IS NULL OR tp.delivery_point_id = $3::int)
+      AND ($4::text IS NULL OR rm.route_name = $4::text)
+      AND ($5::text IS NULL OR t.tanker_number = $5::text)
   ),
   disp AS (
     SELECT teb.execution_id,
@@ -154,16 +163,18 @@ const mapAgg = r => ({
   stage_unload_kgs:  rN(r.stage_unload_kgs),
   avg_fat: parseFloat(r.ack_kgs) > 0 ? rN(parseFloat(r.ack_kg_fat) / parseFloat(r.ack_kgs) * 100) : null,
   avg_snf: parseFloat(r.ack_kgs) > 0 ? rN(parseFloat(r.ack_kg_snf) / parseFloat(r.ack_kgs) * 100) : null,
+  // Quality drift: weighted Ack % minus weighted RMRD % (dilution indicator)
+  fat_drift: (parseFloat(r.ack_kgs) > 0 && parseFloat(r.rmrd_kgs) > 0)
+    ? rN(parseFloat(r.ack_kg_fat)/parseFloat(r.ack_kgs)*100 - parseFloat(r.rmrd_kg_fat)/parseFloat(r.rmrd_kgs)*100, 3) : null,
+  snf_drift: (parseFloat(r.ack_kgs) > 0 && parseFloat(r.rmrd_kgs) > 0)
+    ? rN(parseFloat(r.ack_kg_snf)/parseFloat(r.ack_kgs)*100 - parseFloat(r.rmrd_kg_snf)/parseFloat(r.rmrd_kgs)*100, 3) : null,
   trip_cost: rN(r.trip_cost),
   cost_per_1000l: parseFloat(r.disp_litres) > 0 ? rN(parseFloat(r.trip_cost) / parseFloat(r.disp_litres) * 1000) : null,
 });
 
-router.get('/summary', authenticate, async (req, res) => {
-  const { from, to } = req.query;
-  const dp = req.query.delivery_point_id ? parseInt(req.query.delivery_point_id) : null;
-  if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
-  try {
-    const params = [from, to, dp];
+async function buildSummary(params) {
+  const [from, to, dp] = params;
+  {
 
     const [kpis, daily, tankers, plants, routes] = await Promise.all([
       query(`WITH ${baseTripsCte} SELECT ${aggSelect} FROM per_trip`, params),
@@ -262,6 +273,33 @@ router.get('/summary', authenticate, async (req, res) => {
       };
     }).sort((a, b) => (a.ts_gain ?? 0) - (b.ts_gain ?? 0));
 
+    // Previous period of equal length, immediately before `from` — the
+    // comparison basis for the KPI deltas.
+    const dFrom = new Date(from + 'T00:00:00Z'), dTo = new Date(to + 'T00:00:00Z');
+    const lenDays = Math.round((dTo - dFrom) / 86400000) + 1;
+    const pTo   = new Date(dFrom); pTo.setUTCDate(pTo.getUTCDate() - 1);
+    const pFrom = new Date(pTo);   pFrom.setUTCDate(pFrom.getUTCDate() - (lenDays - 1));
+    const prevParams = [pFrom.toISOString().slice(0,10), pTo.toISOString().slice(0,10), ...params.slice(2)];
+    const prev = await query(`WITH ${baseTripsCte} SELECT ${aggSelect} FROM per_trip`, prevParams);
+
+    // Data freshness: latest entry timestamps across the whole system.
+    const fresh = await query(`
+      SELECT (SELECT MAX(created_at) FROM trip_acknowledgements) AS last_ack_entry,
+             (SELECT MAX(updated_at) FROM trip_executions)       AS last_execution_update`);
+
+    // BMCU collection compliance: planned BMCU visits vs those with milk
+    // quantity actually recorded on the execution.
+    const comp = await query(`WITH ${baseTripsCte}
+      SELECT COUNT(*)::int AS planned,
+             COUNT(*) FILTER (WHERE EXISTS (
+               SELECT 1 FROM trip_execution_bmcus teb
+               WHERE teb.execution_id = tr.execution_id
+                 AND teb.bmcu_id = tpb.bmcu_id
+                 AND teb.is_deleted = FALSE
+                 AND COALESCE(teb.qty_litres,0) > 0))::int AS collected
+      FROM trips tr
+      JOIN trip_plan_bmcus tpb ON tpb.trip_plan_id = tr.plan_id`, params);
+
     // Ops signals: tanker maintenance days overlapping the range (Maintainance
     // gate passes) and execution change-request volume by requester.
     const [maint, crs] = await Promise.all([
@@ -283,8 +321,18 @@ router.get('/summary', authenticate, async (req, res) => {
         GROUP BY 1, 2 ORDER BY COUNT(*) DESC`, [from, to]),
     ]);
 
-    res.json({
+    const compR = comp.rows[0];
+    return ({
       from, to, delivery_point_id: dp,
+      prev_period: { from: prevParams[0], to: prevParams[1], kpis: mapAgg(prev.rows[0]) },
+      freshness: {
+        last_ack_entry: fresh.rows[0].last_ack_entry,
+        last_execution_update: fresh.rows[0].last_execution_update,
+      },
+      compliance: {
+        planned: compR.planned, collected: compR.collected,
+        pct: compR.planned > 0 ? rN(compR.collected / compR.planned * 100, 1) : null,
+      },
       ops: {
         maintenance_days: rN(maint.rows[0]?.days, 1),
         open_maintenance: maint.rows[0]?.open_passes || 0,
@@ -301,9 +349,72 @@ router.get('/summary', authenticate, async (req, res) => {
       routes: routes.rows.map(r => ({ route_name: r.route_name, ...mapAgg(r) })),
       bmcus: bmcuRows,
     });
+  }
+}
+
+router.get('/summary', authenticate, async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
+  try {
+    res.json(await buildSummary(filterParams(req)));
   } catch (err) {
     console.error('Analytics summary error:', err);
     res.status(500).json({ error: 'Failed to build analytics summary' });
+  }
+});
+
+// ─── Excel export of the current dashboard view ──────────────────────────────
+router.get('/export', authenticate, async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
+  try {
+    const ExcelJS = require('exceljs');
+    const d = await buildSummary(filterParams(req));
+    const wb = new ExcelJS.Workbook();
+
+    const head = (ws, cols) => {
+      ws.addRow(cols).font = { bold: true };
+      ws.columns.forEach(c => { c.width = 16; });
+    };
+    const aggRow = (label, a) => [label, a.trips, a.acked_trips,
+      a.disp?.kgs, a.rmrd?.kgs, a.ack?.kgs, a.qty_gain_kgs, a.ts_gain, a.ts_gain_pct];
+    const AGG_HEADS = ['', 'Trips', 'Acked', 'Dispatch Kg', 'RMRD Kg', 'Ack Kg',
+      'Qty Gain/Loss Kg', 'TS Gain/Loss Kg', 'TS %'];
+
+    const ws1 = wb.addWorksheet('Summary');
+    ws1.addRow([`Analytics Summary ${from} → ${to}`]).font = { bold: true, size: 13 };
+    ws1.addRow([]);
+    head(ws1, AGG_HEADS);
+    ws1.addRow(aggRow('This period', d.kpis));
+    ws1.addRow(aggRow(`Previous (${d.prev_period.from} → ${d.prev_period.to})`, d.prev_period.kpis));
+    ws1.addRow([]);
+    ws1.addRow(['Transport Cost (₹)', d.kpis.trip_cost, '₹/1000L', d.kpis.cost_per_1000l]);
+    ws1.addRow(['Fat drift (Ack−RMRD)', d.kpis.fat_drift, 'SNF drift', d.kpis.snf_drift]);
+    ws1.addRow(['BMCU collection', `${d.compliance.collected}/${d.compliance.planned}`, '%', d.compliance.pct]);
+    ws1.addRow(['Maintenance days', d.ops.maintenance_days, 'Change requests', d.ops.change_requests]);
+
+    const sheet = (name, rows, firstHead, firstKey) => {
+      const ws = wb.addWorksheet(name);
+      head(ws, [firstHead, ...AGG_HEADS.slice(1)]);
+      rows.forEach(r => ws.addRow(aggRow(r[firstKey], r).map((v, i) => i === 0 ? r[firstKey] : v)));
+    };
+    sheet('Daily', d.daily, 'Date', 'date');
+    sheet('Delivery Points', d.delivery_points, 'Delivery Point', 'delivery_point');
+    sheet('Routes', d.routes, 'Route', 'route_name');
+    sheet('Tankers', d.tankers, 'Tanker', 'tanker_number');
+
+    const wsB = wb.addWorksheet('BMCUs');
+    head(wsB, ['Code', 'BMCU', 'RMRD Kg', 'Dispatch Kg', 'Qty Gain/Loss Kg', 'TS Gain/Loss Kg', 'TS %']);
+    d.bmcus.forEach(b => wsB.addRow([b.bmcu_code, b.bmcu_name, b.rmrd_kgs, b.disp_kgs,
+      b.qty_gain_kgs, b.ts_gain, b.ts_gain_pct]));
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=analytics_${from}_${to}.xlsx`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('Analytics export error:', err);
+    res.status(500).json({ error: 'Failed to export analytics' });
   }
 });
 
@@ -313,10 +424,9 @@ router.get('/summary', authenticate, async (req, res) => {
 // 3. single-trip TS loss worse than −25 Kg (Ack Vs RMRD)
 router.get('/alerts', authenticate, async (req, res) => {
   const { from, to } = req.query;
-  const dp = req.query.delivery_point_id ? parseInt(req.query.delivery_point_id) : null;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
   try {
-    const params = [from, to, dp];
+    const params = filterParams(req);
     const r = await query(`WITH ${baseTripsCte}
       SELECT plan_for_date::text AS date, execution_id, tanker_number, route_name,
              delivery_point, exec_status, capacity_litres,
@@ -354,14 +464,11 @@ router.get('/alerts', authenticate, async (req, res) => {
 // totals and gains — each row links back to its execution screen.
 router.get('/trips', authenticate, async (req, res) => {
   const { from, to } = req.query;
-  const dp = req.query.delivery_point_id ? parseInt(req.query.delivery_point_id) : null;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
   try {
-    const params = [from, to, dp];
+    const params = filterParams(req);
     const extra = [];
     if (req.query.date)          { params.push(req.query.date);          extra.push(`plan_for_date = $${params.length}`); }
-    if (req.query.route_name)    { params.push(req.query.route_name);    extra.push(`route_name = $${params.length}`); }
-    if (req.query.tanker_number) { params.push(req.query.tanker_number); extra.push(`tanker_number = $${params.length}`); }
     if (req.query.delivery_point){ params.push(req.query.delivery_point);extra.push(`COALESCE(delivery_point,'—') = $${params.length}`); }
     const where = extra.length ? `WHERE ${extra.join(' AND ')}` : '';
 
@@ -393,11 +500,10 @@ router.get('/trips', authenticate, async (req, res) => {
 // ─── Drill-down: one BMCU's Dispatch Vs RMRD per trip ────────────────────────
 router.get('/bmcu-detail', authenticate, async (req, res) => {
   const { from, to, bmcu_code } = req.query;
-  const dp = req.query.delivery_point_id ? parseInt(req.query.delivery_point_id) : null;
   if (!from || !to || !bmcu_code)
     return res.status(400).json({ error: 'from, to and bmcu_code are required' });
   try {
-    const params = [from, to, dp, bmcu_code];
+    const params = [...filterParams(req), bmcu_code];
     const r = await query(`WITH ${baseTripsCte}
       SELECT tr.plan_for_date::text AS date, tr.execution_id, tr.tanker_number,
              tr.route_name, tr.delivery_point,
@@ -408,7 +514,7 @@ router.get('/bmcu-detail', authenticate, async (req, res) => {
       FROM trips tr
       JOIN trip_execution_bmcus teb
         ON teb.execution_id = tr.execution_id AND teb.is_deleted=FALSE
-      JOIN bmcus b ON b.id = teb.bmcu_id AND b.bmcu_code = $4
+      JOIN bmcus b ON b.id = teb.bmcu_id AND b.bmcu_code = $6
       LEFT JOIN LATERAL (
         SELECT SUM(s.rmrd_qty * ${KG}) AS rmrd_kgs,
                SUM(s.rmrd_qty * ${KG} * (COALESCE(s.rmrd_fat_pct,0)+COALESCE(s.rmrd_snf_pct,0)) / 100) AS rmrd_ts
