@@ -19,21 +19,35 @@ const monthStart = () => { const d = new Date(); d.setDate(1); return iso(d); };
 
 const nf = (v, d = 0) => v == null ? '—'
   : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
-const gainColor = v => v == null ? '#94a3b8' : v < 0 ? '#dc2626' : '#15803d';
 
-function Kpi({ label, value, sub, color }) {
+// Dashboard palette (validated: gain/loss/line pass CVD + contrast checks).
+// Accents are decorative card/panel identities; gain & loss are semantic and
+// reserved — never reused as accents.
+const C = {
+  gain: '#0e8a5f', loss: '#d92d20', line: '#7c3aed', neutral: '#8a8577',
+  teal: '#0f766e', amber: '#b45309', violet: '#6d28d9', berry: '#a21caf',
+  ink: '#1c1917', paper: '#fdfcfa',
+};
+const gainColor = v => v == null ? C.neutral : v < 0 ? C.loss : C.gain;
+const tint = hex => hex + '14'; // ~8% alpha wash for card backgrounds
+
+function Kpi({ label, value, sub, color, accent }) {
+  const a = accent || C.teal;
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-      <div className="text-xs text-gray-500">{label}</div>
-      <div className="text-xl font-bold" style={{ color: color || '#0f172a' }}>{value}</div>
-      {sub && <div className="text-[11px] text-gray-400 mt-0.5">{sub}</div>}
+    <div className="rounded-xl shadow-sm p-4 border"
+         style={{ background: `linear-gradient(135deg, ${tint(a)}, #ffffff 65%)`,
+                  borderColor: a + '33', borderTop: `3px solid ${a}` }}>
+      <div className="text-xs font-medium" style={{ color: a }}>{label}</div>
+      <div className="text-xl font-bold" style={{ color: color || C.ink }}>{value}</div>
+      {sub && <div className="text-[11px] mt-0.5" style={{ color: '#78716c' }}>{sub}</div>}
     </div>
   );
 }
 
 // Sortable, clickable leaderboard table. Click a header to sort; click a row
 // to drill down into the trips behind it.
-function LeaderTable({ title, rows, cols, note, defaultSort, onRowClick, maxRows = 12 }) {
+function LeaderTable({ title, rows, cols, note, defaultSort, onRowClick, maxRows = 12, accent }) {
+  const a = accent || C.teal;
   const [sort, setSort] = useState(defaultSort || null); // {key, dir}
   const [showAll, setShowAll] = useState(false);
 
@@ -55,12 +69,16 @@ function LeaderTable({ title, rows, cols, note, defaultSort, onRowClick, maxRows
   const shown = showAll ? sorted : sorted.slice(0, maxRows);
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 overflow-x-auto">
-      <div className="font-semibold text-sm text-gray-700">{title}</div>
+    <div className="bg-white rounded-xl shadow-sm p-4 overflow-x-auto border"
+         style={{ borderColor: a + '2e', borderLeft: `4px solid ${a}` }}>
+      <div className="font-semibold text-sm flex items-center gap-2" style={{ color: C.ink }}>
+        <span className="inline-block w-2 h-2 rounded-full" style={{ background: a }} />
+        {title}
+      </div>
       {note && <div className="text-[11px] text-gray-400 mt-0.5 mb-1">{note}</div>}
       <table className="w-full text-xs mt-1.5">
         <thead>
-          <tr className="text-left text-gray-500 border-b select-none">
+          <tr className="text-left border-b select-none" style={{ color: '#78716c', background: tint(a) }}>
             {cols.map(c => (
               <th key={c.key}
                   className={`py-1.5 pr-3 cursor-pointer hover:text-gray-800 ${c.right ? 'text-right' : ''}`}
@@ -230,7 +248,10 @@ export default function Analytics() {
         <div className="flex-1" />
         {presets.map(p => (
           <button key={p.label}
-            className={`text-xs px-2.5 py-1.5 rounded-lg border ${from === p.from && to === p.to ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+            className="text-xs px-2.5 py-1.5 rounded-lg border"
+            style={from === p.from && to === p.to
+              ? { background: C.teal, color: '#fff', borderColor: C.teal }
+              : { background: '#fff', color: '#57534e', borderColor: '#e7e5e4' }}
             onClick={() => { setFrom(p.from); setTo(p.to); }}>
             {p.label}
           </button>
@@ -245,32 +266,36 @@ export default function Analytics() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Kpi label="Trips" value={nf(k?.trips)} sub={`${nf(k?.acked_trips)} acknowledged`} />
-        <Kpi label="Milk Handled (Dispatch)" value={`${nf(k?.disp?.kgs)} Kg`} sub={`${nf(k?.disp?.litres)} L`} />
-        <Kpi label="Delivered (Ack)" value={`${nf(k?.ack?.kgs)} Kg`} sub={`${nf(k?.ack?.litres)} L`} />
+        <Kpi label="Trips" value={nf(k?.trips)} sub={`${nf(k?.acked_trips)} acknowledged`} accent={C.violet} />
+        <Kpi label="Milk Handled (Dispatch)" value={`${nf(k?.disp?.kgs)} Kg`} sub={`${nf(k?.disp?.litres)} L`} accent={C.amber} />
+        <Kpi label="Delivered (Ack)" value={`${nf(k?.ack?.kgs)} Kg`} sub={`${nf(k?.ack?.litres)} L`} accent={C.teal} />
         <Kpi label="Qty Gain / Loss" value={`${nf(k?.qty_gain_kgs)} Kg`} color={gainColor(k?.qty_gain_kgs)}
-             sub={`${nf(k?.qty_gain_litres)} L · Ack − RMRD`} />
+             accent={gainColor(k?.qty_gain_kgs)} sub={`${nf(k?.qty_gain_litres)} L · Ack − RMRD`} />
         <Kpi label="TS Gain / Loss" value={`${nf(k?.ts_gain, 1)} Kg`} color={gainColor(k?.ts_gain)}
-             sub={k?.ts_gain_pct != null ? `${nf(k.ts_gain_pct, 3)} %` : ''} />
+             accent={gainColor(k?.ts_gain)} sub={k?.ts_gain_pct != null ? `${nf(k.ts_gain_pct, 3)} %` : ''} />
         <Kpi label="Stage Split (Kg)" value={`${nf(k?.stage_transit_kgs)} transit`} color={gainColor(k?.stage_transit_kgs)}
-             sub={`${nf(k?.stage_unload_kgs)} at unloading`} />
+             accent={C.berry} sub={`${nf(k?.stage_unload_kgs)} at unloading`} />
       </div>
 
       {/* Daily trend — click a bar to open that day's trips */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-        <div className="font-semibold text-sm text-gray-700 mb-2">Daily TS Gain / Loss (Kg) — click a day to drill down</div>
+      <div className="bg-white rounded-xl shadow-sm p-4 border"
+           style={{ borderColor: C.violet + '2e', borderLeft: `4px solid ${C.violet}` }}>
+        <div className="font-semibold text-sm mb-2 flex items-center gap-2" style={{ color: C.ink }}>
+          <span className="inline-block w-2 h-2 rounded-full" style={{ background: C.violet }} />
+          Daily TS Gain / Loss (Kg) — click a day to drill down
+        </div>
         <ResponsiveContainer width="100%" height={260}>
           <ComposedChart data={daily}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
             <XAxis dataKey="label" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip formatter={(v, n) => [nf(v, 1), n]} />
-            <ReferenceLine y={0} stroke="#94a3b8" />
+            <ReferenceLine y={0} stroke={C.neutral} />
             <Bar dataKey="ts_gain" name="TS gain/loss" cursor="pointer"
                  onClick={d => d?.date && setDrill({ type: 'date', value: d.date, label: `Trips on ${d.date}` })}>
               {daily.map((d, i) => <Cell key={i} fill={gainColor(d.ts_gain)} />)}
             </Bar>
-            <Line dataKey="qty_gain_kgs" name="Qty gain/loss (Kg)" stroke="#2563eb" dot={false} strokeWidth={2} />
+            <Line dataKey="qty_gain_kgs" name="Qty gain/loss (Kg)" stroke={C.line} dot={false} strokeWidth={2} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -278,6 +303,7 @@ export default function Analytics() {
       {/* Delivery point performance */}
       <LeaderTable
         title="Delivery Point Performance"
+        accent={C.teal}
         note="Delivered = acknowledged quantity at the plant · Gain/Loss = Ack − RMRD · click a row for its trips"
         rows={data?.delivery_points || []}
         defaultSort={{ key: 'ack_kgs', dir: 'desc' }}
@@ -288,6 +314,7 @@ export default function Analytics() {
       {/* Routes */}
       <LeaderTable
         title="Route Performance (Ack Vs RMRD · worst first)"
+        accent={C.amber}
         note="Click a route for its trips · sort any column"
         rows={data?.routes || []}
         defaultSort={{ key: 'ts_gain', dir: 'asc' }}
@@ -298,6 +325,7 @@ export default function Analytics() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <LeaderTable
           title="Worst BMCUs (TS loss · Dispatch Vs RMRD)"
+          accent={C.loss}
           rows={(data?.bmcus || []).filter(b => (b.ts_gain ?? 0) < 0)}
           defaultSort={{ key: 'ts_gain', dir: 'asc' }}
           onRowClick={r => setDrill({ type: 'bmcu', value: r.bmcu_code, label: `${r.bmcu_code} — ${r.bmcu_name}` })}
@@ -312,6 +340,7 @@ export default function Analytics() {
         />
         <LeaderTable
           title="Best BMCUs (TS gain · Dispatch Vs RMRD)"
+          accent={C.gain}
           rows={(data?.bmcus || []).filter(b => (b.ts_gain ?? 0) > 0)}
           defaultSort={{ key: 'ts_gain', dir: 'desc' }}
           onRowClick={r => setDrill({ type: 'bmcu', value: r.bmcu_code, label: `${r.bmcu_code} — ${r.bmcu_name}` })}
@@ -328,6 +357,7 @@ export default function Analytics() {
 
       <LeaderTable
         title="Tanker Performance (Ack Vs RMRD · worst first)"
+        accent={C.berry}
         note="TS loss / 1000 L normalizes small vs large tankers · click a tanker for its trips"
         rows={data?.tankers || []}
         defaultSort={{ key: 'ts_gain', dir: 'asc' }}
