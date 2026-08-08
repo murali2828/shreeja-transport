@@ -201,6 +201,81 @@ function DrillPanel({ drill, from, to, dp, onClose }) {
   );
 }
 
+// Exceptions bar: pending acks / over-capacity loads / big single-trip TS
+// losses. Each card expands into the offending trips (click → execution).
+function AlertsRow({ from, to, dp }) {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(null); // 'pending' | 'overcap' | 'loss'
+  const { data } = useQuery({
+    queryKey: ['analytics-alerts', from, to, dp],
+    queryFn: () => api.get('/analytics/alerts', { params: { from, to, delivery_point_id: dp || undefined } }).then(r => r.data),
+    enabled: !!from && !!to,
+  });
+  if (!data) return null;
+  const overdue = data.pending_acks.filter(p => p.overdue);
+  const cards = [
+    { key: 'pending', n: data.pending_acks.length, rows: data.pending_acks,
+      label: 'Pending Acknowledgements', sub: overdue.length ? `${overdue.length} overdue > 24h` : 'none overdue',
+      severe: overdue.length > 0,
+      detail: r => `${r.hours} h waiting${r.overdue ? ' · OVERDUE' : ''}` },
+    { key: 'overcap', n: data.over_capacity.length, rows: data.over_capacity,
+      label: 'Loads Over 110% Capacity', sub: 'dispatch vs registered capacity',
+      severe: data.over_capacity.length > 0,
+      detail: r => `${nf(r.disp_litres)} L on ${nf(r.capacity_litres)} L tanker (+${r.over_pct}%)` },
+    { key: 'loss', n: data.big_ts_loss.length, rows: data.big_ts_loss,
+      label: 'Big TS Losses (> 25 Kg / trip)', sub: 'Ack Vs RMRD',
+      severe: data.big_ts_loss.length > 0,
+      detail: r => `${nf(r.ts_gain, 1)} Kg TS` },
+  ];
+  if (cards.every(c => c.n === 0)) return (
+    <div className="rounded-xl p-3 text-xs font-semibold border"
+         style={{ background: tint(C.gain), borderColor: C.gain + '55', color: C.gain }}>
+      ✓ No exceptions in this period — no pending acks, over-capacity loads or big TS losses.
+    </div>
+  );
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {cards.map(c => (
+          <button key={c.key} onClick={() => setOpen(o => o === c.key ? null : c.key)}
+            className="rounded-xl p-3 text-left border transition-shadow hover:shadow-md"
+            style={{ background: c.n === 0 ? tint(C.gain) : tint(C.loss),
+                     borderColor: (c.n === 0 ? C.gain : C.loss) + '55' }}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold" style={{ color: c.n === 0 ? C.gain : C.loss }}>{c.label}</span>
+              <span className="text-lg font-bold" style={{ color: c.n === 0 ? C.gain : C.loss }}>{c.n}</span>
+            </div>
+            <div className="text-[11px]" style={{ color: '#78716c' }}>{c.sub}{c.n > 0 && ' · click to view'}</div>
+          </button>
+        ))}
+      </div>
+      {open && (() => {
+        const c = cards.find(x => x.key === open);
+        if (!c || !c.rows.length) return null;
+        return (
+          <div className="bg-white rounded-xl border p-3" style={{ borderColor: C.loss + '40' }}>
+            <table className="w-full text-xs">
+              <tbody>
+                {c.rows.map((r, i) => (
+                  <tr key={i} className="border-b border-gray-50 hover:bg-red-50 cursor-pointer"
+                      onClick={() => navigate(`/execution/${r.execution_id}`)}>
+                    <td className="py-1.5 pr-3">{r.date}</td>
+                    <td className="py-1.5 pr-3 font-semibold" style={{ color: C.violet }}>{r.tanker_number || '—'}</td>
+                    <td className="py-1.5 pr-3">{r.route_name || '—'}</td>
+                    <td className="py-1.5 pr-3">{r.delivery_point}</td>
+                    <td className="py-1.5 pr-3 text-right font-semibold" style={{ color: C.loss }}>{c.detail(r)}</td>
+                    <td className="py-1.5"><ExternalLink size={11} className="text-gray-300"/></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
 const GAIN_COLS = [
   { key: 'trips', label: 'Trips', right: true },
   { key: 'ack_kgs', label: 'Delivered (Kg)', right: true, fmt: (_, r) => nf(r.ack?.kgs), sortVal: r => r.ack?.kgs },
@@ -264,6 +339,9 @@ export default function Analytics() {
         </select>
       </div>
 
+      {/* Alerts / exceptions — never buried */}
+      <AlertsRow from={from} to={to} dp={dp} />
+
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <Kpi label="Trips" value={nf(k?.trips)} sub={`${nf(k?.acked_trips)} acknowledged`} accent={C.violet} />
@@ -275,6 +353,22 @@ export default function Analytics() {
              accent={gainColor(k?.ts_gain)} sub={k?.ts_gain_pct != null ? `${nf(k.ts_gain_pct, 3)} %` : ''} />
         <Kpi label="Stage Split (Kg)" value={`${nf(k?.stage_transit_kgs)} transit`} color={gainColor(k?.stage_transit_kgs)}
              accent={C.berry} sub={`${nf(k?.stage_unload_kgs)} at unloading`} />
+      </div>
+
+      {/* Cost & operations row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Kpi label="Transport Cost" accent={C.amber}
+             value={`₹ ${nf(k?.trip_cost)}`}
+             sub={k?.cost_per_1000l != null ? `₹ ${nf(k.cost_per_1000l)} / 1000 L dispatched` : 'per-km rate × trip km'} />
+        <Kpi label="Tanker Maintenance" accent={C.violet}
+             value={`${nf(data?.ops?.maintenance_days, 1)} days`}
+             sub={data?.ops?.open_maintenance ? `${data.ops.open_maintenance} tanker(s) still out` : 'all returned'} />
+        <Kpi label="Change Requests" accent={C.berry}
+             value={nf(data?.ops?.change_requests)}
+             sub={data?.ops?.change_requests_pending ? `${data.ops.change_requests_pending} pending approval` : 'none pending'} />
+        <Kpi label="Top Requester" accent={C.teal}
+             value={data?.ops?.top_requesters?.[0]?.name || '—'}
+             sub={data?.ops?.top_requesters?.slice(0, 3).map(t2 => `${t2.name} (${t2.n})`).join(' · ') || 'no change requests'} />
       </div>
 
       {/* Daily trend — click a bar to open that day's trips */}

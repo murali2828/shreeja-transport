@@ -22,7 +22,9 @@ const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) 
 const baseTripsCte = `
   trips AS (
     SELECT tp.id AS plan_id, tp.plan_for_date, tp.delivery_point_id,
-           te.id AS execution_id, t.id AS tanker_id, t.tanker_number,
+           te.id AS execution_id, te.status AS exec_status, te.updated_at,
+           t.id AS tanker_id, t.tanker_number, t.capacity_litres,
+           COALESCE(t.per_km_rate,0) * COALESCE(te.actual_km, te.calculated_km, 0) AS trip_cost,
            rm.route_name, dp.name AS delivery_point,
            EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id=te.id) AS has_ack
     FROM trip_plans tp
@@ -137,7 +139,8 @@ const aggSelect = `
   SUM((ack_kg_fat+ack_kg_snf) - (rmrd_kg_fat+rmrd_kg_snf)) FILTER (WHERE has_ack) AS ts_gain,
   SUM(rmrd_kg_fat+rmrd_kg_snf) FILTER (WHERE has_ack) AS ts_base,
   SUM(disp_kgs - rmrd_kgs) AS stage_transit_kgs,
-  SUM(ack_kgs  - disp_kgs) FILTER (WHERE has_ack) AS stage_unload_kgs`;
+  SUM(ack_kgs  - disp_kgs) FILTER (WHERE has_ack) AS stage_unload_kgs,
+  SUM(trip_cost) AS trip_cost`;
 
 const mapAgg = r => ({
   trips: r.trips, acked_trips: r.acked_trips,
@@ -151,6 +154,8 @@ const mapAgg = r => ({
   stage_unload_kgs:  rN(r.stage_unload_kgs),
   avg_fat: parseFloat(r.ack_kgs) > 0 ? rN(parseFloat(r.ack_kg_fat) / parseFloat(r.ack_kgs) * 100) : null,
   avg_snf: parseFloat(r.ack_kgs) > 0 ? rN(parseFloat(r.ack_kg_snf) / parseFloat(r.ack_kgs) * 100) : null,
+  trip_cost: rN(r.trip_cost),
+  cost_per_1000l: parseFloat(r.disp_litres) > 0 ? rN(parseFloat(r.trip_cost) / parseFloat(r.disp_litres) * 1000) : null,
 });
 
 router.get('/summary', authenticate, async (req, res) => {
@@ -257,8 +262,38 @@ router.get('/summary', authenticate, async (req, res) => {
       };
     }).sort((a, b) => (a.ts_gain ?? 0) - (b.ts_gain ?? 0));
 
+    // Ops signals: tanker maintenance days overlapping the range (Maintainance
+    // gate passes) and execution change-request volume by requester.
+    const [maint, crs] = await Promise.all([
+      query(`
+        SELECT COALESCE(SUM(
+          GREATEST(0, EXTRACT(EPOCH FROM (
+            LEAST(COALESCE(returned_at, NOW()), ($2::date + 1)::timestamptz)
+            - GREATEST(issued_at, $1::date::timestamptz)
+          )) / 86400)), 0) AS days,
+          COUNT(*) FILTER (WHERE returned_at IS NULL)::int AS open_passes
+        FROM non_trip_gate_passes
+        WHERE reason='Maintainance'
+          AND issued_at < ($2::date + 1)::timestamptz
+          AND COALESCE(returned_at, NOW()) > $1::date::timestamptz`, [from, to]),
+      query(`
+        SELECT COALESCE(requested_by_name,'—') AS requester, status, COUNT(*)::int AS n
+        FROM execution_change_requests
+        WHERE created_at >= $1::date AND created_at < ($2::date + 1)
+        GROUP BY 1, 2 ORDER BY COUNT(*) DESC`, [from, to]),
+    ]);
+
     res.json({
       from, to, delivery_point_id: dp,
+      ops: {
+        maintenance_days: rN(maint.rows[0]?.days, 1),
+        open_maintenance: maint.rows[0]?.open_passes || 0,
+        change_requests: crs.rows.reduce((s, r) => s + r.n, 0),
+        change_requests_pending: crs.rows.filter(r => r.status === 'pending').reduce((s, r) => s + r.n, 0),
+        top_requesters: Object.entries(crs.rows.reduce((m, r) => {
+          m[r.requester] = (m[r.requester] || 0) + r.n; return m;
+        }, {})).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name, n]) => ({ name, n })),
+      },
       kpis: mapAgg(kpis.rows[0]),
       daily: daily.rows.map(r => ({ date: r.date, ...mapAgg(r) })),
       tankers: tankers.rows.map(r => ({ tanker_number: r.tanker_number, ...mapAgg(r) })),
@@ -269,6 +304,47 @@ router.get('/summary', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Analytics summary error:', err);
     res.status(500).json({ error: 'Failed to build analytics summary' });
+  }
+});
+
+// ─── Alerts: exceptions that must never be buried ────────────────────────────
+// 1. pending acknowledgements (with age; >24h flagged)
+// 2. trips loaded past 110% of tanker capacity
+// 3. single-trip TS loss worse than −25 Kg (Ack Vs RMRD)
+router.get('/alerts', authenticate, async (req, res) => {
+  const { from, to } = req.query;
+  const dp = req.query.delivery_point_id ? parseInt(req.query.delivery_point_id) : null;
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
+  try {
+    const params = [from, to, dp];
+    const r = await query(`WITH ${baseTripsCte}
+      SELECT plan_for_date::text AS date, execution_id, tanker_number, route_name,
+             delivery_point, exec_status, capacity_litres,
+             EXTRACT(EPOCH FROM (NOW() - updated_at)) / 3600 AS hours_since_update,
+             disp_litres,
+             CASE WHEN has_ack THEN (ack_kg_fat+ack_kg_snf) - (rmrd_kg_fat+rmrd_kg_snf) END AS ts_gain
+      FROM per_trip`, params);
+
+    const pending = [], overCap = [], bigLoss = [];
+    for (const x of r.rows) {
+      const base = { date: x.date, execution_id: x.execution_id,
+        tanker_number: x.tanker_number, route_name: x.route_name, delivery_point: x.delivery_point || '—' };
+      if (x.exec_status === 'pending_ack')
+        pending.push({ ...base, hours: rN(x.hours_since_update, 1), overdue: parseFloat(x.hours_since_update) > 24 });
+      const cap = parseFloat(x.capacity_litres) || 0;
+      if (cap > 0 && parseFloat(x.disp_litres) > cap * 1.10)
+        overCap.push({ ...base, disp_litres: rN(x.disp_litres), capacity_litres: rN(cap),
+          over_pct: rN((parseFloat(x.disp_litres) / cap - 1) * 100, 1) });
+      if (x.ts_gain != null && parseFloat(x.ts_gain) < -25)
+        bigLoss.push({ ...base, ts_gain: rN(x.ts_gain, 1) });
+    }
+    pending.sort((a, b) => b.hours - a.hours);
+    bigLoss.sort((a, b) => a.ts_gain - b.ts_gain);
+
+    res.json({ pending_acks: pending, over_capacity: overCap, big_ts_loss: bigLoss });
+  } catch (err) {
+    console.error('Analytics alerts error:', err);
+    res.status(500).json({ error: 'Failed to load alerts' });
   }
 });
 
