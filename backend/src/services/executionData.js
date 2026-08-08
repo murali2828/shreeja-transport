@@ -243,7 +243,9 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
   // the PUT save AND change-request approval, since both route through here.
   await assertWithinCapacity(client, execId);
 
-  // Recalculate execution totals (exclude Balance Milk)
+  // Recalculate execution totals — ALL non-deleted rows, including those
+  // described 'Balance Milk': their dispatched qty is real milk on the tanker
+  // and the TS reports already count them, so the header must match.
   const totals = await client.query(`
     SELECT
       COALESCE(SUM(qty_litres),0) AS total_litres,
@@ -251,7 +253,7 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
       COALESCE(SUM(kg_fat),0)     AS total_kg_fat,
       COALESCE(SUM(kg_snf),0)     AS total_kg_snf
     FROM trip_execution_bmcus
-    WHERE execution_id=$1 AND is_deleted=FALSE AND description != 'Balance Milk'`,
+    WHERE execution_id=$1 AND is_deleted=FALSE`,
     [execId]
   );
   const t = totals.rows[0];

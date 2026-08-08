@@ -863,8 +863,10 @@ export default function ExecutionForm() {
   if (!exec) return <div className="text-red-500 p-8">Execution not found</div>;
 
   const visibleRows = bmcuRows.filter(r => !r.is_deleted);
-  const totalLitres = visibleRows.filter(r => r.description !== 'Balance Milk').reduce((s,r) => s + (parseFloat(r.qty_litres)||0), 0);
-  const totalKgs    = visibleRows.filter(r => r.description !== 'Balance Milk').reduce((s,r) => s + (parseFloat(r.qty_kgs) || parseFloat(r.qty_litres||0)*1.0285), 0);
+  // ALL rows count, including 'Balance Milk' ones — their dispatched qty is
+  // real milk on the tanker (matches the server-side totals and TS reports).
+  const totalLitres = visibleRows.reduce((s,r) => s + (parseFloat(r.qty_litres)||0), 0);
+  const totalKgs    = visibleRows.reduce((s,r) => s + (parseFloat(r.qty_kgs) || parseFloat(r.qty_litres||0)*1.0285), 0);
   const isTrulyClosed = exec.status === 'closed';
   // Staging mode: closed trip fields become editable, but changes go to a
   // change request for PP01 approval instead of saving directly.
