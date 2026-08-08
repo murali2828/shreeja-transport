@@ -46,17 +46,45 @@ const delta = (cur, prev, unit = 'Kg', d = 0) => {
   return `${arrow} ${nf(Math.abs(diff), d)} ${unit} vs prev period`;
 };
 const tint = hex => hex + '14'; // ~8% alpha wash for card backgrounds
+
+// Motion: CSS-only, disabled automatically for reduced-motion users.
+const MotionStyles = () => (
+  <style>{`
+    @keyframes az-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+    @keyframes az-pop  { from { opacity: 0; transform: scale(.96) translateY(14px); } to { opacity: 1; transform: none; } }
+    @keyframes az-fade { from { opacity: 0; } to { opacity: 1; } }
+    .az-rise { animation: az-rise .45s cubic-bezier(.22,.9,.35,1) both; }
+    .az-card { transition: transform .18s ease, box-shadow .18s ease; }
+    .az-card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(28,25,23,.10); }
+    .az-card:active { transform: translateY(-1px) scale(.99); }
+    .az-panel { transition: box-shadow .2s ease; }
+    .az-panel:hover { box-shadow: 0 6px 18px rgba(28,25,23,.08); }
+    .az-row { transition: background .15s ease, transform .15s ease; }
+    .az-row:hover { transform: translateX(2px); }
+    .az-overlay { animation: az-fade .18s ease both; }
+    .az-modal { animation: az-pop .28s cubic-bezier(.22,.9,.35,1) both; }
+    .az-btn { transition: transform .12s ease, box-shadow .12s ease, background .15s ease; }
+    .az-btn:hover { transform: translateY(-1px); }
+    .az-btn:active { transform: scale(.96); }
+    @media (prefers-reduced-motion: reduce) {
+      .az-rise, .az-overlay, .az-modal { animation: none; }
+      .az-card, .az-row, .az-btn, .az-panel { transition: none; }
+      .az-card:hover, .az-row:hover, .az-btn:hover { transform: none; }
+    }
+  `}</style>
+);
 // Capacity-fill bands: >=80% green, 60-80 amber, <60 red
 const fillColor = pct => pct == null ? C.neutral : pct >= 80 ? C.gain : pct >= 60 ? AMBER : C.loss;
 // Freshness bands (avg shifts lifted per collection): <=1.5 green, <=2.5 amber, worse red
 const shiftsColor = v => v == null ? C.neutral : v <= 1.5 ? C.gain : v <= 2.5 ? AMBER : C.loss;
 
-function Kpi({ label, value, sub, color, accent }) {
+function Kpi({ label, value, sub, color, accent, idx = 0 }) {
   const a = accent || C.teal;
   return (
-    <div className="rounded-xl shadow-sm p-4 border"
+    <div className="rounded-xl shadow-sm p-4 border az-card az-rise"
          style={{ background: `linear-gradient(135deg, ${tint(a)}, #ffffff 65%)`,
-                  borderColor: a + '33', borderTop: `3px solid ${a}` }}>
+                  borderColor: a + '33', borderTop: `3px solid ${a}`,
+                  animationDelay: `${Math.min(idx * 60, 420)}ms` }}>
       <div className="text-xs font-medium" style={{ color: a }}>{label}</div>
       <div className="text-xl font-bold" style={{ color: color || C.ink }}>{value}</div>
       {sub && <div className="text-[11px] mt-0.5" style={{ color: '#78716c' }}>{sub}</div>}
@@ -89,7 +117,7 @@ function LeaderTable({ title, rows, cols, note, defaultSort, onRowClick, maxRows
   const shown = showAll ? sorted : sorted.slice(0, maxRows);
 
   return (
-    <div className="bg-white rounded-xl shadow-sm p-4 overflow-x-auto border"
+    <div className="bg-white rounded-xl shadow-sm p-4 overflow-x-auto border az-panel az-rise"
          style={{ borderColor: a + '2e', borderLeft: `4px solid ${a}` }}>
       <div className="font-semibold text-sm flex items-center gap-2" style={{ color: C.ink }}>
         <span className="inline-block w-2 h-2 rounded-full" style={{ background: a }} />
@@ -115,7 +143,7 @@ function LeaderTable({ title, rows, cols, note, defaultSort, onRowClick, maxRows
           {shown.length === 0 && <tr><td colSpan={cols.length} className="py-3 text-gray-400">No data</td></tr>}
           {shown.map((r, i) => (
             <tr key={i}
-                className={`border-b border-gray-50 ${onRowClick ? 'cursor-pointer hover:bg-blue-50' : ''}`}
+                className={`border-b border-gray-50 az-row ${onRowClick ? 'cursor-pointer hover:bg-blue-50' : ''}`}
                 onClick={onRowClick ? () => onRowClick(r) : undefined}>
               {cols.map(c => (
                 <td key={c.key} className={`py-1.5 pr-3 ${c.right ? 'text-right tabular-nums' : ''}`}
@@ -159,8 +187,8 @@ function DrillPanel({ drill, from, to, dp, route, tanker, onClose }) {
   const sum = k => rows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center p-4 md:p-10" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-5xl max-h-[85vh] overflow-auto p-5"
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center p-4 md:p-10 az-overlay" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-5xl max-h-[85vh] overflow-auto p-5 az-modal"
            onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-1">
           <div>
@@ -260,7 +288,7 @@ function AlertsRow({ from, to, dp, route, tanker }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {cards.map(c => (
           <button key={c.key} onClick={() => setOpen(o => o === c.key ? null : c.key)}
-            className="rounded-xl p-3 text-left border transition-shadow hover:shadow-md"
+            className="rounded-xl p-3 text-left border az-card az-rise"
             style={{ background: c.n === 0 ? tint(C.gain) : tint(C.loss),
                      borderColor: (c.n === 0 ? C.gain : C.loss) + '55' }}>
             <div className="flex items-center justify-between">
@@ -275,11 +303,11 @@ function AlertsRow({ from, to, dp, route, tanker }) {
         const c = cards.find(x => x.key === open);
         if (!c || !c.rows.length) return null;
         return (
-          <div className="bg-white rounded-xl border p-3" style={{ borderColor: C.loss + '40' }}>
+          <div className="bg-white rounded-xl border p-3 az-rise" style={{ borderColor: C.loss + '40' }}>
             <table className="w-full text-xs">
               <tbody>
                 {c.rows.map((r, i) => (
-                  <tr key={i} className="border-b border-gray-50 hover:bg-red-50 cursor-pointer"
+                  <tr key={i} className="border-b border-gray-50 hover:bg-red-50 cursor-pointer az-row"
                       onClick={() => navigate(`/execution/${r.execution_id}`)}>
                     <td className="py-1.5 pr-3">{r.date}</td>
                     <td className="py-1.5 pr-3 font-semibold" style={{ color: C.violet }}>{r.tanker_number || '—'}</td>
@@ -382,7 +410,8 @@ export default function Analytics() {
 
   return (
     <div className="p-4 space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
+      <MotionStyles />
+      <div className="flex flex-wrap items-end gap-3 az-rise">
         <div>
           <h2 className="page-title">Analytics</h2>
           <p className="text-xs text-gray-500">
@@ -398,7 +427,7 @@ export default function Analytics() {
         <div className="flex-1" />
         {presets.map(p => (
           <button key={p.label}
-            className="text-xs px-2.5 py-1.5 rounded-lg border"
+            className="text-xs px-2.5 py-1.5 rounded-lg border az-btn"
             style={from === p.from && to === p.to
               ? { background: C.teal, color: '#fff', borderColor: C.teal }
               : { background: '#fff', color: '#57534e', borderColor: '#e7e5e4' }}
@@ -420,7 +449,7 @@ export default function Analytics() {
           <option value="">All tankers</option>
           {(tankersList || []).map(t2 => <option key={t2.id} value={t2.tanker_number}>{t2.tanker_number}</option>)}
         </select>
-        <button className="text-xs px-2.5 py-1.5 rounded-lg text-white flex items-center gap-1.5"
+        <button className="text-xs px-2.5 py-1.5 rounded-lg text-white flex items-center gap-1.5 az-btn"
                 style={{ background: C.teal }} onClick={exportExcel}>
           <Download size={12}/> Excel
         </button>
@@ -442,11 +471,11 @@ export default function Analytics() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Kpi label="Trips" value={nf(k?.trips)} accent={C.violet}
+        <Kpi idx={0} label="Trips" value={nf(k?.trips)} accent={C.violet}
              sub={`${nf(k?.acked_trips)} acknowledged${pk?.trips != null ? ` · ${nf(pk.trips)} prev period` : ''}`} />
-        <Kpi label="Milk Handled (Dispatch)" value={`${nf(k?.disp?.kgs)} Kg`} accent={C.amber}
+        <Kpi idx={1} label="Milk Handled (Dispatch)" value={`${nf(k?.disp?.kgs)} Kg`} accent={C.amber}
              sub={delta(k?.disp?.kgs, pk?.disp?.kgs) || `${nf(k?.disp?.litres)} L`} />
-        <Kpi label="Delivered (Ack)" value={`${nf(k?.ack?.kgs)} Kg`} accent={C.teal}
+        <Kpi idx={2} label="Delivered (Ack)" value={`${nf(k?.ack?.kgs)} Kg`} accent={C.teal}
              sub={delta(k?.ack?.kgs, pk?.ack?.kgs) || `${nf(k?.ack?.litres)} L`} />
         <Kpi label="Qty Gain / Loss" value={`${nf(k?.qty_gain_kgs)} Kg`}
              color={qtyStatusColor(k?.qty_gain_kgs, k?.rmrd?.kgs)} accent={qtyStatusColor(k?.qty_gain_kgs, k?.rmrd?.kgs)}
@@ -642,7 +671,7 @@ export default function Analytics() {
       />
 
       {/* Daily trend — click a bar to open that day's trips */}
-      <div className="bg-white rounded-xl shadow-sm p-4 border"
+      <div className="bg-white rounded-xl shadow-sm p-4 border az-panel az-rise"
            style={{ borderColor: C.violet + '2e', borderLeft: `4px solid ${C.violet}` }}>
         <div className="font-semibold text-sm mb-2 flex items-center gap-2" style={{ color: C.ink }}>
           <span className="inline-block w-2 h-2 rounded-full" style={{ background: C.violet }} />
