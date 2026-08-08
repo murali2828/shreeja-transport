@@ -461,6 +461,53 @@ export default function Analytics() {
              sub={data?.ops?.top_requesters?.slice(0, 3).map(t2 => `${t2.name} (${t2.n})`).join(' · ') || 'no change requests'} />
       </div>
 
+      {/* Distance & collection efficiency */}
+      {(() => {
+        const tk = (data?.tankers || []).filter(t2 => (t2.km ?? 0) > 0);
+        const hi = tk.length ? tk.reduce((a, b) => (b.km > a.km ? b : a)) : null;
+        const lo = tk.length ? tk.reduce((a, b) => (b.km < a.km ? b : a)) : null;
+        const avgKm = tk.length ? tk.reduce((s2, t2) => s2 + t2.km, 0) / tk.length : null;
+        return (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            <Kpi label="Total KM Travelled" accent={C.teal}
+                 value={`${nf(k?.km)} km`}
+                 sub={k?.km_per_trip != null ? `${nf(k.km_per_trip, 1)} km avg / trip` : ''} />
+            <Kpi label="Milk Collected / KM" accent={C.gain}
+                 value={k?.l_per_km != null ? `${nf(k.l_per_km, 1)} L/km` : '—'}
+                 sub={`${nf(k?.disp?.litres)} L over ${nf(k?.km)} km`} />
+            <Kpi label="Highest KM Tanker" accent={C.violet}
+                 value={hi ? hi.tanker_number : '—'}
+                 sub={hi ? `${nf(hi.km)} km · ${nf(hi.trips)} trips` : 'no km recorded'} />
+            <Kpi label="Lowest KM Tanker" accent={C.amber}
+                 value={lo ? lo.tanker_number : '—'}
+                 sub={lo ? `${nf(lo.km)} km · ${nf(lo.trips)} trips` : 'no km recorded'} />
+            <Kpi label="Average KM / Tanker" accent={C.berry}
+                 value={avgKm != null ? `${nf(avgKm)} km` : '—'}
+                 sub={`across ${nf(tk.length)} tankers with km data`} />
+          </div>
+        );
+      })()}
+
+      {/* Tanker distance & efficiency leaderboard */}
+      <LeaderTable
+        title="Tanker KM & Collection Efficiency"
+        accent={C.teal}
+        note="KM = actual km (calculated when not entered) · Milk = dispatch quantity · click a tanker for its trips"
+        rows={(data?.tankers || []).filter(t2 => (t2.km ?? 0) > 0)}
+        defaultSort={{ key: 'km', dir: 'desc' }}
+        onRowClick={r => setDrill({ type: 'tanker', value: r.tanker_number, label: `Trips of tanker ${r.tanker_number}` })}
+        cols={[
+          { key: 'tanker_number', label: 'Tanker' },
+          { key: 'trips', label: 'Trips', right: true },
+          { key: 'km', label: 'Total KM', right: true, fmt: v => nf(v) },
+          { key: 'km_per_trip', label: 'KM / Trip', right: true, fmt: v => nf(v, 1) },
+          { key: 'disp_litres_show', label: 'Milk Collected (L)', right: true,
+            sortVal: r => r.disp?.litres, fmt: (_, r) => nf(r.disp?.litres) },
+          { key: 'l_per_km', label: 'L / KM', right: true, fmt: v => nf(v, 1) },
+          { key: 'trip_cost', label: 'Cost (₹)', right: true, fmt: v => v ? nf(v) : '—' },
+        ]}
+      />
+
       {/* Daily trend — click a bar to open that day's trips */}
       <div className="bg-white rounded-xl shadow-sm p-4 border"
            style={{ borderColor: C.violet + '2e', borderLeft: `4px solid ${C.violet}` }}>

@@ -31,6 +31,7 @@ const baseTripsCte = `
     SELECT tp.id AS plan_id, tp.plan_for_date, tp.delivery_point_id,
            te.id AS execution_id, te.status AS exec_status, te.updated_at,
            t.id AS tanker_id, t.tanker_number, t.capacity_litres,
+           COALESCE(te.actual_km, te.calculated_km, 0) AS km,
            COALESCE(t.per_km_rate,0) * COALESCE(te.actual_km, te.calculated_km, 0) AS trip_cost,
            rm.route_name, dp.name AS delivery_point,
            EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id=te.id) AS has_ack
@@ -149,7 +150,8 @@ const aggSelect = `
   SUM(rmrd_kg_fat+rmrd_kg_snf) FILTER (WHERE has_ack) AS ts_base,
   SUM(disp_kgs - rmrd_kgs) AS stage_transit_kgs,
   SUM(ack_kgs  - disp_kgs) FILTER (WHERE has_ack) AS stage_unload_kgs,
-  SUM(trip_cost) AS trip_cost`;
+  SUM(trip_cost) AS trip_cost,
+  SUM(km) AS km`;
 
 const mapAgg = r => ({
   trips: r.trips, acked_trips: r.acked_trips,
@@ -170,6 +172,10 @@ const mapAgg = r => ({
     ? rN(parseFloat(r.ack_kg_snf)/parseFloat(r.ack_kgs)*100 - parseFloat(r.rmrd_kg_snf)/parseFloat(r.rmrd_kgs)*100, 3) : null,
   trip_cost: rN(r.trip_cost),
   cost_per_1000l: parseFloat(r.disp_litres) > 0 ? rN(parseFloat(r.trip_cost) / parseFloat(r.disp_litres) * 1000) : null,
+  km: rN(r.km, 1),
+  km_per_trip: r.trips > 0 ? rN(parseFloat(r.km) / r.trips, 1) : null,
+  // Collection efficiency: litres collected (dispatch) per km run
+  l_per_km: parseFloat(r.km) > 0 ? rN(parseFloat(r.disp_litres) / parseFloat(r.km), 1) : null,
 });
 
 async function buildSummary(params) {
