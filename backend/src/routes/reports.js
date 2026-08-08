@@ -404,6 +404,9 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
     });
   });
 
+  // Plant-wise TS variation block for the same day, two rows below the table.
+  renderPlantWiseBlock(ws, rows, totRowIdx + 3, reportDate);
+
   return ws;
 }
 
@@ -615,13 +618,13 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
   });
 }
 
-// 'Plant Wise TS Variation' sheet — the report date's trips consolidated by
-// starting point → delivery point (layout per the sample "Daily Milk
-// Procurement Total Solid variation Report", measures in the portal's TS
-// terminology): one section per delivery point, each row a trip with
-// As per Dispatch / As per RMRD / As per Acknowledgement measure groups,
-// a green subtotal per section and a yellow grand TOTAL.
-function addPlantConsolidatedSheet(wb, rows, reportDate) {
+// Plant-wise TS variation block, rendered INTO a day sheet below its TS table
+// (layout per the sample "Daily Milk Procurement Total Solid variation
+// Report", measures in the portal's TS terminology): one section per delivery
+// point, each row a trip with As per Dispatch / As per RMRD / As per
+// Acknowledgement measure groups, a green subtotal per section and a yellow
+// grand TOTAL. `top` is the first sheet row the block may use.
+function renderPlantWiseBlock(ws, rows, top, reportDate) {
   const GROUPS = [
     { title: 'As per Dispatch', fill: 'FFDCFCE7',
       keys: ['disp_litres','disp_kgs','disp_fat','disp_snf','disp_kg_fat','disp_kg_snf'] },
@@ -634,41 +637,38 @@ function addPlantConsolidatedSheet(wb, rows, reportDate) {
   const INFO = ['S.No','Started From','Receiver','Milk Lifting Date','Ack Date','Tanker Number','Route Name'];
   const NCOLS = INFO.length + GROUPS.length * MEAS_HEADS.length;
 
-  const ws = wb.addWorksheet('Plant Wise TS Variation');
-  ws.columns = [{ width: 6 }, { width: 18 }, { width: 18 }, { width: 14 }, { width: 12 }, { width: 16 }, { width: 20 },
-    ...Array(NCOLS - INFO.length).fill({ width: 11 })];
-
-  ws.mergeCells(1, 1, 1, NCOLS);
-  const t = ws.getCell(1, 1);
+  ws.mergeCells(top, 1, top, NCOLS);
+  const t = ws.getCell(top, 1);
   t.value = `Daily Milk Procurement Total Solid Variation Report On ${reportDate}`;
   t.font = { bold: true, size: 13, color: { argb: 'FF003A6B' } };
-  ws.getRow(1).height = 22;
+  ws.getRow(top).height = 22;
+  const h1 = top + 1, h2 = top + 2;
 
   INFO.forEach((h, i) => {
-    ws.mergeCells(2, i + 1, 3, i + 1);
-    const c = ws.getCell(2, i + 1);
+    ws.mergeCells(h1, i + 1, h2, i + 1);
+    const c = ws.getCell(h1, i + 1);
     c.value = h; c.font = { bold: true, color: { argb: HEADER_TEXT } };
     c.fill = fillOf('FFF3F4F6'); c.border = BORDER;
     c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-    ws.getCell(3, i + 1).border = BORDER;
+    ws.getCell(h2, i + 1).border = BORDER;
   });
   let col = INFO.length + 1;
   for (const g of GROUPS) {
     g.start = col;
-    ws.mergeCells(2, col, 2, col + MEAS_HEADS.length - 1);
-    const gc = ws.getCell(2, col);
+    ws.mergeCells(h1, col, h1, col + MEAS_HEADS.length - 1);
+    const gc = ws.getCell(h1, col);
     gc.value = g.title; gc.font = { bold: true, color: { argb: HEADER_TEXT } };
     gc.fill = fillOf(g.fill); gc.alignment = { vertical: 'middle', horizontal: 'center' };
     MEAS_HEADS.forEach((h, i) => {
-      const c = ws.getCell(3, col + i);
+      const c = ws.getCell(h2, col + i);
       c.value = h; c.font = { bold: true, size: 10, color: { argb: HEADER_TEXT } };
       c.fill = fillOf(g.fill); c.border = BORDER;
       c.alignment = { vertical: 'middle', horizontal: 'center' };
-      ws.getCell(2, col + i).border = BORDER;
+      ws.getCell(h1, col + i).border = BORDER;
     });
     col += MEAS_HEADS.length;
   }
-  ws.getRow(2).height = 20;
+  ws.getRow(h1).height = 20;
 
   // Group the day's rows by delivery point (rows arrive sorted by it already).
   const byPlant = new Map();
@@ -693,7 +693,7 @@ function addPlantConsolidatedSheet(wb, rows, reportDate) {
     sums(grp, g.keys[4]), sums(grp, g.keys[5]),
   ]);
 
-  let ri = 4;
+  let ri = top + 3;
   for (const [plant, grp] of byPlant) {
     // Section band: delivery point name
     ws.mergeCells(ri, 1, ri, NCOLS);
@@ -753,9 +753,11 @@ async function buildTsWorkbookFull(reportDate, basis = 'plan') {
   for (const day of days) addTsSheet(wb, rowsByDay[day], ddmm(day), day, basis);
   await addMilkShiftingSheet(wb, days);
   addConsolidatedSheet(wb, days, rowsByDay);
-  addPlantConsolidatedSheet(wb, rowsByDay[reportDate], reportDate);
   const breakup = await buildBmcuBreakup(reportDate);
   addBmcuBreakupSheet(wb, breakup);
+  // Open on the report date's day sheet (e.g. '03.08' when run for 03.08.2026).
+  wb.views = [{ x: 0, y: 0, width: 20000, height: 20000,
+    firstSheet: 0, activeTab: days.indexOf(reportDate), visibility: 'visible' }];
   return { wb, rows: rowsByDay[reportDate], breakup };
 }
 
