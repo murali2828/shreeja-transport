@@ -20,16 +20,20 @@ const monthStart = () => { const d = new Date(); d.setDate(1); return iso(d); };
 const nf = (v, d = 0) => v == null ? '—'
   : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 
-// Dashboard palette (validated: gain/loss/line pass CVD + contrast checks).
-// Accents are decorative card/panel identities; gain & loss are semantic and
-// reserved — never reused as accents.
+// Dashboard palette — Claude reference hues (validated: gain/loss/line pass
+// CVD + contrast checks; gains/losses always carry a ± sign as secondary
+// encoding). Accents are decorative card/panel identities; gain & loss are
+// semantic and reserved — never reused as accents.
 const C = {
-  gain: '#0e8a5f', loss: '#d92d20', line: '#7c3aed', neutral: '#8a8577',
-  teal: '#0f766e', amber: '#b45309', violet: '#6d28d9', berry: '#a21caf',
-  ink: '#1c1917', paper: '#fdfcfa',
+  gain: '#008300', loss: '#e34948', line: '#2a78d6', neutral: '#8a8577',
+  teal: '#cc785c',   // clay — primary accent
+  amber: '#c98500',  // deep yellow
+  violet: '#4a3aa7',
+  berry: '#2a78d6',  // blue
+  ink: '#191919', paper: '#f0eee6',
 };
 const gainColor = v => v == null ? C.neutral : v < 0 ? C.loss : C.gain;
-const AMBER = '#b45309';
+const AMBER = '#c98500';
 // Spec thresholds: TS% green >= 0, amber 0..-0.15%, red < -0.15%;
 // qty green >= 0, amber within -0.1% of RMRD kgs, red beyond.
 const tsStatusColor = pct => pct == null ? C.neutral : pct >= 0 ? C.gain : pct >= -0.15 ? AMBER : C.loss;
