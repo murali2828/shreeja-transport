@@ -635,16 +635,22 @@ export default function Analytics() {
 
       {/* MBRT risk — multi-shift lifting degrades MBRT (methylene blue
           reduction time): older mixed milk carries higher bacterial load,
-          which shortens the MBRT reading at the plant. */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          which shortens the MBRT reading at the plant. Leftover-aware: a lift
+          after a Left Over inherits the old silo milk (+1 effective shift,
+          age extends back). */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         <Kpi label="MBRT Risk — Avg Shifts / Lift" accent={shiftsColor(fresh2?.kpi?.avg_shifts)}
              color={shiftsColor(fresh2?.kpi?.avg_shifts)}
              value={fresh2?.kpi?.avg_shifts != null ? nf(fresh2.kpi.avg_shifts, 2) : '—'}
-             sub={`ideal 1.00 (single shift) · ${nf(fresh2?.kpi?.collections)} BMCU lifts`} />
+             sub={`ideal 1.00 · incl. leftover carry-over · ${nf(fresh2?.kpi?.collections)} lifts`} />
         <Kpi label="Good MBRT Lifts" accent={C.gain}
              color={fresh2?.kpi?.fresh_pct != null && fresh2.kpi.fresh_pct < 50 ? C.loss : C.gain}
              value={fresh2?.kpi?.fresh_pct != null ? `${nf(fresh2.kpi.fresh_pct, 1)} %` : '—'}
-             sub="single-shift lifts — no old milk mixed" />
+             sub="single fresh shift — no old or leftover milk mixed" />
+        <Kpi label="Left Over Milk" accent={fresh2?.kpi?.leftover_lifts ? C.loss : C.gain}
+             color={fresh2?.kpi?.leftover_lifts ? C.loss : C.gain}
+             value={nf(fresh2?.kpi?.leftover_lifts)}
+             sub={`lifts leaving milk in the silo · ${nf(fresh2?.kpi?.leftover_litres)} L stays back to mix`} />
         <Kpi label="High MBRT-Risk Lifts" accent={fresh2?.kpi?.three_plus ? C.loss : C.gain}
              color={fresh2?.kpi?.three_plus ? C.loss : C.gain}
              value={nf(fresh2?.kpi?.three_plus)}
@@ -658,7 +664,7 @@ export default function Analytics() {
       <LeaderTable
         title="BMCU MBRT Risk (worst first — most shifts mixed per lift)"
         accent={C.berry}
-        note="MBRT (methylene blue reduction time) falls as older milk mixes in — each extra shift held at the BMCU raises bacterial load · age = days between oldest shift and lifting · click a BMCU for its trips"
+        note="MBRT falls as older milk mixes in — extra shifts held AND leftover milk both count: a lift after a Left Over inherits the old silo milk (+1 shift, age extends back) · click a BMCU for its trips"
         rows={fresh2?.bmcus || []}
         defaultSort={{ key: 'avg_shifts', dir: 'desc' }}
         onRowClick={r => setDrill({ type: 'bmcu', value: r.bmcu_code, label: `${r.bmcu_code} — ${r.bmcu_name}` })}
@@ -673,6 +679,11 @@ export default function Analytics() {
             fmt: v => <span style={{ color: v >= 50 ? C.gain : C.loss, fontWeight: 600 }}>{nf(v, 1)} %</span> },
           { key: 'three_plus', label: 'High-Risk Lifts (3+)', right: true,
             fmt: v => <span style={{ color: v > 0 ? C.loss : undefined }}>{nf(v)}</span> },
+          { key: 'leftover_lifts', label: 'Left Over Lifts', right: true,
+            fmt: v => <span style={{ color: v > 0 ? C.loss : undefined }}>{nf(v)}</span> },
+          { key: 'leftover_litres', label: 'Left Over (L)', right: true, fmt: v => nf(v) },
+          { key: 'carried_in', label: 'Lifts w/ Old Milk', right: true,
+            fmt: v => <span style={{ color: v > 0 ? AMBER : undefined }}>{nf(v)}</span> },
           { key: 'avg_age_days', label: 'Avg Age (days)', right: true, fmt: v => nf(v, 1) },
           { key: 'max_age_days', label: 'Max Age (days)', right: true },
           { key: 'rmrd_litres', label: 'RMRD (L)', right: true, fmt: v => nf(v) },
