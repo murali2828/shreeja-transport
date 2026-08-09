@@ -85,13 +85,16 @@ const shiftsColor = v => v == null ? C.neutral : v <= 1.5 ? C.gain : v <= 2.5 ? 
 function Kpi({ label, value, sub, color, accent, idx = 0 }) {
   const a = accent || C.teal;
   return (
-    <div className="rounded-xl shadow-sm p-4 border az-card az-rise"
-         style={{ background: `linear-gradient(135deg, ${tint(a)}, #ffffff 65%)`,
-                  borderColor: a + '33', borderTop: `3px solid ${a}`,
+    <div className="rounded-xl shadow-sm overflow-hidden border az-card az-rise"
+         style={{ background: '#ffffff', borderColor: a + '55',
                   animationDelay: `${Math.min(idx * 60, 420)}ms` }}>
-      <div className="text-xs font-medium" style={{ color: a }}>{label}</div>
-      <div className="text-xl font-bold" style={{ color: color || C.ink }}>{value}</div>
-      {sub && <div className="text-[11px] mt-0.5" style={{ color: '#78716c' }}>{sub}</div>}
+      <div className="px-3 py-1.5 text-xs font-bold text-white" style={{ background: a }}>
+        {label}
+      </div>
+      <div className="px-3 py-2.5">
+        <div className="text-xl font-bold leading-tight" style={{ color: color || C.ink }}>{value}</div>
+        {sub && <div className="text-[11px] mt-0.5" style={{ color: '#57534e' }}>{sub}</div>}
+      </div>
     </div>
   );
 }
