@@ -626,30 +626,32 @@ export default function Analytics() {
         ]}
       />
 
-      {/* Milk freshness — shifts of milk lifted per BMCU collection */}
+      {/* MBRT risk — multi-shift lifting degrades MBRT (methylene blue
+          reduction time): older mixed milk carries higher bacterial load,
+          which shortens the MBRT reading at the plant. */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Kpi label="Avg Shifts / Collection" accent={shiftsColor(fresh2?.kpi?.avg_shifts)}
+        <Kpi label="MBRT Risk — Avg Shifts / Lift" accent={shiftsColor(fresh2?.kpi?.avg_shifts)}
              color={shiftsColor(fresh2?.kpi?.avg_shifts)}
              value={fresh2?.kpi?.avg_shifts != null ? nf(fresh2.kpi.avg_shifts, 2) : '—'}
-             sub={`ideal 1.00 · ${nf(fresh2?.kpi?.collections)} BMCU collections`} />
-        <Kpi label="Fresh Collections" accent={C.gain}
+             sub={`ideal 1.00 (single shift) · ${nf(fresh2?.kpi?.collections)} BMCU lifts`} />
+        <Kpi label="Good MBRT Lifts" accent={C.gain}
              color={fresh2?.kpi?.fresh_pct != null && fresh2.kpi.fresh_pct < 50 ? C.loss : C.gain}
              value={fresh2?.kpi?.fresh_pct != null ? `${nf(fresh2.kpi.fresh_pct, 1)} %` : '—'}
-             sub="single-shift lifts (no mixing)" />
-        <Kpi label="3+ Shift Lifts" accent={fresh2?.kpi?.three_plus ? C.loss : C.gain}
+             sub="single-shift lifts — no old milk mixed" />
+        <Kpi label="High MBRT-Risk Lifts" accent={fresh2?.kpi?.three_plus ? C.loss : C.gain}
              color={fresh2?.kpi?.three_plus ? C.loss : C.gain}
              value={nf(fresh2?.kpi?.three_plus)}
-             sub="collections mixing 3 or more shifts" />
+             sub="3+ shifts mixed — MBRT degrades sharply" />
         <Kpi label="Avg Milk Age at Lifting" accent={C.violet}
              color={fresh2?.kpi?.avg_age_days != null && fresh2.kpi.avg_age_days > 1 ? C.loss : C.ink}
              value={fresh2?.kpi?.avg_age_days != null ? `${nf(fresh2.kpi.avg_age_days, 1)} days` : '—'}
-             sub="lifting date − oldest shift in the load" />
+             sub="older milk ⇒ shorter MBRT at the plant" />
       </div>
 
       <LeaderTable
-        title="BMCU Milk Freshness (worst first — most shifts held per lift)"
+        title="BMCU MBRT Risk (worst first — most shifts mixed per lift)"
         accent={C.berry}
-        note="Shifts / collection = RMRD shift rows lifted together · age = days between oldest shift and lifting · click a BMCU for its trips"
+        note="MBRT (methylene blue reduction time) falls as older milk mixes in — each extra shift held at the BMCU raises bacterial load · age = days between oldest shift and lifting · click a BMCU for its trips"
         rows={fresh2?.bmcus || []}
         defaultSort={{ key: 'avg_shifts', dir: 'desc' }}
         onRowClick={r => setDrill({ type: 'bmcu', value: r.bmcu_code, label: `${r.bmcu_code} — ${r.bmcu_name}` })}
@@ -657,12 +659,12 @@ export default function Analytics() {
           { key: 'bmcu_code', label: 'Code' },
           { key: 'bmcu_name', label: 'BMCU' },
           { key: 'collections', label: 'Collections', right: true },
-          { key: 'avg_shifts', label: 'Avg Shifts / Lift', right: true,
+          { key: 'avg_shifts', label: 'Avg Shifts Mixed / Lift', right: true,
             fmt: v => <span style={{ color: shiftsColor(v), fontWeight: 700 }}>{nf(v, 2)}</span> },
           { key: 'max_shifts', label: 'Max Shifts', right: true },
-          { key: 'single_shift_pct', label: 'Fresh Lifts %', right: true,
+          { key: 'single_shift_pct', label: 'Good MBRT Lifts %', right: true,
             fmt: v => <span style={{ color: v >= 50 ? C.gain : C.loss, fontWeight: 600 }}>{nf(v, 1)} %</span> },
-          { key: 'three_plus', label: '3+ Shift Lifts', right: true,
+          { key: 'three_plus', label: 'High-Risk Lifts (3+)', right: true,
             fmt: v => <span style={{ color: v > 0 ? C.loss : undefined }}>{nf(v)}</span> },
           { key: 'avg_age_days', label: 'Avg Age (days)', right: true, fmt: v => nf(v, 1) },
           { key: 'max_age_days', label: 'Max Age (days)', right: true },
