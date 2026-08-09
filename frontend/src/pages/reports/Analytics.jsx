@@ -642,7 +642,7 @@ export default function Analytics() {
         <Kpi label="MBRT Risk — Avg Shifts / Lift" accent={shiftsColor(fresh2?.kpi?.avg_shifts)}
              color={shiftsColor(fresh2?.kpi?.avg_shifts)}
              value={fresh2?.kpi?.avg_shifts != null ? nf(fresh2.kpi.avg_shifts, 2) : '—'}
-             sub={`ideal 1.00 · incl. leftover carry-over · ${nf(fresh2?.kpi?.collections)} lifts`} />
+             sub={`ideal 1.00 · leftover carry-over on actual shift data · ${nf(fresh2?.kpi?.collections)} lifts`} />
         <Kpi label="Good MBRT Lifts" accent={C.gain}
              color={fresh2?.kpi?.fresh_pct != null && fresh2.kpi.fresh_pct < 50 ? C.loss : C.gain}
              value={fresh2?.kpi?.fresh_pct != null ? `${nf(fresh2.kpi.fresh_pct, 1)} %` : '—'}
@@ -664,7 +664,7 @@ export default function Analytics() {
       <LeaderTable
         title="BMCU MBRT Risk (worst first — most shifts mixed per lift)"
         accent={C.berry}
-        note="MBRT falls as older milk mixes in — extra shifts held AND leftover milk both count: a lift after a Left Over inherits the old silo milk (+1 shift, age extends back) · click a BMCU for its trips"
+        note="MBRT falls as older milk mixes in — leftover milk carries the ACTUAL shifts and age of what stayed in the silo (chained while leftovers continue), so a lift after a Left Over inherits the real old-milk composition · click a BMCU for its trips"
         rows={fresh2?.bmcus || []}
         defaultSort={{ key: 'avg_shifts', dir: 'desc' }}
         onRowClick={r => setDrill({ type: 'bmcu', value: r.bmcu_code, label: `${r.bmcu_code} — ${r.bmcu_name}` })}

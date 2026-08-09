@@ -606,93 +606,112 @@ router.get('/utilisation', authenticate, async (req, res) => {
 // ─── MBRT risk: shifts of milk mixed per BMCU lift, leftover-aware ───────────
 // Ideally a tanker lifts ONE shift's milk from a BMCU (fresh). Each extra
 // shift sitting in the BMCU at lifting time means fresh milk mixed with older
-// milk. A LEFT OVER entry means the silo was NOT emptied — so the NEXT lift
-// at that BMCU inherits old milk even if it shows a single shift row:
-//   effective shifts = shift rows (+1 when the previous lift left milk over)
-//   effective oldest = extends back to the previous lift's oldest shift
+// milk. A LEFT OVER entry means the silo was NOT emptied — the residue is a
+// blend of everything that was in the silo at that lift. The next lift
+// therefore inherits, on an ACTUAL basis (from the entered shift rows):
+//   effective shifts = own shift rows + previous lift's effective shifts
+//                      (chained while leftovers continue)
+//   effective oldest = the oldest shift date still represented in the silo
 // Milk age = lifting date − effective oldest milk date.
 router.get('/freshness', authenticate, async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
   try {
     const params = filterParams(req);
-    const r = await query(`WITH ${baseTripsCte},
-      collections AS (
-        SELECT teb.execution_id, teb.seq_no, teb.bmcu_id,
-               b.bmcu_code, b.bmcu_name, tr.plan_for_date,
-               COUNT(s.*)::int AS shifts,
-               SUM(s.rmrd_qty) AS rmrd_litres,
-               MIN(s.milk_date) AS oldest_milk_date,
-               COALESCE(lo.litres, 0) AS leftover_litres
-        FROM trip_execution_bmcus teb
-        JOIN trips tr ON tr.execution_id = teb.execution_id
-        JOIN bmcus b  ON b.id = teb.bmcu_id
-        LEFT JOIN trip_execution_bmcu_shifts s
-          ON s.execution_id = teb.execution_id AND s.bmcu_seq_no = teb.seq_no
-        LEFT JOIN LATERAL (
-          SELECT SUM(e.qty_litres) AS litres
-          FROM trip_execution_bmcu_entries e
-          WHERE e.execution_id = teb.execution_id AND e.bmcu_seq_no = teb.seq_no
-            AND e.kind = 'balance_milk' AND e.category = 'Left Over milk'
-        ) lo ON TRUE
-        WHERE teb.is_deleted = FALSE
-        GROUP BY teb.execution_id, teb.seq_no, teb.bmcu_id, b.bmcu_code, b.bmcu_name,
-                 tr.plan_for_date, lo.litres
-        HAVING COUNT(s.*) > 0
-      ),
-      seq AS (
-        SELECT c.*,
-               LAG(leftover_litres)  OVER w AS prev_leftover,
-               LAG(oldest_milk_date) OVER w AS prev_oldest
-        FROM collections c
-        WINDOW w AS (PARTITION BY bmcu_id ORDER BY plan_for_date, execution_id, seq_no)
-      ),
-      eff AS (
-        SELECT *,
-          shifts + CASE WHEN COALESCE(prev_leftover, 0) > 0 THEN 1 ELSE 0 END AS eff_shifts,
-          CASE WHEN COALESCE(prev_leftover, 0) > 0
-               THEN LEAST(oldest_milk_date, COALESCE(prev_oldest, oldest_milk_date))
-               ELSE oldest_milk_date END AS eff_oldest
-        FROM seq
-      )
-      SELECT bmcu_code, bmcu_name,
-        COUNT(*)::int AS collections,
-        AVG(eff_shifts) AS avg_shifts,
-        MAX(eff_shifts)::int AS max_shifts,
-        COUNT(*) FILTER (WHERE eff_shifts = 1)::int AS single_shift,
-        COUNT(*) FILTER (WHERE eff_shifts >= 3)::int AS three_plus,
-        COUNT(*) FILTER (WHERE leftover_litres > 0)::int AS leftover_lifts,
-        SUM(leftover_litres) AS leftover_litres,
-        COUNT(*) FILTER (WHERE COALESCE(prev_leftover, 0) > 0)::int AS carried_in,
-        SUM(rmrd_litres) AS rmrd_litres,
-        AVG(GREATEST(0, plan_for_date - eff_oldest)) AS avg_age_days,
-        MAX(GREATEST(0, plan_for_date - eff_oldest))::int AS max_age_days
-      FROM eff
-      GROUP BY bmcu_code, bmcu_name
-      ORDER BY AVG(eff_shifts) DESC`, params);
+    const r = await query(`WITH ${baseTripsCte}
+      SELECT teb.execution_id, teb.seq_no, teb.bmcu_id,
+             b.bmcu_code, b.bmcu_name, tr.plan_for_date::text AS plan_for_date,
+             COUNT(s.*)::int AS shifts,
+             SUM(s.rmrd_qty) AS rmrd_litres,
+             MIN(s.milk_date)::text AS oldest_milk_date,
+             COALESCE(lo.litres, 0) AS leftover_litres
+      FROM trip_execution_bmcus teb
+      JOIN trips tr ON tr.execution_id = teb.execution_id
+      JOIN bmcus b  ON b.id = teb.bmcu_id
+      LEFT JOIN trip_execution_bmcu_shifts s
+        ON s.execution_id = teb.execution_id AND s.bmcu_seq_no = teb.seq_no
+      LEFT JOIN LATERAL (
+        SELECT SUM(e.qty_litres) AS litres
+        FROM trip_execution_bmcu_entries e
+        WHERE e.execution_id = teb.execution_id AND e.bmcu_seq_no = teb.seq_no
+          AND e.kind = 'balance_milk' AND e.category = 'Left Over milk'
+      ) lo ON TRUE
+      WHERE teb.is_deleted = FALSE
+      GROUP BY teb.execution_id, teb.seq_no, teb.bmcu_id, b.bmcu_code, b.bmcu_name,
+               tr.plan_for_date, lo.litres
+      HAVING COUNT(s.*) > 0
+      ORDER BY teb.bmcu_id, tr.plan_for_date, teb.execution_id, teb.seq_no`, params);
 
-    const rows = r.rows.map(x => ({
-      bmcu_code: x.bmcu_code, bmcu_name: x.bmcu_name,
-      collections: x.collections,
-      avg_shifts: rN(x.avg_shifts, 2), max_shifts: x.max_shifts,
-      single_shift_pct: rN(x.single_shift / x.collections * 100, 1),
-      three_plus: x.three_plus,
-      leftover_lifts: x.leftover_lifts,
-      leftover_litres: rN(x.leftover_litres),
-      carried_in: x.carried_in,
-      rmrd_litres: rN(x.rmrd_litres),
-      avg_age_days: rN(x.avg_age_days, 1), max_age_days: x.max_age_days,
-    }));
+    // Chain the silo state per BMCU in lift order: while leftovers continue,
+    // the carried shift count and oldest date accumulate on an actual basis.
+    const dayDiff = (a, b) => Math.max(0, Math.round((new Date(a) - new Date(b)) / 86400000));
+    const perBmcu = new Map();
+    for (const c of r.rows) {
+      if (!perBmcu.has(c.bmcu_id)) perBmcu.set(c.bmcu_id, []);
+      perBmcu.get(c.bmcu_id).push(c);
+    }
+    const collections = [];
+    for (const lifts of perBmcu.values()) {
+      let carriedShifts = 0, carriedOldest = null;   // silo residue state
+      for (const c of lifts) {
+        const carriedIn = carriedShifts > 0;
+        const effShifts = c.shifts + carriedShifts;
+        const effOldest = carriedOldest && carriedOldest < c.oldest_milk_date
+          ? carriedOldest : c.oldest_milk_date;
+        collections.push({
+          ...c, carried_in: carriedIn, eff_shifts: effShifts,
+          age_days: dayDiff(c.plan_for_date, effOldest),
+        });
+        // Residue after this lift: a blend of everything that was in the silo.
+        if (parseFloat(c.leftover_litres) > 0) {
+          carriedShifts = effShifts;
+          carriedOldest = effOldest;
+        } else {
+          carriedShifts = 0; carriedOldest = null;
+        }
+      }
+    }
 
-    const totC = rows.reduce((s2, x) => s2 + x.collections, 0);
+    // Aggregate per BMCU
+    const byBmcu = new Map();
+    for (const c of collections) {
+      const k = c.bmcu_code;
+      if (!byBmcu.has(k)) byBmcu.set(k, { bmcu_code: c.bmcu_code, bmcu_name: c.bmcu_name,
+        collections: 0, shiftsSum: 0, max_shifts: 0, single_shift: 0, three_plus: 0,
+        leftover_lifts: 0, leftover_litres: 0, carried_in: 0, rmrd_litres: 0,
+        ageSum: 0, max_age_days: 0 });
+      const a = byBmcu.get(k);
+      a.collections++;
+      a.shiftsSum += c.eff_shifts;
+      a.max_shifts = Math.max(a.max_shifts, c.eff_shifts);
+      if (c.eff_shifts === 1) a.single_shift++;
+      if (c.eff_shifts >= 3) a.three_plus++;
+      if (parseFloat(c.leftover_litres) > 0) { a.leftover_lifts++; a.leftover_litres += parseFloat(c.leftover_litres); }
+      if (c.carried_in) a.carried_in++;
+      a.rmrd_litres += parseFloat(c.rmrd_litres) || 0;
+      a.ageSum += c.age_days;
+      a.max_age_days = Math.max(a.max_age_days, c.age_days);
+    }
+    const rows = [...byBmcu.values()].map(a => ({
+      bmcu_code: a.bmcu_code, bmcu_name: a.bmcu_name, collections: a.collections,
+      avg_shifts: rN(a.shiftsSum / a.collections, 2), max_shifts: a.max_shifts,
+      single_shift_pct: rN(a.single_shift / a.collections * 100, 1),
+      three_plus: a.three_plus,
+      leftover_lifts: a.leftover_lifts, leftover_litres: rN(a.leftover_litres),
+      carried_in: a.carried_in,
+      rmrd_litres: rN(a.rmrd_litres),
+      avg_age_days: rN(a.ageSum / a.collections, 1), max_age_days: a.max_age_days,
+    })).sort((x, y) => (y.avg_shifts ?? 0) - (x.avg_shifts ?? 0));
+
+    const totC = collections.length;
     const kpi = {
       collections: totC,
-      avg_shifts: totC ? rN(rows.reduce((s2, x) => s2 + x.avg_shifts * x.collections, 0) / totC, 2) : null,
-      fresh_pct: totC ? rN(rows.reduce((s2, x) => s2 + x.single_shift_pct / 100 * x.collections, 0) / totC * 100, 1) : null,
-      three_plus: rows.reduce((s2, x) => s2 + x.three_plus, 0),
-      leftover_lifts: rows.reduce((s2, x) => s2 + x.leftover_lifts, 0),
-      leftover_litres: rN(rows.reduce((s2, x) => s2 + (x.leftover_litres || 0), 0)),
-      avg_age_days: totC ? rN(rows.reduce((s2, x) => s2 + (x.avg_age_days ?? 0) * x.collections, 0) / totC, 1) : null,
+      avg_shifts: totC ? rN(collections.reduce((s2, c) => s2 + c.eff_shifts, 0) / totC, 2) : null,
+      fresh_pct: totC ? rN(collections.filter(c => c.eff_shifts === 1).length / totC * 100, 1) : null,
+      three_plus: collections.filter(c => c.eff_shifts >= 3).length,
+      leftover_lifts: collections.filter(c => parseFloat(c.leftover_litres) > 0).length,
+      leftover_litres: rN(collections.reduce((s2, c) => s2 + (parseFloat(c.leftover_litres) || 0), 0)),
+      avg_age_days: totC ? rN(collections.reduce((s2, c) => s2 + c.age_days, 0) / totC, 1) : null,
     };
     res.json({ kpi, bmcus: rows });
   } catch (err) {
