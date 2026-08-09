@@ -279,7 +279,7 @@ function AlertsRow({ from, to, dp, route, tanker }) {
   ];
   if (cards.every(c => c.n === 0)) return (
     <div className="rounded-xl p-3 text-xs font-semibold border"
-         style={{ background: tint(C.gain), borderColor: C.gain + '55', color: C.gain }}>
+         style={{ background: '#eefcf4', borderColor: C.gain + '55', color: C.gain }}>
       ✓ No exceptions in this period — no pending acks, over-capacity loads or big TS losses.
     </div>
   );
@@ -289,13 +289,13 @@ function AlertsRow({ from, to, dp, route, tanker }) {
         {cards.map(c => (
           <button key={c.key} onClick={() => setOpen(o => o === c.key ? null : c.key)}
             className="rounded-xl p-3 text-left border az-card az-rise"
-            style={{ background: c.n === 0 ? tint(C.gain) : tint(C.loss),
-                     borderColor: (c.n === 0 ? C.gain : C.loss) + '55' }}>
+            style={{ background: c.n === 0 ? '#eefcf4' : '#fdf0ee',
+                     borderColor: (c.n === 0 ? C.gain : C.loss) + '66' }}>
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold" style={{ color: c.n === 0 ? C.gain : C.loss }}>{c.label}</span>
               <span className="text-lg font-bold" style={{ color: c.n === 0 ? C.gain : C.loss }}>{c.n}</span>
             </div>
-            <div className="text-[11px]" style={{ color: '#78716c' }}>{c.sub}{c.n > 0 && ' · click to view'}</div>
+            <div className="text-[11px] font-medium" style={{ color: '#57534e' }}>{c.sub}{c.n > 0 && ' · click to view'}</div>
           </button>
         ))}
       </div>
@@ -414,12 +414,12 @@ export default function Analytics() {
       <div className="flex flex-wrap items-end gap-3 az-rise">
         <div>
           <h2 className="page-title">Analytics</h2>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs" style={{ color: 'rgba(255,255,255,0.92)' }}>
             Gain / loss analytics · Ack Vs RMRD basis · click any row or bar to drill down
             {isFetching && ' · loading…'}
           </p>
           {freshness && (
-            <p className="text-[11px]" style={{ color: C.teal }}>
+            <p className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.85)' }}>
               Data as of {freshness} (last acknowledgement entry)
             </p>
           )}
@@ -457,7 +457,7 @@ export default function Analytics() {
 
       {isError && (
         <div className="rounded-xl p-3 text-xs font-semibold border flex items-center justify-between"
-             style={{ background: tint(C.loss), borderColor: C.loss + '55', color: C.loss }}>
+             style={{ background: '#fdf0ee', borderColor: C.loss + '66', color: C.loss }}>
           <span>Could not load analytics — the server may be busy or unreachable.</span>
           <button className="px-2.5 py-1 rounded-lg text-white flex items-center gap-1.5"
                   style={{ background: C.loss }} onClick={() => refetch()}>
