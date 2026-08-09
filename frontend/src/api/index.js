@@ -217,6 +217,20 @@ export const getOptimizeSessions   = (p)     => api.get('/optimize/sessions', { 
 export const getOptimizeSession    = (id)    => api.get(`/optimize/sessions/${id}`);
 export const getOptimizeCompare    = (p)     => api.get('/optimize/compare', { params: p });
 
+// ── Tanker Rates ──────────────────────────────────────────────────────────────
+export const getTankerRates            = (p)     => api.get('/tanker-rates', { params: p });
+export const createTankerRate          = (d)     => api.post('/tanker-rates', d);
+export const updateTankerRate          = (id, d) => api.put(`/tanker-rates/${id}`, d);
+export const deleteTankerRate          = (id)    => api.delete(`/tanker-rates/${id}`);
+export const uploadTankerRates         = (fd)    => api.post('/tanker-rates/upload', fd);
+export const downloadTankerRateTemplate = () =>
+  api.get('/tanker-rates/template', { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'tanker_rates_template.xlsx'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
 // ── Analytics ─────────────────────────────────────────────────────────────────
 export const getAnalyticsSummary  = (p)     => api.get('/analytics/summary', { params: p });
 

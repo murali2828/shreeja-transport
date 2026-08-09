@@ -41,6 +41,7 @@ import TankerPosition       from './pages/execution/TankerPosition';
 // Reports
 import DailyTSReport   from './pages/reports/DailyTSReport';
 import Analytics       from './pages/reports/Analytics';
+import TankerRates     from './pages/masters/TankerRates';
 import AuditLog        from './pages/reports/AuditLog';
 import BmcuBreakup     from './pages/reports/BmcuBreakup';
 import TripDurations   from './pages/reports/TripDurations';
@@ -89,6 +90,9 @@ function AppRoutes() {
         }/>
         <Route path="masters/locations" element={
           <ProtectedRoute roles={['admin','planner']}><LocationMasters/></ProtectedRoute>
+        }/>
+        <Route path="masters/tanker-rates" element={
+          <ProtectedRoute roles={['admin','planner','viewer']}><TankerRates/></ProtectedRoute>
         }/>
         <Route path="masters/distances" element={
           <ProtectedRoute roles={['admin','planner']}><DistanceMaster/></ProtectedRoute>
