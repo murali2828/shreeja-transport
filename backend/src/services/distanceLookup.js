@@ -4,10 +4,15 @@
 
 // Normalise a node pair so the "from" key is lexicographically <= the "to" key.
 function normalisePair(fromType, fromId, toType, toId) {
-  const fromKey = `${fromType}:${fromId}`;
-  const toKey   = `${toType}:${toId}`;
-  if (fromKey <= toKey) return { fromType, fromId, toType, toId };
-  return { fromType: toType, fromId: toId, toType: fromType, toId: fromId };
+  // Must match the DB constraint uq_distance_pair exactly:
+  //   (from_type, from_id) < (to_type, to_id)  — SQL row-wise comparison,
+  // i.e. types compare as strings but ids compare NUMERICALLY. The previous
+  // string-key comparison ('bmcu:10' < 'bmcu:9') broke same-type pairs with
+  // mixed digit lengths and violated the check constraint on insert.
+  const a = Number(fromId), b = Number(toId);
+  if (fromType < toType || (fromType === toType && a < b))
+    return { fromType, fromId: a, toType, toId: b };
+  return { fromType: toType, fromId: b, toType: fromType, toId: a };
 }
 
 // Return the stored road km for a pair, or null if none. `db` is a pg client or pool.
@@ -24,6 +29,7 @@ async function getMasterDistanceKm(db, fromType, fromId, toType, toId) {
 // Cache a road km into Distance Master (insert or update). Used to persist
 // externally-fetched (Google) leg distances so each unique leg is fetched once.
 async function upsertMasterDistanceKm(db, fromType, fromId, toType, toId, km, note, userId) {
+  if (fromType === toType && parseInt(fromId) === parseInt(toId)) return; // self-pair: nothing to store
   const p = normalisePair(fromType, parseInt(fromId), toType, parseInt(toId));
   await db.query(
     `INSERT INTO distance_master (from_type, from_id, to_type, to_id, distance_km, road_notes, created_by, updated_by)
