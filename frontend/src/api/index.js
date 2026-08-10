@@ -206,8 +206,20 @@ export const getDistanceSummary    = ()      => api.get('/distances/summary');
 export const createDistance        = (d)     => api.post('/distances', d);
 export const updateDistance        = (id, d) => api.put(`/distances/${id}`, d);
 export const deleteDistance        = (id)    => api.delete(`/distances/${id}`);
-export const downloadDistTemplate  = ()      => { window.open('/api/distances/template', '_blank'); };
-export const exportDistances       = ()      => { window.open('/api/distances/export', '_blank'); };
+export const downloadDistTemplate  = ()      =>
+  api.get('/distances/template', { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'distance_master_template.xlsx'; a.click();
+    URL.revokeObjectURL(url);
+  });
+export const exportDistances       = ()      =>
+  api.get('/distances/export', { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'distance_master_export.xlsx'; a.click();
+    URL.revokeObjectURL(url);
+  });
 export const uploadDistances       = (fd)    => api.post('/distances/upload', fd);
 
 // ── Route Optimizer ───────────────────────────────────────────────────────────
