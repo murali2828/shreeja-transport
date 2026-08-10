@@ -25,10 +25,15 @@ function nodeLabel(type, row) {
 
 // ─── Helper: normalise pair so from ≤ to (avoids duplicate rows) ─────────────
 function normalisePair(fromType, fromId, toType, toId) {
-  const fromKey = `${fromType}:${fromId}`;
-  const toKey   = `${toType}:${toId}`;
-  if (fromKey <= toKey) return { fromType, fromId, toType, toId };
-  return { fromType: toType, fromId: toId, toType: fromType, toId: fromId };
+  // Must match the DB constraint uq_distance_pair exactly:
+  //   (from_type, from_id) < (to_type, to_id)  — SQL row-wise comparison,
+  // i.e. types compare as strings but ids compare NUMERICALLY. The previous
+  // string-key comparison ('bmcu:10' < 'bmcu:9') broke same-type pairs with
+  // mixed digit lengths and violated the check constraint on insert.
+  const a = Number(fromId), b = Number(toId);
+  if (fromType < toType || (fromType === toType && a < b))
+    return { fromType, fromId: a, toType, toId: b };
+  return { fromType: toType, fromId: b, toType: fromType, toId: a };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
