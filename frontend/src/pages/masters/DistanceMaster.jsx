@@ -6,22 +6,29 @@ import {
   AlertTriangle, CheckCircle, Info, RefreshCw, X, Check
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import axios from 'axios';
+import client from '../../api';
 
-// ─── API ─────────────────────────────────────────────────────────────────────
+// ─── API — all calls go through the shared AUTHENTICATED client ──────────────
+const blobDownload = (path, filename) =>
+  client.get(path, { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  });
 const api = {
-  getDistances:     (p) => axios.get('/api/distances', { params: p }),
-  getSummary:       ()  => axios.get('/api/distances/summary'),
-  createDistance:   (d) => axios.post('/api/distances', d),
-  updateDistance:   (id, d) => axios.put(`/api/distances/${id}`, d),
-  deleteDistance:   (id) => axios.delete(`/api/distances/${id}`),
-  downloadTemplate: ()  => window.open('/api/distances/template', '_blank'),
-  exportAll:        ()  => window.open('/api/distances/export', '_blank'),
-  uploadFile:       (formData) => axios.post('/api/distances/upload', formData),
-  getBmcus:         ()  => axios.get('/api/bmcus'),
-  getStartPoints:   ()  => axios.get('/api/masters/starting-points'),
-  getDeliveryPts:   ()  => axios.get('/api/masters/delivery-points'),
-  getTestingPts:    ()  => axios.get('/api/masters/testing-points'),
+  getDistances:     (p) => client.get('/distances', { params: p }),
+  getSummary:       ()  => client.get('/distances/summary'),
+  createDistance:   (d) => client.post('/distances', d),
+  updateDistance:   (id, d) => client.put(`/distances/${id}`, d),
+  deleteDistance:   (id) => client.delete(`/distances/${id}`),
+  downloadTemplate: ()  => blobDownload('/distances/template', 'distance_master_template.xlsx'),
+  exportAll:        ()  => blobDownload('/distances/export', 'distance_master_export.xlsx'),
+  uploadFile:       (formData) => client.post('/distances/upload', formData),
+  getBmcus:         ()  => client.get('/masters/bmcus'),
+  getStartPoints:   ()  => client.get('/masters/starting-points'),
+  getDeliveryPts:   ()  => client.get('/masters/delivery-points'),
+  getTestingPts:    ()  => client.get('/masters/testing-points'),
 };
 
 const NODE_TYPE_LABELS = {
