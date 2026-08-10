@@ -175,34 +175,107 @@ const MILEAGE = { 6: [6.4, 7], 9: [5.5, 6], 10: [5.5, 6], 11: [5, 5.5], 12: [5, 
   15: [3.5, 4], 17.4: [3, 3.6], 18: [3, 3.6], 19: [3, 3.6], 20: [3, 3.6], 21: [3, 3.6], 22: [3, 3.6],
   23: [3, 3.6], 24: [3, 3.6], 25: [3, 3.6], 26: [3, 3.6], 27: [3, 3.6], 28: [3, 3.6], 29: [3, 3.6], 30: [2.9, 3.2] };
 
-router.get('/template', authenticate, (req, res) => {
-  const aoa = [
-    ['Tanker Rates — Fortnightly Upload (fill rates, leave blanks to skip)'],
-    ['Effective From (DD.MM.YYYY)', '', 'Effective To (DD.MM.YYYY)', ''],
-    ['Diesel Price (Rs/Ltr)', '', '', '', '', '', '', '', '', '', '', ''],
-    ['', '', '', '', 'Andhra Pradesh', '', 'Tamil Nadu', '', 'Karnataka', '', 'Telangana', ''],
-    ['S.No', 'Tanker Capacity (KL)', 'Mileage KM/Ltr (BMCU/CC to Dairy/CC)', 'Mileage KM/Ltr (Point to Point)',
-     'BMCU/CC to Dairy/CC', 'Point to Point', 'BMCU/CC to Dairy/CC', 'Point to Point',
-     'BMCU/CC to Dairy/CC', 'Point to Point', 'BMCU/CC to Dairy/CC', 'Point to Point'],
-    ...CAPACITIES.map((c, i) => [i + 1, c, MILEAGE[c]?.[0] ?? '', MILEAGE[c]?.[1] ?? '',
-      '', '', '', '', '', '', '', '']),
-  ];
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{ wch: 6 }, { wch: 18 }, { wch: 28 }, { wch: 26 },
-    ...Array(8).fill({ wch: 18 })];
-  ws['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 11 } },   // title
-    { s: { r: 3, c: 4 }, e: { r: 3, c: 5 } },    // AP
-    { s: { r: 3, c: 6 }, e: { r: 3, c: 7 } },    // TN
-    { s: { r: 3, c: 8 }, e: { r: 3, c: 9 } },    // KA
-    { s: { r: 3, c: 10 }, e: { r: 3, c: 11 } },  // TS
-  ];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Tanker Rates');
-  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+router.get('/template', authenticate, async (req, res) => {
+  const ExcelJS = require('exceljs');
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Tanker Rates');
+
+  const thin   = { style: 'thin',   color: { argb: 'FF9CA3AF' } };
+  const medium = { style: 'medium', color: { argb: 'FF374151' } };
+  const box    = { top: thin, bottom: thin, left: thin, right: thin };
+  const FILL_TITLE  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF005BA3' } };
+  const FILL_STATE  = ['FFDCE9F7', 'FFE7F6E7', 'FFFDF0DC', 'FFF3E8F7']
+    .map(c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } }));
+  const FILL_HEAD   = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+  const FILL_INPUT  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF9C4' } }; // fill-me yellow
+
+  ws.columns = [{ width: 6 }, { width: 18 }, { width: 30 }, { width: 26 },
+    ...Array(8).fill({ width: 19 })];
+
+  // Row 1 — title
+  ws.mergeCells('A1:L1');
+  const t = ws.getCell('A1');
+  t.value = 'Tanker Rates — Fortnightly Upload (fill the yellow cells; blank rate cells are skipped)';
+  t.fill = FILL_TITLE; t.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+  t.alignment = { vertical: 'middle', horizontal: 'center' };
+  ws.getRow(1).height = 22;
+
+  // Row 2 — effective dates
+  ws.getCell('A2').value = 'Effective From (DD.MM.YYYY)';
+  ws.getCell('C2').value = 'Effective To (DD.MM.YYYY)';
+  ['A2', 'C2'].forEach(c => { ws.getCell(c).font = { bold: true }; ws.getCell(c).border = box; });
+  ['B2', 'D2'].forEach(c => { ws.getCell(c).fill = FILL_INPUT; ws.getCell(c).border = box; });
+
+  // Row 3 — diesel prices (one per state, at each state section start)
+  ws.getCell('A3').value = 'Diesel Price (Rs/Ltr)';
+  ws.getCell('A3').font = { bold: true };
+  ws.getCell('A3').border = box;
+  const stateCols = [[5, 6], [7, 8], [9, 10], [11, 12]]; // E:F G:H I:J K:L (1-based)
+  stateCols.forEach(([c1, c2], i) => {
+    ws.mergeCells(3, c1, 3, c2);
+    const cell = ws.getCell(3, c1);
+    cell.fill = FILL_INPUT; cell.border = box;
+    cell.alignment = { horizontal: 'center' };
+  });
+
+  // Row 4 — state group headers
+  const stateNames = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
+  stateCols.forEach(([c1, c2], i) => {
+    ws.mergeCells(4, c1, 4, c2);
+    const cell = ws.getCell(4, c1);
+    cell.value = stateNames[i];
+    cell.fill = FILL_STATE[i]; cell.font = { bold: true };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+
+  // Row 5 — column headers
+  const heads = ['S.No', 'Tanker Capacity (KL)', 'Mileage KM/Ltr (BMCU/CC to Dairy/CC)',
+    'Mileage KM/Ltr (Point to Point)',
+    'BMCU/CC to Dairy/CC', 'Point to Point', 'BMCU/CC to Dairy/CC', 'Point to Point',
+    'BMCU/CC to Dairy/CC', 'Point to Point', 'BMCU/CC to Dairy/CC', 'Point to Point'];
+  heads.forEach((h, i) => {
+    const cell = ws.getCell(5, i + 1);
+    cell.value = h; cell.font = { bold: true, size: 9 };
+    cell.fill = i >= 4 ? FILL_STATE[Math.floor((i - 4) / 2)] : FILL_HEAD;
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  });
+  ws.getRow(5).height = 30;
+
+  // Data rows — capacities with mileage norms; rate cells are inputs
+  CAPACITIES.forEach((c, i) => {
+    const r = 6 + i;
+    ws.getCell(r, 1).value = i + 1;
+    ws.getCell(r, 2).value = c;
+    ws.getCell(r, 3).value = MILEAGE[c]?.[0] ?? null;
+    ws.getCell(r, 4).value = MILEAGE[c]?.[1] ?? null;
+    for (let col = 5; col <= 12; col++) ws.getCell(r, col).fill = FILL_INPUT;
+    ws.getCell(r, 1).alignment = { horizontal: 'center' };
+  });
+
+  // Borders: thin grid over the whole table, medium boxes around each section
+  const lastRow = 5 + CAPACITIES.length;
+  for (let r = 4; r <= lastRow; r++)
+    for (let c = 1; c <= 12; c++) ws.getCell(r, c).border = box;
+  const boxRegion = (r1, c1, r2, c2) => {
+    for (let r = r1; r <= r2; r++) {
+      const l = ws.getCell(r, c1), rr = ws.getCell(r, c2);
+      l.border  = { ...l.border,  left:  medium };
+      rr.border = { ...rr.border, right: medium };
+    }
+    for (let c = c1; c <= c2; c++) {
+      const tp = ws.getCell(r1, c), bt = ws.getCell(r2, c);
+      tp.border = { ...tp.border, top: medium };
+      bt.border = { ...bt.border, bottom: medium };
+    }
+  };
+  boxRegion(4, 1, lastRow, 4);                                   // info section
+  stateCols.forEach(([c1, c2]) => boxRegion(4, c1, lastRow, c2)); // each state section
+  ws.views = [{ state: 'frozen', ySplit: 5, xSplit: 2 }];
+
+  const buf = await wb.xlsx.writeBuffer();
   res.setHeader('Content-Disposition', 'attachment; filename=tanker_rates_template.xlsx');
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.send(buf);
+  res.send(Buffer.from(buf));
 });
 
 // ── POST /api/tanker-rates/upload ────────────────────────────────────────────
