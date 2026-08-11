@@ -100,7 +100,7 @@ router.get('/users', authenticate, authorize('admin'), async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-const VALID_ROLES = ['admin', 'planner', 'executor', 'viewer'];
+const VALID_ROLES = ['admin', 'planner', 'executor', 'viewer', 'biller'];
 
 // POST /api/auth/users
 router.post('/users', authenticate, authorize('admin'), async (req, res) => {

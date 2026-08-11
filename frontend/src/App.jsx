@@ -42,6 +42,8 @@ import TankerPosition       from './pages/execution/TankerPosition';
 import DailyTSReport   from './pages/reports/DailyTSReport';
 import Analytics       from './pages/reports/Analytics';
 import TankerRates     from './pages/masters/TankerRates';
+import TankerBilling   from './pages/billing/TankerBilling';
+import BillingDecision from './pages/billing/BillingDecision';
 import AuditLog        from './pages/reports/AuditLog';
 import BmcuBreakup     from './pages/reports/BmcuBreakup';
 import TripDurations   from './pages/reports/TripDurations';
@@ -68,6 +70,7 @@ function AppRoutes() {
       <Route path="/login"           element={<Login/>}/>
       <Route path="/forgot-password" element={<ForgotPassword/>}/>
       <Route path="/reset-password"  element={<ResetPassword/>}/>
+      <Route path="/billing-decision" element={<BillingDecision/>}/>
       <Route path="/change-password" element={
         <ProtectedRoute allowMustChange><ChangePassword/></ProtectedRoute>
       }/>
@@ -140,6 +143,9 @@ function AppRoutes() {
         <Route path="execution/:id/acknowledge" element={<AcknowledgementForm/>}/>
 
         {/* Reports — all roles */}
+        <Route path="billing" element={
+          <ProtectedRoute roles={['admin','biller','viewer']}><TankerBilling/></ProtectedRoute>
+        }/>
         <Route path="reports" element={<DailyTSReport/>}/>
         <Route path="reports/analytics" element={<Analytics/>}/>
         <Route path="reports/bmcu-breakup" element={<BmcuBreakup/>}/>

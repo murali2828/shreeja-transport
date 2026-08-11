@@ -5,7 +5,7 @@ import { NavLink } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   Truck, LayoutDashboard, MapPin, Route, Users, Settings,
-  ClipboardList, Play, CheckSquare, BarChart2, Mail,
+  ClipboardList, Play, CheckSquare, BarChart2, Mail, IndianRupee,
   ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText
 } from 'lucide-react';
 
@@ -41,6 +41,7 @@ export default function Sidebar({ collapsed = false }) {
   const isAdmin   = user?.role === 'admin';
   const isPlanner  = user?.role === 'planner' || isAdmin;
   const isViewer   = user?.role === 'viewer';
+  const isBiller  = user?.role === 'biller' || isAdmin;
   const isExecutor = user?.role === 'executor';
 
   const ni = (to, icon, label, end) =>
@@ -96,6 +97,12 @@ export default function Sidebar({ collapsed = false }) {
           {(isAdmin || ['pp01','mahesh.k@shreejamilk.com','dceo','krithiga.a@shreejamilk.com'].includes(String(user?.user_id || '').toLowerCase()))
             && ni('/tanker-position', <Truck size={15}/>, 'Tanker Position')}
           {ni('/approvals', <CheckSquare size={15}/>, 'Approvals')}
+        </NavSection>
+      )}
+
+      {(isBiller || isViewer) && (
+        <NavSection label={collapsed ? '' : 'Billing'}>
+          {ni('/billing', <IndianRupee size={15}/>, 'Tanker Payments')}
         </NavSection>
       )}
 
