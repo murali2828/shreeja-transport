@@ -627,7 +627,7 @@ export default function ExecutionForm() {
           shift_rows: shiftRows.map(({ _key, ...r }) => r),
           entries: entries.map(({ _key, source_bmcu_code, source_bmcu_name, bmcu_code, bmcu_name, ...r }) => r),
           acknowledgements: ackRows.map(a => ({
-            chamber: a.chamber, qty_litres: a.qty_litres, fat_pct: a.fat_pct,
+            chamber: a.chamber, qty_kgs: a.qty_kgs, qty_litres: a.qty_litres, fat_pct: a.fat_pct,
             snf_pct: a.snf_pct, temperature: a.temperature, description: a.description,
             ack_date: a.ack_date,
           })),
@@ -1213,12 +1213,20 @@ export default function ExecutionForm() {
                       </span>
                     </td>
                     <td className="table-td text-right font-medium">
-                      {staging ? '(auto)' : parseFloat(a.qty_kgs||0).toLocaleString()}
+                      {staging
+                        ? <input type="number" min="0" step="0.01" className="input py-0.5 px-1 text-xs w-24 text-right"
+                            title="Enter Qty KGS — litres auto-calculated (kgs ÷ 1.0285)"
+                            value={a.qty_kgs || ''}
+                            onChange={e => {
+                              const kgs = e.target.value;
+                              const litres = kgs ? +(parseFloat(kgs) / 1.0285).toFixed(2) : '';
+                              setAckRows(prev => prev.map((r, j) => j === i ? { ...r, qty_kgs: kgs, qty_litres: litres } : r));
+                            }}/>
+                        : parseFloat(a.qty_kgs||0).toLocaleString()}
                     </td>
                     <td className="table-td text-right">
                       {staging
-                        ? <input type="number" min="0" step="0.01" className="input py-0.5 px-1 text-xs w-24 text-right"
-                            value={a.qty_litres || ''} onChange={e => setA('qty_litres', e.target.value)}/>
+                        ? <span className="text-gray-500">{a.qty_litres ? parseFloat(a.qty_litres).toLocaleString() : '(auto)'}</span>
                         : parseFloat(a.qty_litres||0).toLocaleString()}
                     </td>
                     <td className="table-td text-right">
