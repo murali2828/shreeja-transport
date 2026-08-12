@@ -485,4 +485,100 @@ router.post('/decide', async (req, res) => {
   }
 });
 
+// ── Cross-run payment report: date-range + filters (finance view) ────────────
+// GET /api/billing/report-data?from&to&status=approved|all&tanker=&vendor=
+// Aggregates billing lines by trip date across ALL runs whose lines fall in
+// the range. status=approved (default) restricts to fully-approved runs —
+// the amounts finance can actually pay.
+async function reportData(q) {
+  const params = [q.from, q.to];
+  const cond = ['t.plan_for_date BETWEEN $1 AND $2'];
+  if ((q.status || 'approved') !== 'all') { params.push('approved'); cond.push(`br.status = $${params.length}`); }
+  if (q.tanker) { params.push(q.tanker); cond.push(`t.tanker_number = $${params.length}`); }
+  if (q.vendor) { params.push(q.vendor); cond.push(`COALESCE(t.vendor_name,'— No vendor mapped —') = $${params.length}`); }
+  const where = 'WHERE ' + cond.join(' AND ');
+  const base = `FROM billing_run_trips t JOIN billing_runs br ON br.id = t.run_id ${where}`;
+
+  const trips = await query(`
+    SELECT t.run_id, br.status AS run_status, t.plan_for_date::text AS plan_for_date,
+           t.tanker_number, t.capacity_litres, COALESCE(t.vendor_name,'— No vendor mapped —') AS vendor_name,
+           t.route_name, t.delivery_point, t.state, t.transport_type,
+           t.system_km, t.google_km, t.master_km, t.estimated_km,
+           t.billed_km, t.rate_per_km, t.amount, t.remarks
+    ${base} ORDER BY t.plan_for_date, t.tanker_number`, params);
+  const dates = await query(`
+    SELECT t.plan_for_date::text AS date, COUNT(*)::int AS trips,
+           COUNT(DISTINCT t.tanker_number)::int AS tankers,
+           SUM(t.billed_km) AS billed_km, SUM(t.system_km) AS system_km,
+           SUM(t.google_km) AS google_km, SUM(t.amount) AS amount
+    ${base} GROUP BY t.plan_for_date ORDER BY t.plan_for_date`, params);
+  const tankers = await query(`
+    SELECT t.tanker_number, MAX(t.vendor_name) AS vendor_name, COUNT(*)::int AS trips,
+           SUM(t.billed_km) AS billed_km, SUM(t.system_km) AS system_km,
+           SUM(t.google_km) AS google_km, SUM(t.amount) AS amount
+    ${base} GROUP BY t.tanker_number ORDER BY t.tanker_number`, params);
+  const vendors = await query(`
+    SELECT COALESCE(t.vendor_name,'— No vendor mapped —') AS vendor_name,
+           COUNT(DISTINCT t.tanker_number)::int AS tankers, COUNT(*)::int AS trips,
+           SUM(t.billed_km) AS billed_km, SUM(t.system_km) AS system_km,
+           SUM(t.google_km) AS google_km, SUM(t.amount) AS amount
+    ${base} GROUP BY COALESCE(t.vendor_name,'— No vendor mapped —') ORDER BY 1`, params);
+  return { trips: trips.rows, dates: dates.rows, tankers: tankers.rows, vendors: vendors.rows };
+}
+
+router.get('/report-data', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+  try { res.json(await reportData(req.query)); }
+  catch (err) { console.error('Billing report-data error:', err); res.status(500).json({ error: 'Failed to build report' }); }
+});
+
+// Excel of the cross-run report
+router.get('/report-excel', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+  try {
+    const d = await reportData(req.query);
+    const statusLabel = (req.query.status || 'approved') === 'all' ? 'All runs' : 'APPROVED runs only';
+    const wb = new ExcelJS.Workbook();
+    const head = (ws, cols) => { ws.addRow(cols).font = { bold: true }; ws.columns.forEach(c => { c.width = 16; }); };
+
+    const ws1 = wb.addWorksheet('Trip Wise');
+    ws1.addRow([`Tanker Payment Report ${from} → ${to} · ${statusLabel}`]).font = { bold: true, size: 13 };
+    ws1.addRow([]);
+    head(ws1, ['Date', 'Run #', 'Run Status', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Delivery Point',
+      'State', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Remarks']);
+    d.trips.forEach(t => ws1.addRow([t.plan_for_date, t.run_id, t.run_status, t.tanker_number,
+      t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.vendor_name, t.route_name, t.delivery_point,
+      t.state, t.transport_type, t.system_km, t.google_km, t.billed_km, t.rate_per_km, t.amount, t.remarks]));
+    ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '',
+      rN(d.trips.reduce((s, t) => s + (+t.system_km || 0), 0)),
+      rN(d.trips.reduce((s, t) => s + (+t.google_km || 0), 0)),
+      rN(d.trips.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
+      rN(d.trips.reduce((s, t) => s + (+t.amount || 0), 0)), '']).font = { bold: true };
+
+    const sheet = (name, rows, firstHead, firstKey, secondKey) => {
+      const ws = wb.addWorksheet(name);
+      head(ws, [firstHead, secondKey === 'vendor_name' ? 'Vendor' : 'Tankers', 'Trips',
+        'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']);
+      rows.forEach(r => ws.addRow([r[firstKey], r[secondKey], r.trips,
+        rN(r.billed_km), rN(r.system_km), rN(r.google_km), rN(r.amount)]));
+      ws.addRow(['TOTAL', '', rows.reduce((s, r) => s + (+r.trips || 0), 0),
+        rN(rows.reduce((s, r) => s + (+r.billed_km || 0), 0)), '', '',
+        rN(rows.reduce((s, r) => s + (+r.amount || 0), 0))]).font = { bold: true };
+    };
+    sheet('Date Wise', d.dates, 'Date', 'date', 'tankers');
+    sheet('Tanker Wise', d.tankers, 'Tanker', 'tanker_number', 'vendor_name');
+    sheet('Vendor Wise', d.vendors, 'Vendor', 'vendor_name', 'tankers');
+
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    res.setHeader('Content-Disposition', `attachment; filename=tanker_payment_report_${from}_${to}.xlsx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    console.error('Billing report-excel error:', err);
+    res.status(500).json({ error: 'Failed to build report' });
+  }
+});
+
 module.exports = router;

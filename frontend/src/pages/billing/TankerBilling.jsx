@@ -24,6 +24,7 @@ export default function TankerBilling() {
   const { user } = useAuth();
   const canEdit = ['admin', 'biller'].includes(user?.role);
   const [openRunId, setOpenRunId] = useState(null);
+  const [view, setView] = useState('runs'); // runs | report
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [edits, setEdits] = useState({});      // tripId -> {state, billed_km, remarks}
@@ -99,7 +100,7 @@ export default function TankerBilling() {
   const val = (t, field) => edits[t.id]?.[field] !== undefined ? edits[t.id][field] : (t[field] ?? '');
   const editable = canEdit && run && ['draft', 'rejected'].includes(run.status);
 
-  // ── runs list ──────────────────────────────────────────────────────────────
+  // ── runs list / payment report ─────────────────────────────────────────────
   if (!openRunId) return (
     <div className="p-4 space-y-4">
       <div className="flex flex-wrap items-end gap-3">
@@ -109,8 +110,17 @@ export default function TankerBilling() {
             Fortnightly vendor payments — execute a period, price each acknowledged trip, submit for 3-level approval
           </p>
         </div>
+        <div className="flex gap-2 ml-2">
+          {[['runs', 'Billing Runs'], ['report', 'Payment Report']].map(([k, l]) => (
+            <button key={k} onClick={() => setView(k)}
+              className="text-xs px-3 py-1.5 rounded-lg font-semibold"
+              style={view === k ? { background: '#cc785c', color: '#fff' } : { background: '#fff', color: '#57534e' }}>
+              {l}
+            </button>
+          ))}
+        </div>
         <div className="flex-1" />
-        {canEdit && (<>
+        {view === 'runs' && canEdit && (<>
           <input type="date" className="input text-xs" value={from} onChange={e => setFrom(e.target.value)} />
           <input type="date" className="input text-xs" value={to} min={from} onChange={e => setTo(e.target.value)} />
           <button className="btn-primary text-xs flex items-center gap-1.5" disabled={!from || !to || createMut.isPending}
@@ -119,7 +129,10 @@ export default function TankerBilling() {
           </button>
         </>)}
       </div>
-      <div className="card overflow-hidden">
+
+      {view === 'report' && <PaymentReport />}
+
+      {view === 'runs' && <div className="card overflow-hidden">
         <table className="w-full text-xs">
           <thead className="bg-blue-50 text-left text-gray-600">
             <tr>{['Run #', 'Period', 'Trips', 'Total (₹)', 'Status', 'Created By', ''].map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
@@ -149,7 +162,7 @@ export default function TankerBilling() {
             })}
           </tbody>
         </table>
-      </div>
+      </div>}
     </div>
   );
 
@@ -373,4 +386,156 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit }) {
       </tr>
     )}
   </>);
+}
+
+
+// ── Cross-run Payment Report: date range + filters, results across runs ──────
+function PaymentReport() {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [status, setStatus] = useState('approved');
+  const [tanker, setTanker] = useState('');
+  const [vendor, setVendor] = useState('');
+  const [tab, setTab] = useState('vendors');
+  const [params, setParams] = useState(null); // executed filters
+
+  const { data, isFetching } = useQuery({
+    queryKey: ['billing-report', params],
+    queryFn: () => api.get('/billing/report-data', { params }).then(r => r.data),
+    enabled: !!params,
+  });
+
+  const run = () => {
+    if (!from || !to) return toast.error('Select From and To dates');
+    setParams({ from, to, status, tanker: tanker || undefined, vendor: vendor || undefined });
+  };
+  const excel = () => {
+    if (!params) return toast.error('Run the report first');
+    api.get('/billing/report-excel', { params, responseType: 'blob' }).then(r => {
+      const url = URL.createObjectURL(r.data);
+      const a = document.createElement('a');
+      a.href = url; a.download = `tanker_payment_report_${params.from}_${params.to}.xlsx`; a.click();
+      URL.revokeObjectURL(url);
+    });
+  };
+
+  const tankerOpts = [...new Set((data?.tankers || []).map(t => t.tanker_number))];
+  const vendorOpts = [...new Set((data?.vendors || []).map(v => v.vendor_name))];
+  const rows = tab === 'dates' ? data?.dates : tab === 'tankers' ? data?.tankers : tab === 'vendors' ? data?.vendors : null;
+
+  return (
+    <div className="space-y-3">
+      <div className="card p-3 flex flex-wrap items-end gap-2 text-xs">
+        <label>From *<input type="date" className="input mt-1" value={from} onChange={e => setFrom(e.target.value)}/></label>
+        <label>To *<input type="date" className="input mt-1" value={to} min={from} onChange={e => setTo(e.target.value)}/></label>
+        <label>Runs
+          <select className="input mt-1" value={status} onChange={e => setStatus(e.target.value)}>
+            <option value="approved">Approved only (payable)</option>
+            <option value="all">All runs (any status)</option>
+          </select>
+        </label>
+        <label>Tanker
+          <select className="input mt-1" value={tanker} onChange={e => setTanker(e.target.value)}>
+            <option value="">All</option>
+            {tankerOpts.map(t => <option key={t}>{t}</option>)}
+          </select>
+        </label>
+        <label>Vendor
+          <select className="input mt-1" value={vendor} onChange={e => setVendor(e.target.value)}>
+            <option value="">All</option>
+            {vendorOpts.map(v => <option key={v}>{v}</option>)}
+          </select>
+        </label>
+        <button className="btn-primary text-xs" onClick={run}>{isFetching ? 'Loading…' : 'Run Report'}</button>
+        <button className="btn-secondary text-xs flex items-center gap-1" onClick={excel}><Download size={12}/> Excel</button>
+      </div>
+
+      {data && (
+        <>
+          <div className="flex gap-2">
+            {[['vendors', 'Vendor Wise'], ['tankers', 'Tanker Wise'], ['dates', 'Date Wise'], ['trips', 'Trip Wise']].map(([k, l]) => (
+              <button key={k} onClick={() => setTab(k)}
+                className="text-xs px-3 py-1.5 rounded-lg font-semibold"
+                style={tab === k ? { background: '#4a3aa7', color: '#fff' } : { background: '#fff', color: '#57534e' }}>
+                {l}
+              </button>
+            ))}
+            <span className="text-xs text-white/90 self-center">
+              {data.trips.length} trips · ₹ {nf(data.trips.reduce((s, t) => s + (+t.amount || 0), 0))}
+            </span>
+          </div>
+
+          {tab !== 'trips' && (
+            <div className="card overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-blue-50 text-left text-gray-600">
+                  <tr>{[tab === 'dates' ? 'Date' : tab === 'tankers' ? 'Tanker' : 'Vendor',
+                        tab === 'tankers' ? 'Vendor' : 'Tankers', 'Trips',
+                        'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']
+                        .map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {(rows || []).map((r, i) => (
+                    <tr key={i} className="border-t border-gray-100">
+                      <td className="px-3 py-1.5 font-semibold">{r.date || r.tanker_number || r.vendor_name}</td>
+                      <td className="px-3 py-1.5">{tab === 'tankers' ? r.vendor_name : r.tankers}</td>
+                      <td className="px-3 py-1.5 text-right">{r.trips}</td>
+                      <td className="px-3 py-1.5 text-right">{nf(r.billed_km)}</td>
+                      <td className="px-3 py-1.5 text-right">{nf(r.system_km)}</td>
+                      <td className="px-3 py-1.5 text-right">{nf(r.google_km)}</td>
+                      <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.amount)}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-blue-100 font-bold">
+                    <td className="px-3 py-2">TOTAL</td><td/>
+                    <td className="px-3 py-2 text-right">{(rows || []).reduce((s, r) => s + (+r.trips || 0), 0)}</td>
+                    <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.billed_km || 0), 0))}</td>
+                    <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.system_km || 0), 0))}</td>
+                    <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.google_km || 0), 0))}</td>
+                    <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.amount || 0), 0))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tab === 'trips' && (
+            <div className="card overflow-hidden">
+              <div className="overflow-x-auto max-h-[60vh]">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
+                    <tr>{['Date', 'Run #', 'Status', 'Tanker', 'Vendor', 'Route', 'Delivery Point', 'State',
+                          'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
+                          .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {data.trips.map((t, i) => (
+                      <tr key={i} className="border-t border-gray-100">
+                        <td className="px-2 py-1.5 whitespace-nowrap">{t.plan_for_date}</td>
+                        <td className="px-2 py-1.5">#{t.run_id}</td>
+                        <td className="px-2 py-1.5">{t.run_status}</td>
+                        <td className="px-2 py-1.5 font-semibold text-[#005ba3]">{t.tanker_number}</td>
+                        <td className="px-2 py-1.5">{t.vendor_name}</td>
+                        <td className="px-2 py-1.5">{t.route_name || '—'}</td>
+                        <td className="px-2 py-1.5">{t.delivery_point || '—'}</td>
+                        <td className="px-2 py-1.5">{t.state || '—'}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{t.transport_type}</td>
+                        <td className="px-2 py-1.5 text-right">{nf(t.system_km)}</td>
+                        <td className="px-2 py-1.5 text-right">{nf(t.google_km)}</td>
+                        <td className="px-2 py-1.5 text-right">{nf(t.billed_km)}</td>
+                        <td className="px-2 py-1.5 text-right">{nf(t.rate_per_km)}</td>
+                        <td className="px-2 py-1.5 text-right font-bold">{nf(t.amount)}</td>
+                        <td className="px-2 py-1.5">{t.remarks || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {!data && params && isFetching && <div className="text-white/90 text-sm">Loading…</div>}
+    </div>
+  );
 }
