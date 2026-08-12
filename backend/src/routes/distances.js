@@ -381,4 +381,64 @@ router.get('/export', authenticate, async (req, res) => {
   }
 });
 
+// ─── GET /missing-coords — Excel of location nodes without lat/lng ───────────
+// Nodes lacking coordinates cannot use Google Routes: their legs fall back to
+// estimates (or go missing). Includes 30-day usage so the team fixes the
+// busiest locations first.
+router.get('/missing-coords', authenticate, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT 'BMCU' AS node_type, b.bmcu_code AS code, b.bmcu_name AS name,
+             b.is_active,
+             CASE WHEN b.latitude IS NULL AND b.longitude IS NULL THEN 'Latitude + Longitude'
+                  WHEN b.latitude IS NULL THEN 'Latitude' ELSE 'Longitude' END AS missing,
+             (SELECT COUNT(DISTINCT teb.execution_id) FROM trip_execution_bmcus teb
+               JOIN trip_executions te ON te.id = teb.execution_id
+               JOIN trip_plans tp ON tp.id = te.trip_plan_id
+               WHERE teb.bmcu_id = b.id AND teb.is_deleted = FALSE
+                 AND tp.plan_for_date >= CURRENT_DATE - 30)::int AS trips_last_30_days
+      FROM bmcus b WHERE b.latitude IS NULL OR b.longitude IS NULL
+      UNION ALL
+      SELECT 'Starting Point', NULL, sp.name, sp.is_active,
+             CASE WHEN sp.latitude IS NULL AND sp.longitude IS NULL THEN 'Latitude + Longitude'
+                  WHEN sp.latitude IS NULL THEN 'Latitude' ELSE 'Longitude' END,
+             (SELECT COUNT(*) FROM trip_plans tp
+               WHERE tp.start_point_id = sp.id AND tp.plan_for_date >= CURRENT_DATE - 30
+                 AND tp.status NOT IN ('cancelled','deleted'))::int
+      FROM starting_points sp WHERE sp.latitude IS NULL OR sp.longitude IS NULL
+      UNION ALL
+      SELECT 'Delivery Point', NULL, dp.name, dp.is_active,
+             CASE WHEN dp.latitude IS NULL AND dp.longitude IS NULL THEN 'Latitude + Longitude'
+                  WHEN dp.latitude IS NULL THEN 'Latitude' ELSE 'Longitude' END,
+             (SELECT COUNT(*) FROM trip_plans tp
+               WHERE tp.delivery_point_id = dp.id AND tp.plan_for_date >= CURRENT_DATE - 30
+                 AND tp.status NOT IN ('cancelled','deleted'))::int
+      FROM delivery_points dp WHERE dp.latitude IS NULL OR dp.longitude IS NULL
+      UNION ALL
+      SELECT 'Testing Point', NULL, tpt.name, tpt.is_active,
+             CASE WHEN tpt.latitude IS NULL AND tpt.longitude IS NULL THEN 'Latitude + Longitude'
+                  WHEN tpt.latitude IS NULL THEN 'Latitude' ELSE 'Longitude' END,
+             0
+      FROM testing_points tpt WHERE tpt.latitude IS NULL OR tpt.longitude IS NULL
+      ORDER BY trips_last_30_days DESC, node_type, name`);
+
+    const wb = XLSX.utils.book_new();
+    const headers = ['Type', 'BMCU Code', 'Name', 'Missing', 'Active', 'Trips (last 30 days)'];
+    const rows = [headers, ...r.rows.map(row => [
+      row.node_type, row.code || '', row.name, row.missing,
+      row.is_active ? 'Yes' : 'No', row.trips_last_30_days,
+    ])];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [16, 14, 38, 22, 8, 18].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws, 'Missing Coordinates');
+
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename=missing_coordinates_report.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

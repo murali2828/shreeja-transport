@@ -24,6 +24,7 @@ const api = {
   deleteDistance:   (id) => client.delete(`/distances/${id}`),
   downloadTemplate: ()  => blobDownload('/distances/template', 'distance_master_template.xlsx'),
   exportAll:        ()  => blobDownload('/distances/export', 'distance_master_export.xlsx'),
+  missingCoords:    ()  => blobDownload('/distances/missing-coords', 'missing_coordinates_report.xlsx'),
   uploadFile:       (formData) => client.post('/distances/upload', formData),
   getBmcus:         ()  => client.get('/masters/bmcus'),
   getStartPoints:   ()  => client.get('/masters/starting-points'),
@@ -278,6 +279,10 @@ export default function DistanceMaster() {
           </label>
           <button onClick={() => api.exportAll()} className="btn-secondary text-xs flex items-center gap-1.5">
             <Download size={13}/> Export All
+          </button>
+          <button onClick={() => api.missingCoords()} className="btn-secondary text-xs flex items-center gap-1.5"
+                  title="Locations without latitude/longitude — Google distances cannot be fetched for these">
+            <AlertTriangle size={13}/> Missing Coordinates
           </button>
           <button onClick={() => setModal('add')} className="btn-primary text-xs flex items-center gap-1.5">
             <Plus size={13}/> Add Distance
