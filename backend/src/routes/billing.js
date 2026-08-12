@@ -225,7 +225,14 @@ async function runSummaries(runId) {
            SUM(google_km) AS google_km, SUM(amount) AS amount
     FROM billing_run_trips WHERE run_id=$1
     GROUP BY COALESCE(vendor_name,'— No vendor mapped —') ORDER BY 1`, [runId]);
-  return { tankers: tankers.rows, vendors: vendors.rows };
+  const dates = await query(`
+    SELECT plan_for_date::text AS date, COUNT(*)::int AS trips,
+           COUNT(DISTINCT tanker_number)::int AS tankers,
+           SUM(billed_km) AS billed_km, SUM(system_km) AS system_km,
+           SUM(google_km) AS google_km, SUM(amount) AS amount
+    FROM billing_run_trips WHERE run_id=$1
+    GROUP BY plan_for_date ORDER BY plan_for_date`, [runId]);
+  return { tankers: tankers.rows, vendors: vendors.rows, dates: dates.rows };
 }
 
 router.get('/runs/:id/summary', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
@@ -237,7 +244,7 @@ router.get('/runs/:id/summary', authenticate, authorize(...canBill, 'viewer'), a
 async function buildRunWorkbook(runId) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
   const trips = (await query('SELECT *, plan_for_date::text AS plan_for_date FROM billing_run_trips WHERE run_id=$1 ORDER BY plan_for_date, tanker_number', [runId])).rows;
-  const { tankers, vendors } = await runSummaries(runId);
+  const { tankers, vendors, dates } = await runSummaries(runId);
   const approvals = (await query('SELECT level, approver_email, status, remarks, decided_at FROM billing_run_approvals WHERE run_id=$1 ORDER BY level', [runId])).rows;
 
   const wb = new ExcelJS.Workbook();
@@ -274,6 +281,13 @@ async function buildRunWorkbook(runId) {
   ws3.addRow(['TOTAL', '', vendors.reduce((s, v) => s + v.trips, 0),
     rN(vendors.reduce((s, v) => s + (+v.billed_km || 0), 0)), '', '',
     rN(vendors.reduce((s, v) => s + (+v.amount || 0), 0))]).font = { bold: true };
+
+  const wsD = wb.addWorksheet('Date Wise');
+  head(wsD, ['Date', 'Trips', 'Tankers', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']);
+  dates.forEach(d => wsD.addRow([d.date, d.trips, d.tankers, rN(d.billed_km), rN(d.system_km), rN(d.google_km), rN(d.amount)]));
+  wsD.addRow(['TOTAL', dates.reduce((s, d) => s + d.trips, 0), '',
+    rN(dates.reduce((s, d) => s + (+d.billed_km || 0), 0)), '', '',
+    rN(dates.reduce((s, d) => s + (+d.amount || 0), 0))]).font = { bold: true };
 
   const ws4 = wb.addWorksheet('Approvals');
   head(ws4, ['Level', 'Approver', 'Status', 'Remarks', 'Decided At']);

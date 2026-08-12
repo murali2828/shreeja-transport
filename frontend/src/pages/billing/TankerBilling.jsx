@@ -213,7 +213,7 @@ export default function TankerBilling() {
 
       {/* tabs */}
       <div className="flex gap-2">
-        {[['trips', 'Trip Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise']].map(([k, l]) => (
+        {[['trips', 'Trip Wise'], ['dates', 'Date Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold"
             style={tab === k ? { background: '#cc785c', color: '#fff' } : { background: '#fff', color: '#57534e' }}>
@@ -258,13 +258,17 @@ export default function TankerBilling() {
             <thead className="bg-blue-50 text-left text-gray-600">
               <tr>{(tab === 'tankers'
                 ? ['Tanker', 'Vendor', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']
+                : tab === 'dates'
+                ? ['Date', 'Tankers', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']
                 : ['Vendor', 'Tankers', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)'])
                 .map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
             </thead>
             <tbody>
-              {((tab === 'tankers' ? summary?.tankers : summary?.vendors) || []).map((r, i) => (
+              {((tab === 'tankers' ? summary?.tankers : tab === 'dates' ? summary?.dates : summary?.vendors) || []).map((r, i) => (
                 <tr key={i} className="border-t border-gray-100">
-                  <td className="px-3 py-1.5 font-semibold">{tab === 'tankers' ? r.tanker_number : r.vendor_name}</td>
+                  <td className="px-3 py-1.5 font-semibold">
+                    {tab === 'tankers' ? r.tanker_number : tab === 'dates' ? r.date : r.vendor_name}
+                  </td>
                   <td className="px-3 py-1.5">{tab === 'tankers' ? r.vendor_name : r.tankers}</td>
                   <td className="px-3 py-1.5 text-right">{r.trips}</td>
                   <td className="px-3 py-1.5 text-right">{nf(r.billed_km)}</td>
@@ -273,6 +277,20 @@ export default function TankerBilling() {
                   <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.amount)}</td>
                 </tr>
               ))}
+              {(() => {
+                const rows = (tab === 'tankers' ? summary?.tankers : tab === 'dates' ? summary?.dates : summary?.vendors) || [];
+                return (
+                  <tr className="bg-blue-100 font-bold">
+                    <td className="px-3 py-2">TOTAL</td>
+                    <td className="px-3 py-2"/>
+                    <td className="px-3 py-2 text-right">{rows.reduce((s, r) => s + (+r.trips || 0), 0)}</td>
+                    <td className="px-3 py-2 text-right">{nf(rows.reduce((s, r) => s + (+r.billed_km || 0), 0))}</td>
+                    <td className="px-3 py-2 text-right">{nf(rows.reduce((s, r) => s + (+r.system_km || 0), 0))}</td>
+                    <td className="px-3 py-2 text-right">{nf(rows.reduce((s, r) => s + (+r.google_km || 0), 0))}</td>
+                    <td className="px-3 py-2 text-right text-[#005ba3]">{nf(rows.reduce((s, r) => s + (+r.amount || 0), 0))}</td>
+                  </tr>
+                );
+              })()}
             </tbody>
           </table>
         </div>
