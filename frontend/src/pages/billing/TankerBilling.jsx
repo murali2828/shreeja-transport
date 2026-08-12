@@ -248,6 +248,7 @@ export default function TankerBilling() {
               <tbody>
                 {trips.map(t => (
                   <FragmentRow key={t.id} t={t} editable={editable} expanded={!!expanded[t.id]}
+                    carried={run?.from_date && t.plan_for_date < run.from_date}
                     onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
                     val={val} setEdit={setEdit} />
                 ))}
@@ -312,7 +313,7 @@ export default function TankerBilling() {
   );
 }
 
-function FragmentRow({ t, editable, expanded, onToggle, val, setEdit }) {
+function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried }) {
   const legs = Array.isArray(t.legs) ? t.legs : (t.legs ? JSON.parse(t.legs) : []);
   return (<>
     <tr className="border-t border-gray-100 hover:bg-blue-50/40">
@@ -321,7 +322,10 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit }) {
           {expanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
         </button>
       </td>
-      <td className="px-2 py-1.5 whitespace-nowrap">{t.plan_for_date}</td>
+      <td className="px-2 py-1.5 whitespace-nowrap">
+        {t.plan_for_date}
+        {carried && <span className="ml-1 px-1 rounded bg-amber-500 text-white text-[10px]" title="Late acknowledgement — carried forward from the previous fortnight">carry-fwd</span>}
+      </td>
       <td className="px-2 py-1.5 font-semibold text-[#005ba3] whitespace-nowrap">{t.tanker_number}</td>
       <td className="px-2 py-1.5 text-right">{t.capacity_litres ? (t.capacity_litres / 1000).toFixed(1) : '—'}</td>
       <td className="px-2 py-1.5">{t.vendor_name || <span className="text-red-600">no vendor</span>}</td>
@@ -511,7 +515,10 @@ function PaymentReport() {
                   <tbody>
                     {data.trips.map((t, i) => (
                       <tr key={i} className="border-t border-gray-100">
-                        <td className="px-2 py-1.5 whitespace-nowrap">{t.plan_for_date}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+        {t.plan_for_date}
+        {carried && <span className="ml-1 px-1 rounded bg-amber-500 text-white text-[10px]" title="Late acknowledgement — carried forward from the previous fortnight">carry-fwd</span>}
+      </td>
                         <td className="px-2 py-1.5">#{t.run_id}</td>
                         <td className="px-2 py-1.5">{t.run_status}</td>
                         <td className="px-2 py-1.5 font-semibold text-[#005ba3]">{t.tanker_number}</td>

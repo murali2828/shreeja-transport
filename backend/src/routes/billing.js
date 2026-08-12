@@ -75,9 +75,14 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
       [from_date, to_date, req.user.id, req.user.user_id || req.user.full_name || null]);
     const runId = run.rows[0].id;
 
-    // Trips with acknowledgement data in the range (by planning date)
+    // Trips with acknowledgement data — the fortnight's own trips PLUS
+    // carry-forward: earlier trips (up to 31 days back) whose acknowledgement
+    // arrived late and which were never included in any other billing run,
+    // e.g. planned on the 15th but acknowledged on the 16th/17th. Rates for
+    // carried trips still apply by their own PLANNING date.
     const trips = await client.query(`
       SELECT te.id AS execution_id, tp.plan_for_date::text AS plan_for_date,
+             (tp.plan_for_date < $1::date) AS carried_forward,
              t.tanker_number, t.capacity_litres, t.vendor_id,
              COALESCE(v.vendor_name, t.vendor_name) AS vendor_name,
              rm.route_name, sp.name AS start_point, dp.name AS delivery_point,
@@ -92,9 +97,10 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
       LEFT JOIN route_masters rm   ON rm.id = tp.route_id
       LEFT JOIN starting_points sp ON sp.id = tp.start_point_id
       LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
-      WHERE tp.plan_for_date BETWEEN $1 AND $2
+      WHERE tp.plan_for_date BETWEEN ($1::date - INTERVAL '31 days') AND $2
         AND tp.status NOT IN ('cancelled','deleted')
         AND EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
+        AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
       ORDER BY tp.plan_for_date, t.tanker_number`, [from_date, to_date]);
 
     for (const tr of trips.rows) {
