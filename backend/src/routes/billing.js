@@ -31,7 +31,11 @@ const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) 
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
-const { createTransport } = require('../config/mailer');
+const { createTransport: baseTransport } = require('../config/mailer');
+// Billing-only QA redirect: set BILLING_EMAIL_REDIRECT on QA to divert ALL
+// billing approval/notification emails to one inbox. Other modules
+// (TS report, plan emails, etc.) are never affected.
+const createTransport = () => baseTransport(process.env.BILLING_EMAIL_REDIRECT);
 
 const canBill = ['admin', 'biller'];
 
