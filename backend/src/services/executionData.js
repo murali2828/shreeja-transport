@@ -61,7 +61,7 @@ async function computeExecutionDistance(client, execId, userId) {
 
     const master = await getMasterDistanceKm(client, a.type, a.id, z.type, z.id);
     if (master != null) {
-      km = master; source = 'master';
+      km = master.km; source = master.fromGoogle ? 'google' : 'master';
     } else if (a.lat != null && a.lng != null && z.lat != null && z.lng != null) {
       const g = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
       if (g != null) {

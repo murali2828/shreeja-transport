@@ -19,11 +19,17 @@ function normalisePair(fromType, fromId, toType, toId) {
 async function getMasterDistanceKm(db, fromType, fromId, toType, toId) {
   const p = normalisePair(fromType, parseInt(fromId), toType, parseInt(toId));
   const r = await db.query(
-    `SELECT distance_km FROM distance_master
+    `SELECT distance_km, road_notes FROM distance_master
      WHERE from_type=$1 AND from_id=$2 AND to_type=$3 AND to_id=$4`,
     [p.fromType, p.fromId, p.toType, p.toId]
   );
-  return r.rows.length ? parseFloat(r.rows[0].distance_km) : null;
+  if (!r.rows.length) return null;
+  return {
+    km: parseFloat(r.rows[0].distance_km),
+    // Rows cached from the Routes API keep their Google attribution even
+    // though they now live in the Distance Master.
+    fromGoogle: /google/i.test(r.rows[0].road_notes || ''),
+  };
 }
 
 // Cache a road km into Distance Master (insert or update). Used to persist
