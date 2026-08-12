@@ -58,7 +58,10 @@ export default function TankerBilling() {
 
   const saveMut = useMutation({
     mutationFn: () => api.put(`/billing/runs/${openRunId}/trips`, {
-      trips: Object.entries(edits).map(([id, e]) => ({ id: +id, ...e })),
+      trips: Object.entries(edits).map(([id, e]) => ({
+        id: +id, ...e,
+        legs: e.legs ? Object.entries(e.legs).map(([i, km]) => ({ index: +i, km: +km })) : undefined,
+      })),
     }),
     onSuccess: r => {
       const noRate = (r.data.updated || []).filter(u => u.no_rate).length;
@@ -97,6 +100,10 @@ export default function TankerBilling() {
 
   const setEdit = (tripId, field, val) =>
     setEdits(prev => ({ ...prev, [tripId]: { ...prev[tripId], [field]: val } }));
+  const setLegEdit = (tripId, index, km) =>
+    setEdits(prev => ({ ...prev, [tripId]: {
+      ...prev[tripId], legs: { ...(prev[tripId]?.legs || {}), [index]: km },
+    } }));
   const val = (t, field) => edits[t.id]?.[field] !== undefined ? edits[t.id][field] : (t[field] ?? '');
   const editable = canEdit && run && ['draft', 'rejected'].includes(run.status);
 
@@ -194,7 +201,13 @@ export default function TankerBilling() {
         </button>
         {editable && (<>
           <button className="btn-secondary text-xs" disabled={!Object.keys(edits).length || saveMut.isPending}
-                  onClick={() => saveMut.mutate()}>
+                  onClick={() => {
+                    const missingRemark = Object.entries(edits).some(([id, e]) =>
+                      e.legs && Object.keys(e.legs).length &&
+                      !String(e.remarks ?? trips.find(t => t.id === +id)?.remarks ?? '').trim());
+                    if (missingRemark) return toast.error('Remarks are mandatory for trips whose leg distances were changed');
+                    saveMut.mutate();
+                  }}>
             {saveMut.isPending ? 'Saving…' : `Save (${Object.keys(edits).length})`}
           </button>
           <button className="btn-primary text-xs flex items-center gap-1.5" disabled={submitMut.isPending}
@@ -250,7 +263,8 @@ export default function TankerBilling() {
                   <FragmentRow key={t.id} t={t} editable={editable} expanded={!!expanded[t.id]}
                     carried={run?.from_date && t.plan_for_date < run.from_date}
                     onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
-                    val={val} setEdit={setEdit} />
+                    val={val} setEdit={setEdit}
+                    legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit} />
                 ))}
                 <tr className="bg-blue-100 font-bold">
                   <td className="px-2 py-2" colSpan={11}>TOTAL — {trips.length} trips</td>
@@ -313,8 +327,11 @@ export default function TankerBilling() {
   );
 }
 
-function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried }) {
+function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried, legEdits = {}, setLegEdit }) {
   const legs = Array.isArray(t.legs) ? t.legs : (t.legs ? JSON.parse(t.legs) : []);
+  const legKm = (l, i) => legEdits[i] !== undefined && legEdits[i] !== '' ? +legEdits[i] : (+l.km || 0);
+  const legsTotal = legs.reduce((s, l, i) => s + legKm(l, i), 0);
+  const legsEdited = Object.keys(legEdits).length > 0;
   return (<>
     <tr className="border-t border-gray-100 hover:bg-blue-50/40">
       <td className="px-2 py-1.5">
@@ -366,7 +383,9 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried })
         <td/>
         <td colSpan={15} className="px-3 py-2">
           <div className="text-[11px] font-semibold text-gray-600 mb-1">
-            Distance legs — Master {nf(t.master_km)} km · Google {nf(t.google_km)} km · Estimated {nf(t.estimated_km)} km · Total {nf(t.system_km)} km
+            Distance legs — Master {nf(t.master_km)} km · Google {nf(t.google_km)} km · Estimated {nf(t.estimated_km)} km ·
+            Total {nf(legsTotal)} km
+            {legsEdited && <span className="ml-2 text-purple-700">✎ edited — billed km follows the new total on save; remarks mandatory</span>}
           </div>
           <table className="text-[11px]">
             <tbody>
@@ -374,13 +393,24 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried })
                 <tr key={i}>
                   <td className="pr-3 py-0.5">{l.from_label}</td>
                   <td className="pr-3 py-0.5">→ {l.to_label}</td>
-                  <td className="pr-3 py-0.5 text-right font-semibold">{nf(l.km)} km</td>
+                  <td className="pr-3 py-0.5 text-right font-semibold">
+                    {editable
+                      ? <input type="number" step="0.01" min="0"
+                               className="input py-0 px-1 text-[11px] w-20 text-right"
+                               value={legEdits[i] !== undefined ? legEdits[i] : (l.km ?? '')}
+                               onChange={e => setLegEdit(t.id, i, e.target.value)}/>
+                      : <>{nf(l.km)} km</>}
+                  </td>
                   <td className="pr-3 py-0.5">
                     <span className={`px-1.5 rounded text-white text-[10px] ${
-                      l.source === 'master' ? 'bg-blue-600' : l.source === 'google' ? 'bg-green-600'
+                      legEdits[i] !== undefined || l.source === 'manual' ? 'bg-purple-600'
+                      : l.source === 'master' ? 'bg-blue-600' : l.source === 'google' ? 'bg-green-600'
                       : l.source === 'estimated' ? 'bg-amber-500' : 'bg-red-500'}`}>
-                      {l.source}
+                      {legEdits[i] !== undefined || l.source === 'manual' ? 'manual' : l.source}
                     </span>
+                  </td>
+                  <td className="pr-3 py-0.5 text-gray-400">
+                    {l.orig_km != null && <span title="Original system distance">was {nf(l.orig_km)} km</span>}
                   </td>
                 </tr>
               ))}
@@ -515,10 +545,7 @@ function PaymentReport() {
                   <tbody>
                     {data.trips.map((t, i) => (
                       <tr key={i} className="border-t border-gray-100">
-                        <td className="px-2 py-1.5 whitespace-nowrap">
-        {t.plan_for_date}
-        {carried && <span className="ml-1 px-1 rounded bg-amber-500 text-white text-[10px]" title="Late acknowledgement — carried forward from the previous fortnight">carry-fwd</span>}
-      </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{t.plan_for_date}</td>
                         <td className="px-2 py-1.5">#{t.run_id}</td>
                         <td className="px-2 py-1.5">{t.run_status}</td>
                         <td className="px-2 py-1.5 font-semibold text-[#005ba3]">{t.tanker_number}</td>

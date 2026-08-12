@@ -171,11 +171,38 @@ router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, r
       if (!cur.rows.length) continue;
       const t = cur.rows[0];
       const state          = u.state !== undefined ? (u.state || null) : t.state;
-      const billedKm       = u.billed_km !== undefined ? rN(u.billed_km) : t.billed_km;
+      let   billedKm       = u.billed_km !== undefined ? rN(u.billed_km) : t.billed_km;
       const remarks        = u.remarks !== undefined ? (u.remarks || null) : t.remarks;
       const transportType  = u.transport_type !== undefined ? u.transport_type : t.transport_type;
       if (state && !STATES.includes(state))
         return res.status(400).json({ error: `Invalid state: ${state}` });
+
+      // Leg-level distance edits: [{index, km}]. Edited legs become source
+      // 'manual' (original km preserved as orig_km); billed km follows the new
+      // leg total unless the biller typed a billed km themselves. Remarks are
+      // MANDATORY whenever a leg distance is changed.
+      let legsArr = Array.isArray(t.legs) ? t.legs : JSON.parse(t.legs || '[]');
+      let legsChanged = false;
+      if (Array.isArray(u.legs)) {
+        for (const le of u.legs) {
+          const i = parseInt(le.index, 10), km = rN(le.km);
+          if (!Number.isInteger(i) || i < 0 || i >= legsArr.length || km == null || km < 0)
+            return res.status(400).json({ error: `Invalid leg distance edit on trip ${t.tanker_number} (${t.plan_for_date})` });
+          const leg = legsArr[i];
+          if (rN(leg.km) !== km) {
+            if (leg.orig_km == null) leg.orig_km = leg.km;
+            leg.km = km;
+            leg.source = 'manual';
+            legsChanged = true;
+          }
+        }
+        if (legsChanged) {
+          if (!String(remarks || '').trim())
+            return res.status(400).json({ error: `Remarks are mandatory when leg distances are edited (${t.tanker_number}, ${t.plan_for_date})` });
+          if (u.billed_km === undefined)
+            billedKm = rN(legsArr.reduce((s, l) => s + (parseFloat(l.km) || 0), 0));
+        }
+      }
 
       let rateId = t.rate_id, ratePerKm = t.rate_per_km;
       const rate = await findRate(state, transportType, t.capacity_litres, t.plan_for_date);
@@ -186,9 +213,10 @@ router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, r
       await query(`
         UPDATE billing_run_trips
         SET state=$1, billed_km=$2, remarks=$3, transport_type=$4,
-            rate_id=$5, rate_per_km=$6, amount=$7, updated_at=NOW()
-        WHERE id=$8`,
-        [state, billedKm, remarks, transportType, rateId, ratePerKm, amount, u.id]);
+            rate_id=$5, rate_per_km=$6, amount=$7, legs=$8, updated_at=NOW()
+        WHERE id=$9`,
+        [state, billedKm, remarks, transportType, rateId, ratePerKm, amount,
+         JSON.stringify(legsArr), u.id]);
       results.push({ id: u.id, rate_per_km: ratePerKm, amount, no_rate: state != null && !rate });
     }
     // refresh run total
