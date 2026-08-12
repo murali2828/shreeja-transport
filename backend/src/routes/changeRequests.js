@@ -23,14 +23,7 @@ const APPROVER_CC = () => (process.env.CHANGE_APPROVER_CC
   || 'billing1@shreejamilk.com,billing2@shreejamilk.com,rajesh.k@shreejamilk.com')
   .split(',').map(s => s.trim()).filter(Boolean);
 
-function createTransport() {
-  return nodemailer.createTransport({
-    host:   process.env.SMTP_HOST,
-    port:   parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_SECURE === 'true',
-    auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-}
+const { createTransport } = require('../config/mailer');
 
 async function getApprover() {
   const r = await query(

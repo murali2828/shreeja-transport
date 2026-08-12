@@ -8,14 +8,7 @@ const nodemailer   = require('nodemailer');
 const { pool, query } = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 
-function createTransport() {
-  return nodemailer.createTransport({
-    host:   process.env.SMTP_HOST,
-    port:   parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-  });
-}
+const { createTransport } = require('../config/mailer');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 

@@ -9,14 +9,7 @@ const { query }  = require('../config/db');
 // Days-before-expiry milestones at which to alert. -1 represents "expired".
 const THRESHOLDS = [30, 15, 7, 1, -1];
 
-function createTransport() {
-  return nodemailer.createTransport({
-    host:   process.env.SMTP_HOST,
-    port:   parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_SECURE === 'true',
-    auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-}
+const { createTransport } = require('../config/mailer');
 
 // Pick the milestone that a given daysLeft value has just crossed.
 // e.g. daysLeft=20 → 30 (already within 30-day window); daysLeft=15 → 15; daysLeft<0 → -1.

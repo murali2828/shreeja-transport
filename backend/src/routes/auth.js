@@ -40,14 +40,10 @@ query(`
   )
 `).catch(err => console.error('Migration error (password_reset_tokens):', err.message));
 
+const { createTransport } = require('../config/mailer');
 function getEmailTransporter() {
   return {
-    transporter: nodemailer.createTransport({
-      host:   process.env.SMTP_HOST,
-      port:   parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    }),
+    transporter: createTransport(),
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
   };
 }
