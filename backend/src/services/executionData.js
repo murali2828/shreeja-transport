@@ -57,16 +57,17 @@ async function computeExecutionDistance(client, execId, userId) {
 
   for (let i = 0; i < nodes.length - 1; i++) {
     const a = nodes[i], z = nodes[i + 1];
-    let km = 0, source = 'missing', isNew = false;
+    let km = 0, source = 'missing', isNew = false, googleKm = null;
 
     const master = await getMasterDistanceKm(client, a.type, a.id, z.type, z.id);
     if (master != null) {
       km = master.km; source = master.fromGoogle ? 'google' : 'master';
+      if (master.fromGoogle) googleKm = master.km;
     } else if (a.lat != null && a.lng != null && z.lat != null && z.lng != null) {
       isNew = true; // pair was NOT in the Distance Master — new combination
       const g = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
       if (g != null) {
-        km = g; source = 'google';
+        km = g; source = 'google'; googleKm = g;
         await upsertMasterDistanceKm(client, a.type, a.id, z.type, z.id, g, 'auto: Google Routes API', userId);
       } else {
         km = haversineKm(a.lat, a.lng, z.lat, z.lng) * ROAD_FACTOR;
@@ -81,6 +82,7 @@ async function computeExecutionDistance(client, execId, userId) {
     total += km;
     const leg = { from_label: a.label, to_label: z.label, km, source };
     if (isNew) leg.is_new = true; // new combination — flagged for approval
+    if (googleKm != null) leg.google_km = Math.round(googleKm * 100) / 100; // Google reference, survives manual edits
     legs.push(leg);
   }
 

@@ -365,7 +365,8 @@ function collectNewCombos(trips) {
     const legs = Array.isArray(t.legs) ? t.legs : JSON.parse(t.legs || '[]');
     for (const l of legs) if (l.is_new)
       combos.push({ date: t.plan_for_date, tanker: t.tanker_number,
-                    from: l.from_label, to: l.to_label, km: l.km, source: l.source });
+                    from: l.from_label, to: l.to_label, km: l.km,
+                    google_km: l.google_km, source: l.source });
   }
   return combos;
 }
@@ -396,9 +397,10 @@ function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = [
       <p style="font-size:13px;font-weight:700;margin:16px 0 6px;color:#b45309;">
         ⚠ New Route Combinations — ${newCombos.length} leg(s) not in the KM Master (your approval of this run approves these)</p>
       <table style="border-collapse:collapse;width:100%;">
-        ${row(['Date', 'Tanker', 'From', 'To', 'KM', 'Source'], true)}
-        ${newCombos.slice(0, 30).map(c => row([c.date, esc(c.tanker), esc(c.from), esc(c.to), nf(c.km), esc(c.source)])).join('')}
-        ${newCombos.length > 30 ? row([`… and ${newCombos.length - 30} more — see the attached report`, '', '', '', '', '']) : ''}
+        ${row(['Date', 'Tanker', 'From', 'To', 'KM', 'Google KM (ref)', 'Source'], true)}
+        ${newCombos.slice(0, 30).map(c => row([c.date, esc(c.tanker), esc(c.from), esc(c.to), nf(c.km),
+          c.google_km != null ? nf(c.google_km) : '—', esc(c.source)])).join('')}
+        ${newCombos.length > 30 ? row([`… and ${newCombos.length - 30} more — see the attached report`, '', '', '', '', '', '']) : ''}
       </table>` : ''}
       <div style="margin:22px 0;text-align:center;">
         <a href="${approveUrl}" style="background:#16a34a;color:#fff;padding:11px 30px;border-radius:8px;text-decoration:none;font-weight:700;margin-right:14px;">✓ APPROVE</a>
