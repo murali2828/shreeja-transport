@@ -146,9 +146,9 @@ router.get('/runs/:id', authenticate, authorize(...canBill, 'viewer'), async (re
       FROM billing_runs br WHERE br.id = $1`, [req.params.id]);
     if (!run.rows.length) return res.status(404).json({ error: 'Run not found' });
     const trips = await query(`
-      SELECT *, plan_for_date::text AS plan_for_date
-      FROM billing_run_trips WHERE run_id = $1
-      ORDER BY plan_for_date, tanker_number`, [req.params.id]);
+      SELECT t.*, t.plan_for_date::text AS plan_for_date
+      FROM billing_run_trips t WHERE t.run_id = $1
+      ORDER BY t.plan_for_date, t.tanker_number`, [req.params.id]);
     const approvals = await query(`
       SELECT level, approver_email, status, remarks, decided_at
       FROM billing_run_approvals WHERE run_id = $1 ORDER BY level`, [req.params.id]);
@@ -246,7 +246,7 @@ router.get('/runs/:id/summary', authenticate, authorize(...canBill, 'viewer'), a
 // ── Excel report (trip / tanker / vendor sheets, incl. system+google km) ─────
 async function buildRunWorkbook(runId) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
-  const trips = (await query('SELECT *, plan_for_date::text AS plan_for_date FROM billing_run_trips WHERE run_id=$1 ORDER BY plan_for_date, tanker_number', [runId])).rows;
+  const trips = (await query('SELECT t.*, t.plan_for_date::text AS plan_for_date FROM billing_run_trips t WHERE t.run_id=$1 ORDER BY t.plan_for_date, t.tanker_number', [runId])).rows;
   const { tankers, vendors, dates } = await runSummaries(runId);
   const approvals = (await query('SELECT level, approver_email, status, remarks, decided_at FROM billing_run_approvals WHERE run_id=$1 ORDER BY level', [runId])).rows;
 
