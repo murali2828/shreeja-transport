@@ -189,6 +189,8 @@ router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, r
       const transportType  = u.transport_type !== undefined ? u.transport_type : t.transport_type;
       if (state && !STATES.includes(state))
         return res.status(400).json({ error: `Invalid state: ${state}` });
+      if (u.transport_type !== undefined && !['BMCU/CC to Dairy/CC', 'Point to Point'].includes(u.transport_type))
+        return res.status(400).json({ error: `Invalid transport type: ${u.transport_type}` });
 
       // Leg-level distance edits: [{index, km}]. Edited legs become source
       // 'manual' (original km preserved as orig_km); billed km follows the new

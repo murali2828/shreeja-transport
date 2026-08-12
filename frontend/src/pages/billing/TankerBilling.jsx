@@ -107,10 +107,10 @@ export default function TankerBilling() {
     setEdits(prev => ({ ...prev, [tripId]: { ...prev[tripId], [field]: val } }));
   // Fetch the rate as soon as a state is picked so the biller sees rate +
   // amount BEFORE saving. The save still recomputes authoritatively.
-  const previewRate = (t, state) => {
+  const previewRate = (t, state, transportType) => {
     if (!state) return setRatePreviews(p => ({ ...p, [t.id]: undefined }));
     api.get('/billing/rate-lookup', { params: {
-      state, transport_type: t.transport_type,
+      state, transport_type: transportType || t.transport_type,
       capacity_litres: t.capacity_litres, plan_date: t.plan_for_date,
     } }).then(r => setRatePreviews(p => ({ ...p, [t.id]: r.data.rate_per_km })))
       .catch(() => {});
@@ -393,13 +393,23 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
       <td className="px-2 py-1.5">
         {editable
           ? <select className="input py-0.5 px-1 text-xs" value={val(t, 'state')}
-                    onChange={e => { setEdit(t.id, 'state', e.target.value); previewRate(t, e.target.value); }}>
+                    onChange={e => { setEdit(t.id, 'state', e.target.value); previewRate(t, e.target.value, val(t, 'transport_type')); }}>
               <option value="">— select —</option>
               {STATES.map(s => <option key={s}>{s}</option>)}
             </select>
           : (t.state || <span className="text-red-600">—</span>)}
       </td>
-      <td className="px-2 py-1.5 whitespace-nowrap">{t.transport_type}</td>
+      <td className="px-2 py-1.5 whitespace-nowrap">
+        {editable
+          ? <select className="input py-0.5 px-1 text-xs"
+                    title="Auto-derived from BMCU count — biller may override; rate refreshes"
+                    value={val(t, 'transport_type')}
+                    onChange={e => { setEdit(t.id, 'transport_type', e.target.value); previewRate(t, val(t, 'state'), e.target.value); }}>
+              <option>BMCU/CC to Dairy/CC</option>
+              <option>Point to Point</option>
+            </select>
+          : t.transport_type}
+      </td>
       <td className="px-2 py-1.5 text-right" title={`Master ${nf(t.master_km)} + Google ${nf(t.google_km)} + Estimated ${nf(t.estimated_km)}`}>
         {nf(t.system_km)}
       </td>
