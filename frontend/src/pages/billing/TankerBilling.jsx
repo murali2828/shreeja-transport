@@ -255,7 +255,7 @@ export default function TankerBilling() {
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
                 <tr>{['', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
-                     'State *', 'Transport Type', 'System KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
+                     'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
               <tbody>
@@ -269,6 +269,7 @@ export default function TankerBilling() {
                 <tr className="bg-blue-100 font-bold">
                   <td className="px-2 py-2" colSpan={11}>TOTAL — {trips.length} trips</td>
                   <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
                   <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
                   <td/>
                   <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+t.amount || 0), 0))}</td>
@@ -363,6 +364,9 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried, l
       <td className="px-2 py-1.5 text-right" title={`Master ${nf(t.master_km)} + Google ${nf(t.google_km)} + Estimated ${nf(t.estimated_km)}`}>
         {nf(t.system_km)}
       </td>
+      <td className="px-2 py-1.5 text-right text-green-700" title="Google Routes API distance (part of System KM)">
+        {nf(t.google_km)}
+      </td>
       <td className="px-2 py-1.5 text-right">
         {editable
           ? <input type="number" step="0.01" className="input py-0.5 px-1 text-xs w-20 text-right"
@@ -381,7 +385,7 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried, l
     {expanded && (
       <tr className="bg-gray-50">
         <td/>
-        <td colSpan={15} className="px-3 py-2">
+        <td colSpan={16} className="px-3 py-2">
           <div className="text-[11px] font-semibold text-gray-600 mb-1">
             Distance legs — Master {nf(t.master_km)} km · Google {nf(t.google_km)} km · Estimated {nf(t.estimated_km)} km ·
             Total {nf(legsTotal)} km
