@@ -28,6 +28,7 @@ export default function TankerBilling() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [edits, setEdits] = useState({});      // tripId -> {state, billed_km, remarks}
+  const [ratePreviews, setRatePreviews] = useState({}); // tripId -> rate_per_km | null (unsaved)
   const [expanded, setExpanded] = useState({}); // tripId -> bool
   const [tab, setTab] = useState('trips');     // trips | tankers | vendors
 
@@ -68,6 +69,7 @@ export default function TankerBilling() {
       toast.success(`Saved · run total ₹ ${nf(r.data.total_amount)}`);
       if (noRate) toast.error(`${noRate} trip(s) have no matching rate for the selected state/capacity/period — check Tanker Rates`, { duration: 8000 });
       setEdits({});
+      setRatePreviews({});
       qc.invalidateQueries(['billing-run', openRunId]);
       qc.invalidateQueries(['billing-summary']);
     },
@@ -100,6 +102,16 @@ export default function TankerBilling() {
 
   const setEdit = (tripId, field, val) =>
     setEdits(prev => ({ ...prev, [tripId]: { ...prev[tripId], [field]: val } }));
+  // Fetch the rate as soon as a state is picked so the biller sees rate +
+  // amount BEFORE saving. The save still recomputes authoritatively.
+  const previewRate = (t, state) => {
+    if (!state) return setRatePreviews(p => ({ ...p, [t.id]: undefined }));
+    api.get('/billing/rate-lookup', { params: {
+      state, transport_type: t.transport_type,
+      capacity_litres: t.capacity_litres, plan_date: t.plan_for_date,
+    } }).then(r => setRatePreviews(p => ({ ...p, [t.id]: r.data.rate_per_km })))
+      .catch(() => {});
+  };
   const setLegEdit = (tripId, index, km) =>
     setEdits(prev => ({ ...prev, [tripId]: {
       ...prev[tripId], legs: { ...(prev[tripId]?.legs || {}), [index]: km },
@@ -264,7 +276,8 @@ export default function TankerBilling() {
                     carried={run?.from_date && t.plan_for_date < run.from_date}
                     onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
                     val={val} setEdit={setEdit}
-                    legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit} />
+                    legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}
+                    ratePreview={ratePreviews[t.id]} previewRate={previewRate} />
                 ))}
                 <tr className="bg-blue-100 font-bold">
                   <td className="px-2 py-2" colSpan={11}>TOTAL — {trips.length} trips</td>
@@ -328,7 +341,15 @@ export default function TankerBilling() {
   );
 }
 
-function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried, legEdits = {}, setLegEdit }) {
+function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
+                       legEdits = {}, setLegEdit, ratePreview, previewRate }) {
+  // Unsaved rate preview (fetched on state selection) takes display precedence
+  const hasPreview = ratePreview !== undefined;
+  const effRate = hasPreview ? ratePreview : t.rate_per_km;
+  const effBilled = +(val(t, 'billed_km') || 0);
+  const effAmount = hasPreview
+    ? (effRate != null ? effBilled * effRate : null)
+    : t.amount;
   const legs = Array.isArray(t.legs) ? t.legs : (t.legs ? JSON.parse(t.legs) : []);
   const legKm = (l, i) => legEdits[i] !== undefined && legEdits[i] !== '' ? +legEdits[i] : (+l.km || 0);
   const legsTotal = legs.reduce((s, l, i) => s + legKm(l, i), 0);
@@ -354,7 +375,7 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried, l
       <td className="px-2 py-1.5">
         {editable
           ? <select className="input py-0.5 px-1 text-xs" value={val(t, 'state')}
-                    onChange={e => setEdit(t.id, 'state', e.target.value)}>
+                    onChange={e => { setEdit(t.id, 'state', e.target.value); previewRate(t, e.target.value); }}>
               <option value="">— select —</option>
               {STATES.map(s => <option key={s}>{s}</option>)}
             </select>
@@ -373,8 +394,12 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried, l
                    value={val(t, 'billed_km')} onChange={e => setEdit(t.id, 'billed_km', e.target.value)}/>
           : nf(t.billed_km)}
       </td>
-      <td className="px-2 py-1.5 text-right">{t.rate_per_km != null ? nf(t.rate_per_km) : <span className="text-red-600">no rate</span>}</td>
-      <td className="px-2 py-1.5 text-right font-bold">{nf(t.amount)}</td>
+      <td className="px-2 py-1.5 text-right" title={hasPreview ? 'Fetched for the selected state — click Save to apply' : undefined}>
+        {effRate != null
+          ? <span className={hasPreview ? 'text-amber-700 font-semibold' : ''}>{nf(effRate)}</span>
+          : <span className="text-red-600">no rate</span>}
+      </td>
+      <td className={`px-2 py-1.5 text-right font-bold ${hasPreview ? 'text-amber-700' : ''}`}>{nf(effAmount)}</td>
       <td className="px-2 py-1.5">
         {editable
           ? <input type="text" className="input py-0.5 px-1 text-xs w-36" placeholder="remarks"

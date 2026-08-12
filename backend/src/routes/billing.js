@@ -127,6 +127,17 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
   } finally { client.release(); }
 });
 
+// ── GET /api/billing/rate-lookup — live rate preview for the run editor ──────
+// Called when the biller selects a State so the rate/amount show immediately,
+// before Save. Same findRate the save path uses.
+router.get('/rate-lookup', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+  try {
+    const { state, transport_type, capacity_litres, plan_date } = req.query;
+    const rate = await findRate(state, transport_type, capacity_litres, plan_date);
+    res.json({ rate_per_km: rate ? parseFloat(rate.rate_per_km) : null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── GET /api/billing/runs — list ─────────────────────────────────────────────
 router.get('/runs', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
   try {
