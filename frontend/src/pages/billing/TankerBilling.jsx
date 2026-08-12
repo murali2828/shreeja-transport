@@ -51,6 +51,9 @@ export default function TankerBilling() {
     mutationFn: () => api.post('/billing/runs', { from_date: from, to_date: to }),
     onSuccess: r => {
       toast.success(`Run created — ${r.data.trips} acknowledged trips loaded`);
+      if (r.data.new_combinations > 0)
+        toast(`⚠ ${r.data.new_combinations} new route combination(s) not in the KM Master — flagged for the approval chain`,
+              { duration: 9000, icon: '⚠️' });
       qc.invalidateQueries(['billing-runs']);
       setOpenRunId(r.data.id);
     },
@@ -189,6 +192,10 @@ export default function TankerBilling() {
   const [label, color] = STATUS_LABEL[run?.status] || ['…', '#666'];
   const trips = run?.trips || [];
   const missing = trips.filter(t => !val(t, 'state') || t.rate_per_km == null).length;
+  const newComboCount = trips.reduce((s, t) => {
+    const legs = Array.isArray(t.legs) ? t.legs : (t.legs ? JSON.parse(t.legs) : []);
+    return s + legs.filter(l => l.is_new).length;
+  }, 0);
 
   return (
     <div className="p-4 space-y-4">
@@ -232,6 +239,17 @@ export default function TankerBilling() {
           </button>
         </>)}
       </div>
+
+      {/* new route combinations — approval-chain notice */}
+      {newComboCount > 0 && (
+        <div className="card p-3 text-xs" style={{ background: '#fdf3e3', border: '1px solid #c98500' }}>
+          <span className="font-bold" style={{ color: '#8a5a00' }}>⚠ {newComboCount} new route combination(s)</span>
+          <span style={{ color: '#57534e' }}> — leg distances whose pair was not in the KM Master (marked
+          <span className="mx-1 px-1.5 rounded text-white text-[10px]" style={{ background: '#c98500' }}>new combo</span>
+          in the leg breakdown). They are listed in the approval emails; approval of this run by all three levels
+          constitutes the competent-authority approval of these combinations.</span>
+        </div>
+      )}
 
       {/* approval trail */}
       {run?.approvals?.length > 0 && (
@@ -437,6 +455,10 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
                       : l.source === 'estimated' ? 'bg-amber-500' : 'bg-red-500'}`}>
                       {legEdits[i] !== undefined || l.source === 'manual' ? 'manual' : l.source}
                     </span>
+                  </td>
+                  <td className="pr-3 py-0.5">
+                    {l.is_new && <span className="px-1.5 rounded text-white text-[10px]" style={{ background: '#c98500' }}
+                                       title="This pair was not in the KM Master when the run executed — approval of the run approves this combination">new combo</span>}
                   </td>
                   <td className="pr-3 py-0.5 text-gray-400">
                     {l.orig_km != null && <span title="Original system distance">was {nf(l.orig_km)} km</span>}

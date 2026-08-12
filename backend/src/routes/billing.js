@@ -100,9 +100,11 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
       ORDER BY tp.plan_for_date, t.tanker_number`, [from_date, to_date]);
 
+    let newCombos = 0;
     for (const tr of trips.rows) {
       // System distance with leg breakdown (Master → Google → estimate)
       const dist = await computeExecutionDistance(client, tr.execution_id, req.user.id);
+      newCombos += dist.legs.filter(l => l.is_new).length;
       const sumBy = src => rN(dist.legs.filter(l => l.source === src).reduce((s, l) => s + l.km, 0));
       const transportType = tr.bmcu_count > 1 ? 'BMCU/CC to Dairy/CC' : 'Point to Point';
       await client.query(`
@@ -119,7 +121,7 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
          rN(dist.total_km), JSON.stringify(dist.legs)]);
     }
     await client.query('COMMIT');
-    res.json({ id: runId, trips: trips.rows.length });
+    res.json({ id: runId, trips: trips.rows.length, new_combinations: newCombos });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Billing run create error:', err);
@@ -352,7 +354,21 @@ router.get('/runs/:id/report', authenticate, authorize(...canBill, 'viewer'), as
 });
 
 // ── Approval emails ──────────────────────────────────────────────────────────
-function approvalEmailHtml(run, tankers, vendors, approver, token) {
+// New route combinations (legs whose pair was absent from the Distance
+// Master when the run executed) — surfaced to the approval chain so approving
+// the run is the competent-authority approval of these combinations.
+function collectNewCombos(trips) {
+  const combos = [];
+  for (const t of trips) {
+    const legs = Array.isArray(t.legs) ? t.legs : JSON.parse(t.legs || '[]');
+    for (const l of legs) if (l.is_new)
+      combos.push({ date: t.plan_for_date, tanker: t.tanker_number,
+                    from: l.from_label, to: l.to_label, km: l.km, source: l.source });
+  }
+  return combos;
+}
+
+function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = []) {
   const base = BASE_URL();
   const approveUrl = `${base}/api/billing/decide?token=${token}&decision=approve`;
   const rejectUrl  = `${base}/billing-decision?token=${token}&decision=reject`;
@@ -374,6 +390,14 @@ function approvalEmailHtml(run, tankers, vendors, approver, token) {
         ${row(['Vendor', 'Tankers', 'Trips', 'Billed KM', 'Amount (₹)'], true)}
         ${vendors.map(v => row([esc(v.vendor_name), v.tankers, v.trips, nf(v.billed_km), nf(v.amount)])).join('')}
       </table>
+      ${newCombos.length ? `
+      <p style="font-size:13px;font-weight:700;margin:16px 0 6px;color:#b45309;">
+        ⚠ New Route Combinations — ${newCombos.length} leg(s) not in the KM Master (your approval of this run approves these)</p>
+      <table style="border-collapse:collapse;width:100%;">
+        ${row(['Date', 'Tanker', 'From', 'To', 'KM', 'Source'], true)}
+        ${newCombos.slice(0, 30).map(c => row([c.date, esc(c.tanker), esc(c.from), esc(c.to), nf(c.km), esc(c.source)])).join('')}
+        ${newCombos.length > 30 ? row([`… and ${newCombos.length - 30} more — see the attached report`, '', '', '', '', '']) : ''}
+      </table>` : ''}
       <div style="margin:22px 0;text-align:center;">
         <a href="${approveUrl}" style="background:#16a34a;color:#fff;padding:11px 30px;border-radius:8px;text-decoration:none;font-weight:700;margin-right:14px;">✓ APPROVE</a>
         <a href="${rejectUrl}"  style="background:#dc2626;color:#fff;padding:11px 30px;border-radius:8px;text-decoration:none;font-weight:700;">✗ REJECT</a>
@@ -388,13 +412,13 @@ async function sendApprovalEmail(runId, level) {
   const approver = APPROVERS.find(a => a.level === level);
   const ap = await query('SELECT token FROM billing_run_approvals WHERE run_id=$1 AND level=$2', [runId, level]);
   if (!ap.rows.length) throw new Error(`No approval row for run ${runId} level ${level}`);
-  const { wb, run, tankers, vendors } = await buildRunWorkbook(runId);
+  const { wb, run, trips, tankers, vendors } = await buildRunWorkbook(runId);
   const buf = Buffer.from(await wb.xlsx.writeBuffer());
   await createTransport().sendMail({
     from: process.env.SMTP_FROM,
     to: approver.email,
     subject: `Tanker Payment Approval L${level} — Run #${runId} (${run.from_date} → ${run.to_date}) · ₹ ${nf(run.total_amount)}`,
-    html: approvalEmailHtml(run, tankers, vendors, approver, ap.rows[0].token),
+    html: approvalEmailHtml(run, tankers, vendors, approver, ap.rows[0].token, collectNewCombos(trips)),
     attachments: [{ filename: `tanker_billing_${run.from_date}_${run.to_date}.xlsx`, content: buf }],
   });
   await query(`UPDATE billing_run_approvals SET status='pending' WHERE run_id=$1 AND level=$2`, [runId, level]);
@@ -406,6 +430,67 @@ async function notifyBiller(runId, subject, bodyHtml) {
   const to = u.rows[0]?.email;
   if (!to) return;
   await createTransport().sendMail({ from: process.env.SMTP_FROM, to, subject, html: bodyHtml }).catch(() => {});
+}
+
+// ── Transporter publishing — on final approval, email each vendor an Excel of
+// THEIR trips (km, rate, amount). Vendors without an email in the Vendor
+// master are reported back to the biller instead.
+async function publishRunToVendors(runId) {
+  const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
+  const trips = (await query(`
+    SELECT t.*, t.plan_for_date::text AS plan_for_date, v.email AS vendor_email
+    FROM billing_run_trips t LEFT JOIN vendors v ON v.id = t.vendor_id
+    WHERE t.run_id=$1 ORDER BY t.plan_for_date, t.tanker_number`, [runId])).rows;
+
+  const byVendor = new Map();
+  for (const t of trips) {
+    const key = t.vendor_id || 'none';
+    if (!byVendor.has(key)) byVendor.set(key, { name: t.vendor_name || '— No vendor mapped —', email: t.vendor_email, trips: [] });
+    byVendor.get(key).trips.push(t);
+  }
+
+  const results = [];
+  for (const [key, v] of byVendor) {
+    const total = v.trips.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+    if (key === 'none' || !v.email) {
+      results.push(`✗ ${v.name} — NOT sent (no ${key === 'none' ? 'vendor mapped' : 'email in Vendor master'}); ${v.trips.length} trips, ₹ ${nf(total)}`);
+      continue;
+    }
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Trips');
+    ws.addRow([`${v.name} — Tanker Payment ${run.from_date} → ${run.to_date} (Run #${runId}, APPROVED)`]).font = { bold: true, size: 13 };
+    ws.addRow([]);
+    const head = ws.addRow(['Date', 'Tanker', 'Capacity (KL)', 'Route', 'Delivery Point', 'State',
+      'Transport Type', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Remarks']);
+    head.font = { bold: true };
+    ws.columns.forEach(c => { c.width = 16; });
+    v.trips.forEach(t => ws.addRow([t.plan_for_date, t.tanker_number,
+      t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.route_name, t.delivery_point,
+      t.state, t.transport_type, t.billed_km, t.rate_per_km, t.amount, t.remarks]));
+    ws.addRow(['TOTAL', '', '', '', '', '', '',
+      rN(v.trips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '', rN(total), '']).font = { bold: true };
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+
+    try {
+      await createTransport().sendMail({
+        from: process.env.SMTP_FROM,
+        to: v.email,
+        subject: `Shreeja Tanker Payment ${run.from_date} → ${run.to_date} — ${v.name} · ₹ ${nf(total)}`,
+        html: `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
+          <p>Dear ${esc(v.name)},</p>
+          <p>The tanker payment for <b>${run.from_date} → ${run.to_date}</b> has been approved.
+          Your trip sheet is attached: <b>${v.trips.length} trips · ₹ ${nf(total)}</b>.</p>
+          <p>For any discrepancy in distances, contact the Shreeja billing team with the trip
+          date and tanker number — corrections carry remarks and go through approval.</p>
+          <p style="color:#9ca3af;font-size:11px;">Shreeja TMS — automated mail; do not reply.</p></div>`,
+        attachments: [{ filename: `trip_sheet_${run.from_date}_${run.to_date}.xlsx`, content: buf }],
+      });
+      results.push(`✓ ${v.name} — sent to ${v.email} (${v.trips.length} trips, ₹ ${nf(total)})`);
+    } catch (e) {
+      results.push(`✗ ${v.name} — send FAILED to ${v.email}: ${e.message}`);
+    }
+  }
+  return results;
 }
 
 // ── POST /api/billing/runs/:id/submit — start the approval chain ─────────────
@@ -461,9 +546,15 @@ async function decide(token, decision, remarks) {
       return { ok: true, message: `Level ${ap.level} approved. The request has been forwarded to the Level ${ap.level + 1} approver.`, run_id: ap.run_id };
     }
     await query(`UPDATE billing_runs SET status='approved', approved_at=NOW(), updated_at=NOW() WHERE id=$1`, [ap.run_id]);
+    // Transporter publishing: each vendor gets their own trip sheet by email.
+    let pubResults = [];
+    try { pubResults = await publishRunToVendors(ap.run_id); }
+    catch (e) { pubResults = [`✗ Vendor publishing failed: ${e.message}`]; }
     await notifyBiller(ap.run_id, `Billing Run #${ap.run_id} FULLY APPROVED`,
-      `<p style="font-family:sans-serif">Billing run #${ap.run_id} has received final approval. The finance team can make payments per the approved report in the portal (Billing → Run #${ap.run_id}).</p>`);
-    return { ok: true, message: 'Final approval recorded. The billing run is now fully APPROVED and the finance team can proceed with payments.', run_id: ap.run_id };
+      `<p style="font-family:sans-serif">Billing run #${ap.run_id} has received final approval. The finance team can make payments per the approved report in the portal (Billing → Run #${ap.run_id}).</p>
+       <p style="font-family:sans-serif;font-weight:700;">Transporter publishing:</p>
+       <ul style="font-family:sans-serif;font-size:13px;">${pubResults.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`);
+    return { ok: true, message: 'Final approval recorded. The billing run is fully APPROVED; vendor trip sheets have been emailed to transporters on record.', run_id: ap.run_id };
   }
 
   // reject

@@ -57,12 +57,13 @@ async function computeExecutionDistance(client, execId, userId) {
 
   for (let i = 0; i < nodes.length - 1; i++) {
     const a = nodes[i], z = nodes[i + 1];
-    let km = 0, source = 'missing';
+    let km = 0, source = 'missing', isNew = false;
 
     const master = await getMasterDistanceKm(client, a.type, a.id, z.type, z.id);
     if (master != null) {
       km = master.km; source = master.fromGoogle ? 'google' : 'master';
     } else if (a.lat != null && a.lng != null && z.lat != null && z.lng != null) {
+      isNew = true; // pair was NOT in the Distance Master — new combination
       const g = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
       if (g != null) {
         km = g; source = 'google';
@@ -73,11 +74,14 @@ async function computeExecutionDistance(client, execId, userId) {
       }
     } else {
       incomplete = true; // no master value and missing coordinates
+      isNew = true;      // also an unknown (new) combination
     }
 
     km = Math.round(km * 100) / 100;
     total += km;
-    legs.push({ from_label: a.label, to_label: z.label, km, source });
+    const leg = { from_label: a.label, to_label: z.label, km, source };
+    if (isNew) leg.is_new = true; // new combination — flagged for approval
+    legs.push(leg);
   }
 
   total = Math.round(total * 100) / 100;
