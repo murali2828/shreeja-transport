@@ -52,9 +52,12 @@ router.get('/:planId(\\d+)', authenticate, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/:planId(\\d+)/print', authenticate, authorize('admin','planner','executor'), async (req, res) => {
   const planId = req.params.planId;
-  const { doc_type } = req.body;
+  const { doc_type, printed_at } = req.body;
   if (!['gate_pass', 'coa', 'unloading'].includes(doc_type))
     return res.status(400).json({ error: 'doc_type must be gate_pass, coa or unloading' });
+  let manualPrinted;
+  try { manualPrinted = parseManualTs(printed_at, 'Manual date/time'); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
 
   const client = await pool.connect();
   try {
@@ -90,11 +93,11 @@ router.post('/:planId(\\d+)/print', authenticate, authorize('admin','planner','e
 
     await client.query('BEGIN');
     const ins = await client.query(`
-      INSERT INTO trip_document_prints (trip_plan_id, doc_type, print_no, printed_by, printed_by_name)
+      INSERT INTO trip_document_prints (trip_plan_id, doc_type, print_no, printed_by, printed_by_name, printed_at)
       VALUES ($1, $2,
         COALESCE((SELECT MAX(print_no) FROM trip_document_prints WHERE trip_plan_id=$1::int AND doc_type=$2::varchar), 0) + 1,
-        $3, $4)
-      RETURNING print_no, printed_at`, [planId, doc_type, req.user.id, req.user.full_name]);
+        $3, $4, COALESCE($5::timestamptz, NOW()))
+      RETURNING print_no, printed_at`, [planId, doc_type, req.user.id, req.user.full_name, manualPrinted]);
     await client.query('COMMIT');
 
     const fp = await client.query(
@@ -129,6 +132,19 @@ router.post('/:planId(\\d+)/print', authenticate, authorize('admin','planner','e
 // ─────────────────────────────────────────────────────────────────────────────
 const NTGP_REASONS = ['Maintainance', 'Hot water', 'RMT', 'Tankers without driver', 'Others'];
 
+// Optional manual timestamp ('YYYY-MM-DDTHH:mm' from a datetime-local input;
+// DB runs Asia/Kolkata so the local string binds correctly via ::timestamptz).
+// Returns null when absent; throws {code:400} when invalid or in the future.
+function parseManualTs(v, label) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d)) throw Object.assign(new Error(`${label}: invalid date/time`), { code: 400 });
+  if (d.getTime() > Date.now() + 5 * 60 * 1000)
+    throw Object.assign(new Error(`${label} cannot be in the future`), { code: 400 });
+  return s;
+}
+
 // GET /api/trip-docs/non-trip?from_date=&to_date=
 router.get('/non-trip', authenticate, async (req, res) => {
   const { from_date, to_date } = req.query;
@@ -147,7 +163,7 @@ router.get('/non-trip', authenticate, async (req, res) => {
 
 // POST /api/trip-docs/non-trip
 router.post('/non-trip', authenticate, authorize('admin','planner','executor'), async (req, res) => {
-  const { tanker_id, delivery_point_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate } = req.body;
+  const { tanker_id, delivery_point_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate, issued_at } = req.body;
   if (!tanker_id) return res.status(400).json({ error: 'tanker_id required' });
   if (!delivery_point_id) return res.status(400).json({ error: 'Issuing delivery point required' });
   if (!NTGP_REASONS.includes(reason)) return res.status(400).json({ error: 'Invalid reason' });
@@ -156,34 +172,43 @@ router.post('/non-trip', authenticate, authorize('admin','planner','executor'), 
   if (reason === 'RMT' && (!km || !tanker_vendor_rate || !balaji_dairy_rate))
     return res.status(400).json({ error: 'RMT requires KM, Tanker Vendor Rate and Balaji Dairy Rate' });
   try {
+    const manualIssued = parseManualTs(issued_at, 'Issue date/time');
     const isRmt = reason === 'RMT';
     const r = await query(`
       INSERT INTO non_trip_gate_passes
-        (tanker_id, delivery_point_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate, issued_by, issued_by_name)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        (tanker_id, delivery_point_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate, issued_by, issued_by_name, issued_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, COALESCE($12::timestamptz, NOW()))
       RETURNING *`,
       [tanker_id, delivery_point_id, reason, reason === 'Others' ? other_text.trim() : null,
        isRmt ? billing || null : null, isRmt ? remarks || null : null,
        isRmt ? km : null, isRmt ? tanker_vendor_rate : null, isRmt ? balaji_dairy_rate : null,
-       req.user.id, req.user.full_name]);
+       req.user.id, req.user.full_name, manualIssued]);
     const t = await query('SELECT tanker_number, vendor_name FROM tankers WHERE id=$1', [tanker_id]);
     const dp = await query('SELECT name AS delivery_point_name FROM delivery_points WHERE id=$1', [delivery_point_id]);
     res.json({ ...r.rows[0], ...t.rows[0], ...dp.rows[0] });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(err.code === 400 ? 400 : 500).json({ error: err.message }); }
 });
 
 // POST /api/trip-docs/non-trip/:id/return — tanker reported back (e.g. from
-// maintenance). Frees the tanker for trip planning again.
+// maintenance). Frees the tanker for trip planning again. Optional manual
+// returned_at in the body (blank = now); must not precede issue time.
 router.post('/non-trip/:id(\\d+)/return', authenticate, authorize('admin','planner','executor'), async (req, res) => {
   try {
+    const manualReturned = parseManualTs(req.body?.returned_at, 'Return date/time');
+    if (manualReturned) {
+      const chk = await query(
+        'SELECT 1 FROM non_trip_gate_passes WHERE id=$1 AND issued_at <= $2::timestamptz', [req.params.id, manualReturned]);
+      if (!chk.rows.length)
+        return res.status(400).json({ error: 'Return date/time cannot be before the issue date/time' });
+    }
     const r = await query(`
       UPDATE non_trip_gate_passes
-      SET returned_at=NOW(), returned_by_name=$2
+      SET returned_at=COALESCE($3::timestamptz, NOW()), returned_by_name=$2
       WHERE id=$1 AND returned_at IS NULL
-      RETURNING id, returned_at`, [req.params.id, req.user.full_name]);
+      RETURNING id, returned_at`, [req.params.id, req.user.full_name, manualReturned]);
     if (!r.rows.length) return res.status(409).json({ error: 'Gate pass not found or already marked returned' });
     res.json(r.rows[0]);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(err.code === 400 ? 400 : 500).json({ error: err.message }); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

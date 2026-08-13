@@ -581,10 +581,19 @@ export default function ExecutionForm() {
     queryFn:  () => getTripDocPlan(exec.trip_plan_id).then(r => r.data),
     enabled:  !!exec?.trip_plan_id,
   });
+  // Optional manual timestamp for the NEXT trip-document action (tanker OUT /
+  // IN punched later from paper records). Blank = server NOW().
+  const [manualDocTs, setManualDocTs] = useState('');
+  const nowLocalIso = () => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  };
   const printMut = useMutation({
-    mutationFn: ({ docType }) => printTripDoc(exec.trip_plan_id, docType),
+    mutationFn: ({ docType }) => printTripDoc(exec.trip_plan_id, docType, manualDocTs),
     onSuccess: (res, { docType }) => {
       qc.invalidateQueries(['trip-doc-plan']);
+      setManualDocTs('');
       if (docType === 'unloading') {
         toast.success(res.data.is_duplicate
           ? `Already recorded — unloading completed at ${new Date(res.data.first_printed_at).toLocaleString('en-IN')}`
@@ -916,6 +925,13 @@ export default function ExecutionForm() {
           const coaDone = !!docStatus.coa;
           const fmt = ts => ts ? new Date(ts).toLocaleString('en-IN') : '';
           return (<>
+            <label className="flex items-center gap-1 text-[11px] text-gray-600"
+                   title="Optional: actual date & time for the next Gate Pass / COA / Unload action (tanker OUT / IN). Blank = now.">
+              🕐
+              <input type="datetime-local" className="input py-0.5 px-1 text-[11px]"
+                     value={manualDocTs} max={nowLocalIso()}
+                     onChange={e => setManualDocTs(e.target.value)}/>
+            </label>
             <button onClick={() => printMut.mutate({ docType: 'gate_pass' })}
               disabled={printMut.isPending}
               title={gpDone ? `Trip started — first printed ${fmt(docStatus.gate_pass.first_printed_at)} (reprint = duplicate)` : 'Print Gate Pass (starts the trip clock)'}

@@ -16,7 +16,13 @@ const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 
 const fmtTs = ts => ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 const n2 = v => v == null || v === '' ? '—' : parseFloat(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const EMPTY = { tanker_no: '', delivery_point_id: '', reason: 'Maintainance', other_text: '', remarks: '', km: '', tanker_vendor_rate: '', balaji_dairy_rate: '' };
+const nowLocalIso = () => {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+};
+
+const EMPTY = { tanker_no: '', delivery_point_id: '', reason: 'Maintainance', other_text: '', remarks: '', km: '', tanker_vendor_rate: '', balaji_dairy_rate: '', issued_at: '' };
 
 export default function NonTripGatePass() {
   const qc = useQueryClient();
@@ -55,9 +61,11 @@ export default function NonTripGatePass() {
     onError: (e) => toast.error(e.response?.data?.error || 'Failed to issue gate pass'),
   });
 
+  const [returnFor, setReturnFor] = useState(null);   // gp id showing the return popover
+  const [returnAt, setReturnAt] = useState('');
   const returnMut = useMutation({
-    mutationFn: (gpId) => markNonTripReturned(gpId),
-    onSuccess: () => { toast.success('Tanker marked as returned — available for planning again'); qc.invalidateQueries(['non-trip-gp']); },
+    mutationFn: ({ gpId, returned_at }) => markNonTripReturned(gpId, returned_at),
+    onSuccess: () => { toast.success('Tanker marked as returned — available for planning again'); setReturnFor(null); qc.invalidateQueries(['non-trip-gp']); },
     onError: (e) => toast.error(e.response?.data?.error || 'Failed'),
   });
 
@@ -105,6 +113,11 @@ export default function NonTripGatePass() {
             <select className="input" value={form.reason} onChange={e => set('reason', e.target.value)}>
               {REASONS.map(r => <option key={r}>{r}</option>)}
             </select>
+          </div>
+          <div>
+            <label className="label">Issue Date &amp; Time <span className="text-gray-400">(blank = now)</span></label>
+            <input type="datetime-local" className="input" value={form.issued_at} max={nowLocalIso()}
+                   onChange={e => set('issued_at', e.target.value)}/>
           </div>
           {form.reason === 'Others' && (
             <div className="sm:col-span-2">
@@ -202,15 +215,26 @@ export default function NonTripGatePass() {
                         {fmtTs(g.returned_at)}
                       </span>
                     ) : (
+                      returnFor === g.id ? (
+                        <span className="inline-flex items-center gap-1">
+                          <input type="datetime-local" className="input py-0.5 px-1 text-[11px]"
+                                 value={returnAt} max={nowLocalIso()}
+                                 onChange={e => setReturnAt(e.target.value)}/>
+                          <button className="btn-primary text-[11px] px-2 py-1" disabled={returnMut.isPending}
+                                  onClick={() => returnMut.mutate({ gpId: g.id, returned_at: returnAt })}>
+                            ✓
+                          </button>
+                          <button className="btn-secondary text-[11px] px-2 py-1" onClick={() => setReturnFor(null)}>✕</button>
+                        </span>
+                      ) : (
                       <button
-                        onClick={() => {
-                          if (window.confirm(`Mark tanker ${g.tanker_number} as RETURNED? It becomes available for trip planning again.`))
-                            returnMut.mutate(g.id);
-                        }}
+                        onClick={() => { setReturnFor(g.id); setReturnAt(nowLocalIso()); }}
                         disabled={returnMut.isPending}
-                        className="btn-secondary btn-sm text-[11px] px-2 py-1">
+                        className="btn-secondary btn-sm text-[11px] px-2 py-1"
+                        title="Mark tanker as returned — you can set the actual return date/time">
                         Mark Returned
                       </button>
+                      )
                     )}
                   </td>
                   <td className="table-td">

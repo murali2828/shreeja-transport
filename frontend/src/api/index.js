@@ -102,12 +102,12 @@ export const saveAcknowledgements = (id, d) => api.post(`/executions/${id}/ackno
 export const cancelExecution      = (id, reason) => api.post(`/executions/${id}/cancel`, { reason });
 
 // ── Trip Documents (Gate Pass / COA prints) ──────────────────────────────────
-export const printTripDoc     = (planId, doc_type) => api.post(`/trip-docs/${planId}/print`, { doc_type });
+export const printTripDoc     = (planId, doc_type, printed_at) => api.post(`/trip-docs/${planId}/print`, { doc_type, printed_at: printed_at || undefined });
 export const getTripDocStatus = (date)   => api.get('/trip-docs/status', { params: { plan_for_date: date } });
 export const getTripDocPlan   = (planId) => api.get(`/trip-docs/${planId}`);
 export const getNonTripGatePasses  = (p) => api.get('/trip-docs/non-trip', { params: p });
 export const createNonTripGatePass = (d) => api.post('/trip-docs/non-trip', d);
-export const markNonTripReturned   = (id) => api.post(`/trip-docs/non-trip/${id}/return`);
+export const markNonTripReturned   = (id, returned_at) => api.post(`/trip-docs/non-trip/${id}/return`, { returned_at: returned_at || undefined });
 export const getTankerPosition     = ()  => api.get('/trip-docs/tanker-position');
 
 // ── Day wise Tanker Utilisation ───────────────────────────────────────────────
