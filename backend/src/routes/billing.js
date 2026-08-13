@@ -41,6 +41,23 @@ const createTransport = () => baseTransport(process.env.BILLING_EMAIL_REDIRECT);
 
 const canBill = ['admin', 'biller'];
 
+// Toll challan uploads: one PDF/image per tanker per run, ≤5MB
+const multer = require('multer');
+const CHALLAN_FILTER = (req, file, cb) => {
+  const ok = /\.(pdf|jpg|jpeg|png)$/i.test(file.originalname || '');
+  cb(ok ? null : new Error('Challan must be a PDF or JPG/PNG image'), ok);
+};
+const challanUpload = multer({ storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: CHALLAN_FILTER });
+
+// Run grand total = km-based trip amounts + toll challan reimbursements
+async function refreshRunTotal(runId) {
+  await query(`UPDATE billing_runs SET total_amount =
+      COALESCE((SELECT SUM(amount) FROM billing_run_trips WHERE run_id=$1), 0)
+    + COALESCE((SELECT SUM(amount) FROM billing_run_tolls WHERE run_id=$1), 0),
+    updated_at=NOW() WHERE id=$1`, [runId]);
+}
+
 // Rate lookup: state × transport type × capacity KL, period covering planDate.
 async function findRate(state, transportType, capacityLitres, planDate) {
   if (!state || !transportType || !capacityLitres || !planDate) return null;
@@ -65,6 +82,17 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
   const { from_date, to_date } = req.body;
   if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date are required' });
   if (to_date < from_date)    return res.status(400).json({ error: 'to_date is before from_date' });
+  // Billing is strictly fortnightly: 1st–15th, or 16th–month end.
+  {
+    const [fy, fm, fd] = from_date.split('-').map(Number);
+    const [ty, tm, td] = to_date.split('-').map(Number);
+    const sameMonth = fy === ty && fm === tm;
+    const monthEnd = new Date(Date.UTC(fy, fm, 0)).getUTCDate(); // last day of from-month
+    const firstFn  = sameMonth && fd === 1  && td === 15;
+    const secondFn = sameMonth && fd === 16 && td === monthEnd;
+    if (!firstFn && !secondFn)
+      return res.status(400).json({ error: `Billing periods are fortnights only: 1–15 or 16–${monthEnd} of a month` });
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -171,7 +199,10 @@ router.get('/runs/:id', authenticate, authorize(...canBill, 'viewer'), async (re
     const approvals = await query(`
       SELECT level, approver_email, status, remarks, decided_at
       FROM billing_run_approvals WHERE run_id = $1 ORDER BY level`, [req.params.id]);
-    res.json({ ...run.rows[0], trips: trips.rows, approvals: approvals.rows });
+    const tolls = await query(`
+      SELECT id, tanker_number, amount, remarks, file_name, (file_data IS NOT NULL) AS has_file
+      FROM billing_run_tolls WHERE run_id = $1 ORDER BY tanker_number`, [req.params.id]);
+    res.json({ ...run.rows[0], trips: trips.rows, approvals: approvals.rows, tolls: tolls.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -240,10 +271,8 @@ router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, r
          JSON.stringify(legsArr), u.id]);
       results.push({ id: u.id, rate_per_km: ratePerKm, amount, no_rate: state != null && !rate });
     }
-    // refresh run total
-    await query(`UPDATE billing_runs SET total_amount =
-      (SELECT SUM(amount) FROM billing_run_trips WHERE run_id=$1), updated_at=NOW() WHERE id=$1`,
-      [req.params.id]);
+    // refresh run total (trips + tolls)
+    await refreshRunTotal(req.params.id);
     const total = await query('SELECT total_amount FROM billing_runs WHERE id=$1', [req.params.id]);
     res.json({ updated: results, total_amount: total.rows[0].total_amount });
   } catch (err) {
@@ -260,6 +289,76 @@ router.delete('/runs/:id', authenticate, authorize(...canBill), async (req, res)
     if (!r.rows.length) return res.status(400).json({ error: 'Only draft/rejected runs can be deleted' });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Toll gate challans — ONE per tanker per run ──────────────────────────────
+async function assertEditableRun(runId, res) {
+  const run = (await query('SELECT status FROM billing_runs WHERE id=$1', [runId])).rows[0];
+  if (!run) { res.status(404).json({ error: 'Run not found' }); return false; }
+  if (!['draft', 'rejected'].includes(run.status)) {
+    res.status(400).json({ error: 'Run is under approval or approved — toll challans cannot be changed' });
+    return false;
+  }
+  return true;
+}
+
+// Upsert: attach/replace the fortnight's challan + amount for one tanker
+router.post('/runs/:id/tolls', authenticate, authorize(...canBill), challanUpload.single('file'), async (req, res) => {
+  try {
+    if (!(await assertEditableRun(req.params.id, res))) return;
+    const { tanker_number, amount, remarks } = req.body;
+    const amt = rN(amount);
+    if (!tanker_number || amt == null || amt < 0)
+      return res.status(400).json({ error: 'Tanker and a non-negative toll amount are required' });
+    const inRun = await query(
+      'SELECT 1 FROM billing_run_trips WHERE run_id=$1 AND tanker_number=$2 LIMIT 1',
+      [req.params.id, tanker_number]);
+    if (!inRun.rows.length)
+      return res.status(400).json({ error: `Tanker ${tanker_number} has no trips in this run` });
+    const f = req.file;
+    const r = await query(`
+      INSERT INTO billing_run_tolls (run_id, tanker_number, amount, remarks, file_name, file_mime, file_data, created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      ON CONFLICT (run_id, tanker_number) DO UPDATE SET
+        amount=$3, remarks=$4,
+        file_name=COALESCE($5, billing_run_tolls.file_name),
+        file_mime=COALESCE($6, billing_run_tolls.file_mime),
+        file_data=COALESCE($7, billing_run_tolls.file_data),
+        updated_at=NOW()
+      RETURNING id`,
+      [req.params.id, tanker_number, amt, remarks || null,
+       f ? f.originalname : null, f ? f.mimetype : null, f ? f.buffer : null, req.user.id]);
+    await refreshRunTotal(req.params.id);
+    res.json({ id: r.rows[0].id, ok: true });
+  } catch (err) {
+    console.error('Toll upsert error:', err);
+    res.status(500).json({ error: 'Failed to save toll challan' });
+  }
+});
+
+router.delete('/runs/:id/tolls/:tollId', authenticate, authorize(...canBill), async (req, res) => {
+  try {
+    if (!(await assertEditableRun(req.params.id, res))) return;
+    await query('DELETE FROM billing_run_tolls WHERE id=$1 AND run_id=$2', [req.params.tollId, req.params.id]);
+    await refreshRunTotal(req.params.id);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'Failed to delete toll challan' }); }
+});
+
+router.get('/runs/:id/tolls/:tollId/file', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+  try {
+    const r = await query(
+      'SELECT file_name, file_mime, file_data FROM billing_run_tolls WHERE id=$1 AND run_id=$2',
+      [req.params.tollId, req.params.id]);
+    if (!r.rows.length || !r.rows[0].file_data) return res.status(404).json({ error: 'No challan file' });
+    const { file_name, file_mime, file_data } = r.rows[0];
+    const SAFE = ['application/pdf', 'image/jpeg', 'image/png'];
+    const safeName = String(file_name || 'challan').replace(/[^A-Za-z0-9._-]/g, '_');
+    res.setHeader('Content-Type', SAFE.includes(file_mime) ? file_mime : 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.send(file_data);
+  } catch (err) { res.status(500).json({ error: 'Failed to download challan' }); }
 });
 
 // ── Summaries (tanker-wise / vendor-wise) ────────────────────────────────────
@@ -284,6 +383,22 @@ async function runSummaries(runId) {
            SUM(google_km) AS google_km, SUM(amount) AS amount
     FROM billing_run_trips WHERE run_id=$1
     GROUP BY plan_for_date ORDER BY plan_for_date`, [runId]);
+
+  // Merge toll challans: per tanker directly; per vendor via the tanker's
+  // vendor. total_payable = km-based amount + toll reimbursement.
+  const tolls = await query('SELECT tanker_number, amount FROM billing_run_tolls WHERE run_id=$1', [runId]);
+  const tollBy = new Map(tolls.rows.map(r => [r.tanker_number, parseFloat(r.amount) || 0]));
+  const vendorToll = new Map();
+  for (const t of tankers.rows) {
+    t.toll_amount = tollBy.get(t.tanker_number) || 0;
+    t.total_payable = rN((parseFloat(t.amount) || 0) + t.toll_amount);
+    const vk = t.vendor_name || '— No vendor mapped —';
+    vendorToll.set(vk, (vendorToll.get(vk) || 0) + t.toll_amount);
+  }
+  for (const v of vendors.rows) {
+    v.toll_amount = vendorToll.get(v.vendor_name) || 0;
+    v.total_payable = rN((parseFloat(v.amount) || 0) + v.toll_amount);
+  }
   return { tankers: tankers.rows, vendors: vendors.rows, dates: dates.rows };
 }
 
@@ -321,18 +436,29 @@ async function buildRunWorkbook(runId) {
   totRow.font = { bold: true };
 
   const ws2 = wb.addWorksheet('Tanker Wise');
-  head(ws2, ['Tanker', 'Vendor', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']);
-  tankers.forEach(t => ws2.addRow([t.tanker_number, t.vendor_name, t.trips, rN(t.billed_km), rN(t.system_km), rN(t.google_km), rN(t.amount)]));
+  head(ws2, ['Tanker', 'Vendor', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)']);
+  tankers.forEach(t => ws2.addRow([t.tanker_number, t.vendor_name, t.trips, rN(t.billed_km), rN(t.system_km), rN(t.google_km), rN(t.amount), rN(t.toll_amount), rN(t.total_payable)]));
   ws2.addRow(['TOTAL', '', tankers.reduce((s, t) => s + t.trips, 0),
     rN(tankers.reduce((s, t) => s + (+t.billed_km || 0), 0)), '', '',
-    rN(tankers.reduce((s, t) => s + (+t.amount || 0), 0))]).font = { bold: true };
+    rN(tankers.reduce((s, t) => s + (+t.amount || 0), 0)),
+    rN(tankers.reduce((s, t) => s + (+t.toll_amount || 0), 0)),
+    rN(tankers.reduce((s, t) => s + (+t.total_payable || 0), 0))]).font = { bold: true };
 
   const ws3 = wb.addWorksheet('Vendor Wise');
-  head(ws3, ['Vendor', 'Tankers', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']);
-  vendors.forEach(v => ws3.addRow([v.vendor_name, v.tankers, v.trips, rN(v.billed_km), rN(v.system_km), rN(v.google_km), rN(v.amount)]));
+  head(ws3, ['Vendor', 'Tankers', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)']);
+  vendors.forEach(v => ws3.addRow([v.vendor_name, v.tankers, v.trips, rN(v.billed_km), rN(v.system_km), rN(v.google_km), rN(v.amount), rN(v.toll_amount), rN(v.total_payable)]));
   ws3.addRow(['TOTAL', '', vendors.reduce((s, v) => s + v.trips, 0),
     rN(vendors.reduce((s, v) => s + (+v.billed_km || 0), 0)), '', '',
-    rN(vendors.reduce((s, v) => s + (+v.amount || 0), 0))]).font = { bold: true };
+    rN(vendors.reduce((s, v) => s + (+v.amount || 0), 0)),
+    rN(vendors.reduce((s, v) => s + (+v.toll_amount || 0), 0)),
+    rN(vendors.reduce((s, v) => s + (+v.total_payable || 0), 0))]).font = { bold: true };
+
+  const tollRows = (await query(
+    'SELECT tanker_number, amount, remarks, file_name FROM billing_run_tolls WHERE run_id=$1 ORDER BY tanker_number', [runId])).rows;
+  const wsT = wb.addWorksheet('Toll Challans');
+  head(wsT, ['Tanker', 'Toll Amount (₹)', 'Challan File', 'Remarks']);
+  tollRows.forEach(t => wsT.addRow([t.tanker_number, rN(t.amount), t.file_name || '—', t.remarks || '']));
+  wsT.addRow(['TOTAL', rN(tollRows.reduce((s, t) => s + (+t.amount || 0), 0)), '', '']).font = { bold: true };
 
   const wsD = wb.addWorksheet('Date Wise');
   head(wsD, ['Date', 'Trips', 'Tankers', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']);
@@ -396,8 +522,8 @@ function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = [
         with system + Google distances) is attached.</p>
       <p style="font-size:13px;font-weight:700;margin:14px 0 6px;">Vendor Wise Summary</p>
       <table style="border-collapse:collapse;width:100%;">
-        ${row(['Vendor', 'Tankers', 'Trips', 'Billed KM', 'Amount (₹)'], true)}
-        ${vendors.map(v => row([esc(v.vendor_name), v.tankers, v.trips, nf(v.billed_km), nf(v.amount)])).join('')}
+        ${row(['Vendor', 'Tankers', 'Trips', 'Billed KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)'], true)}
+        ${vendors.map(v => row([esc(v.vendor_name), v.tankers, v.trips, nf(v.billed_km), nf(v.amount), nf(v.toll_amount), nf(v.total_payable)])).join('')}
       </table>
       ${newCombos.length ? `
       <p style="font-size:13px;font-weight:700;margin:16px 0 6px;color:#b45309;">
@@ -452,6 +578,9 @@ async function publishRunToVendors(runId) {
     FROM billing_run_trips t LEFT JOIN vendors v ON v.id = t.vendor_id
     WHERE t.run_id=$1 ORDER BY t.plan_for_date, t.tanker_number`, [runId])).rows;
 
+  const tollRows = (await query('SELECT tanker_number, amount FROM billing_run_tolls WHERE run_id=$1', [runId])).rows;
+  const tollBy = new Map(tollRows.map(r => [r.tanker_number, parseFloat(r.amount) || 0]));
+
   const byVendor = new Map();
   for (const t of trips) {
     const key = t.vendor_id || 'none';
@@ -461,7 +590,11 @@ async function publishRunToVendors(runId) {
 
   const results = [];
   for (const [key, v] of byVendor) {
-    const total = v.trips.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+    const tripTotal = v.trips.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+    const vendorTankers = [...new Set(v.trips.map(t => t.tanker_number))];
+    const vendorTolls = vendorTankers.filter(tn => tollBy.has(tn)).map(tn => ({ tanker: tn, amount: tollBy.get(tn) }));
+    const tollTotal = vendorTolls.reduce((s, t) => s + t.amount, 0);
+    const total = tripTotal + tollTotal;
     if (key === 'none' || !v.email) {
       results.push(`✗ ${v.name} — NOT sent (no ${key === 'none' ? 'vendor mapped' : 'email in Vendor master'}); ${v.trips.length} trips, ₹ ${nf(total)}`);
       continue;
@@ -477,8 +610,11 @@ async function publishRunToVendors(runId) {
     v.trips.forEach(t => ws.addRow([t.plan_for_date, t.tanker_number,
       t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.route_name, t.delivery_point,
       t.state, t.transport_type, t.billed_km, t.rate_per_km, t.amount, t.remarks]));
-    ws.addRow(['TOTAL', '', '', '', '', '', '',
-      rN(v.trips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '', rN(total), '']).font = { bold: true };
+    ws.addRow(['TRIPS TOTAL', '', '', '', '', '', '',
+      rN(v.trips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '', rN(tripTotal), '']).font = { bold: true };
+    vendorTolls.forEach(t =>
+      ws.addRow(['TOLL CHALLAN', t.tanker, '', '', '', '', '', '', '', rN(t.amount), '']));
+    ws.addRow(['TOTAL PAYABLE', '', '', '', '', '', '', '', '', rN(total), '']).font = { bold: true };
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
 
     try {
@@ -489,7 +625,8 @@ async function publishRunToVendors(runId) {
         html: `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
           <p>Dear ${esc(v.name)},</p>
           <p>The tanker payment for <b>${run.from_date} → ${run.to_date}</b> has been approved.
-          Your trip sheet is attached: <b>${v.trips.length} trips · ₹ ${nf(total)}</b>.</p>
+          Your trip sheet is attached: <b>${v.trips.length} trips · ₹ ${nf(tripTotal)}</b>${tollTotal > 0
+            ? ` plus toll challan reimbursement <b>₹ ${nf(tollTotal)}</b> — total payable <b>₹ ${nf(total)}</b>` : ''}.</p>
           <p>For any discrepancy in distances, contact the Shreeja billing team with the trip
           date and tanker number — corrections carry remarks and go through approval.</p>
           <p style="color:#9ca3af;font-size:11px;">Shreeja TMS — automated mail; do not reply.</p></div>`,
@@ -518,8 +655,7 @@ router.post('/runs/:id/submit', authenticate, authorize(...canBill), async (req,
     if (missing.rows[0].n > 0)
       return res.status(400).json({ error: `${missing.rows[0].n} trip(s) missing state / rate / billed km — complete them before submitting` });
 
-    await query(`UPDATE billing_runs SET total_amount =
-      (SELECT SUM(amount) FROM billing_run_trips WHERE run_id=$1) WHERE id=$1`, [runId]);
+    await refreshRunTotal(runId);
 
     // (Re)create the approval chain with fresh tokens — resubmission restarts from L1
     await query('DELETE FROM billing_run_approvals WHERE run_id=$1', [runId]);
@@ -666,6 +802,32 @@ async function reportData(q) {
            SUM(t.billed_km) AS billed_km, SUM(t.system_km) AS system_km,
            SUM(t.google_km) AS google_km, SUM(t.amount) AS amount
     ${base} GROUP BY COALESCE(t.vendor_name,'— No vendor mapped —') ORDER BY 1`, params);
+  // Toll challans for the runs represented in the filtered trips; vendor
+  // attribution follows the tanker's vendor in those trips.
+  const runIds = [...new Set(trips.rows.map(t => t.run_id))];
+  if (runIds.length) {
+    const tollQ = await query(
+      `SELECT run_id, tanker_number, amount FROM billing_run_tolls WHERE run_id = ANY($1)`, [runIds]);
+    const tankerVendor = new Map(trips.rows.map(t => [t.tanker_number, t.vendor_name]));
+    const tollByTanker = new Map(), tollByVendor = new Map();
+    for (const tl of tollQ.rows) {
+      if (q.tanker && tl.tanker_number !== q.tanker) continue;
+      const vn = tankerVendor.get(tl.tanker_number);
+      if (vn === undefined) continue;             // tanker filtered out of this report
+      if (q.vendor && vn !== q.vendor) continue;
+      const amt = parseFloat(tl.amount) || 0;
+      tollByTanker.set(tl.tanker_number, (tollByTanker.get(tl.tanker_number) || 0) + amt);
+      tollByVendor.set(vn, (tollByVendor.get(vn) || 0) + amt);
+    }
+    for (const t of tankers.rows) {
+      t.toll_amount = rN(tollByTanker.get(t.tanker_number) || 0);
+      t.total_payable = rN((parseFloat(t.amount) || 0) + t.toll_amount);
+    }
+    for (const v of vendors.rows) {
+      v.toll_amount = rN(tollByVendor.get(v.vendor_name) || 0);
+      v.total_payable = rN((parseFloat(v.amount) || 0) + v.toll_amount);
+    }
+  }
   return { trips: trips.rows, dates: dates.rows, tankers: tankers.rows, vendors: vendors.rows };
 }
 
@@ -700,19 +862,23 @@ router.get('/report-excel', authenticate, authorize(...canBill, 'viewer'), async
       rN(d.trips.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
       rN(d.trips.reduce((s, t) => s + (+t.amount || 0), 0)), '']).font = { bold: true };
 
-    const sheet = (name, rows, firstHead, firstKey, secondKey) => {
+    const sheet = (name, rows, firstHead, firstKey, secondKey, withToll = false) => {
       const ws = wb.addWorksheet(name);
       head(ws, [firstHead, secondKey === 'vendor_name' ? 'Vendor' : 'Tankers', 'Trips',
-        'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']);
+        'Billed KM', 'System KM', 'Google KM', 'Amount (₹)',
+        ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : [])]);
       rows.forEach(r => ws.addRow([r[firstKey], r[secondKey], r.trips,
-        rN(r.billed_km), rN(r.system_km), rN(r.google_km), rN(r.amount)]));
+        rN(r.billed_km), rN(r.system_km), rN(r.google_km), rN(r.amount),
+        ...(withToll ? [rN(r.toll_amount), rN(r.total_payable)] : [])]));
       ws.addRow(['TOTAL', '', rows.reduce((s, r) => s + (+r.trips || 0), 0),
         rN(rows.reduce((s, r) => s + (+r.billed_km || 0), 0)), '', '',
-        rN(rows.reduce((s, r) => s + (+r.amount || 0), 0))]).font = { bold: true };
+        rN(rows.reduce((s, r) => s + (+r.amount || 0), 0)),
+        ...(withToll ? [rN(rows.reduce((s, r) => s + (+r.toll_amount || 0), 0)),
+                        rN(rows.reduce((s, r) => s + (+r.total_payable || 0), 0))] : [])]).font = { bold: true };
     };
     sheet('Date Wise', d.dates, 'Date', 'date', 'tankers');
-    sheet('Tanker Wise', d.tankers, 'Tanker', 'tanker_number', 'vendor_name');
-    sheet('Vendor Wise', d.vendors, 'Vendor', 'vendor_name', 'tankers');
+    sheet('Tanker Wise', d.tankers, 'Tanker', 'tanker_number', 'vendor_name', true);
+    sheet('Vendor Wise', d.vendors, 'Vendor', 'vendor_name', 'tankers', true);
 
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=tanker_payment_report_${from}_${to}.xlsx`);

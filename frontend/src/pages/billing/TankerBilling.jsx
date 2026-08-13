@@ -25,8 +25,17 @@ export default function TankerBilling() {
   const canEdit = ['admin', 'biller'].includes(user?.role);
   const [openRunId, setOpenRunId] = useState(null);
   const [view, setView] = useState('runs'); // runs | report
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  // Billing periods are strictly fortnights: 1–15 or 16–month-end.
+  const [month, setMonth] = useState('');       // 'YYYY-MM'
+  const [fortnight, setFortnight] = useState('1');
+  const fnDates = () => {
+    if (!month) return null;
+    const [y, m] = month.split('-').map(Number);
+    const end = new Date(y, m, 0).getDate();
+    return fortnight === '1'
+      ? { from: `${month}-01`, to: `${month}-15` }
+      : { from: `${month}-16`, to: `${month}-${String(end).padStart(2, '0')}` };
+  };
   const [edits, setEdits] = useState({});      // tripId -> {state, billed_km, remarks}
   const [ratePreviews, setRatePreviews] = useState({}); // tripId -> rate_per_km | null (unsaved)
   const [expanded, setExpanded] = useState({}); // tripId -> bool
@@ -48,7 +57,10 @@ export default function TankerBilling() {
   });
 
   const createMut = useMutation({
-    mutationFn: () => api.post('/billing/runs', { from_date: from, to_date: to }),
+    mutationFn: () => {
+      const d = fnDates();
+      return api.post('/billing/runs', { from_date: d.from, to_date: d.to });
+    },
     onSuccess: r => {
       toast.success(`Run created — ${r.data.trips} acknowledged trips loaded`);
       if (r.data.new_combinations > 0)
@@ -143,9 +155,15 @@ export default function TankerBilling() {
         </div>
         <div className="flex-1" />
         {view === 'runs' && canEdit && (<>
-          <input type="date" className="input text-xs" value={from} onChange={e => setFrom(e.target.value)} />
-          <input type="date" className="input text-xs" value={to} min={from} onChange={e => setTo(e.target.value)} />
-          <button className="btn-primary text-xs flex items-center gap-1.5" disabled={!from || !to || createMut.isPending}
+          <input type="month" className="input text-xs" value={month} onChange={e => setMonth(e.target.value)}
+                 title="Billing month"/>
+          <select className="input text-xs" value={fortnight} onChange={e => setFortnight(e.target.value)}
+                  title="Billing is strictly fortnightly">
+            <option value="1">1st fortnight (1 – 15)</option>
+            <option value="2">2nd fortnight (16 – month end)</option>
+          </select>
+          {month && <span className="text-xs text-white/90 self-center">{fnDates().from} → {fnDates().to}</span>}
+          <button className="btn-primary text-xs flex items-center gap-1.5" disabled={!month || createMut.isPending}
                   onClick={() => createMut.mutate()}>
             <Play size={13}/> {createMut.isPending ? 'Executing…' : 'Execute'}
           </button>
@@ -269,7 +287,7 @@ export default function TankerBilling() {
 
       {/* tabs */}
       <div className="flex gap-2">
-        {[['trips', 'Trip Wise'], ['dates', 'Date Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise']].map(([k, l]) => (
+        {[['trips', 'Trip Wise'], ['dates', 'Date Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise'], ['tolls', 'Toll Challans']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold"
             style={tab === k ? { background: '#cc785c', color: '#fff' } : { background: '#fff', color: '#57534e' }}>
@@ -312,19 +330,25 @@ export default function TankerBilling() {
         </div>
       )}
 
-      {tab !== 'trips' && (
+      {tab === 'tolls' && (
+        <TollPanel runId={openRunId} tolls={run?.tolls || []} tankers={summary?.tankers || []} editable={editable}/>
+      )}
+
+      {tab !== 'trips' && tab !== 'tolls' && (() => {
+        const withToll = tab === 'tankers' || tab === 'vendors';
+        const rows = (tab === 'tankers' ? summary?.tankers : tab === 'dates' ? summary?.dates : summary?.vendors) || [];
+        return (
         <div className="card overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-blue-50 text-left text-gray-600">
-              <tr>{(tab === 'tankers'
-                ? ['Tanker', 'Vendor', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']
-                : tab === 'dates'
-                ? ['Date', 'Tankers', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']
-                : ['Vendor', 'Tankers', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)'])
+              <tr>{[(tab === 'tankers' ? 'Tanker' : tab === 'dates' ? 'Date' : 'Vendor'),
+                    (tab === 'tankers' ? 'Vendor' : 'Tankers'),
+                    'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)',
+                    ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : [])]
                 .map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
             </thead>
             <tbody>
-              {((tab === 'tankers' ? summary?.tankers : tab === 'dates' ? summary?.dates : summary?.vendors) || []).map((r, i) => (
+              {rows.map((r, i) => (
                 <tr key={i} className="border-t border-gray-100">
                   <td className="px-3 py-1.5 font-semibold">
                     {tab === 'tankers' ? r.tanker_number : tab === 'dates' ? r.date : r.vendor_name}
@@ -335,26 +359,137 @@ export default function TankerBilling() {
                   <td className="px-3 py-1.5 text-right">{nf(r.system_km)}</td>
                   <td className="px-3 py-1.5 text-right">{nf(r.google_km)}</td>
                   <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.amount)}</td>
+                  {withToll && <td className="px-3 py-1.5 text-right">{nf(r.toll_amount)}</td>}
+                  {withToll && <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.total_payable)}</td>}
                 </tr>
               ))}
-              {(() => {
-                const rows = (tab === 'tankers' ? summary?.tankers : tab === 'dates' ? summary?.dates : summary?.vendors) || [];
-                return (
-                  <tr className="bg-blue-100 font-bold">
-                    <td className="px-3 py-2">TOTAL</td>
-                    <td className="px-3 py-2"/>
-                    <td className="px-3 py-2 text-right">{rows.reduce((s, r) => s + (+r.trips || 0), 0)}</td>
-                    <td className="px-3 py-2 text-right">{nf(rows.reduce((s, r) => s + (+r.billed_km || 0), 0))}</td>
-                    <td className="px-3 py-2 text-right">{nf(rows.reduce((s, r) => s + (+r.system_km || 0), 0))}</td>
-                    <td className="px-3 py-2 text-right">{nf(rows.reduce((s, r) => s + (+r.google_km || 0), 0))}</td>
-                    <td className="px-3 py-2 text-right text-[#005ba3]">{nf(rows.reduce((s, r) => s + (+r.amount || 0), 0))}</td>
-                  </tr>
-                );
-              })()}
+              <tr className="bg-blue-100 font-bold">
+                <td className="px-3 py-2">TOTAL</td>
+                <td className="px-3 py-2"/>
+                <td className="px-3 py-2 text-right">{rows.reduce((s, r) => s + (+r.trips || 0), 0)}</td>
+                <td className="px-3 py-2 text-right">{nf(rows.reduce((s, r) => s + (+r.billed_km || 0), 0))}</td>
+                <td className="px-3 py-2 text-right">{nf(rows.reduce((s, r) => s + (+r.system_km || 0), 0))}</td>
+                <td className="px-3 py-2 text-right">{nf(rows.reduce((s, r) => s + (+r.google_km || 0), 0))}</td>
+                <td className="px-3 py-2 text-right text-[#005ba3]">{nf(rows.reduce((s, r) => s + (+r.amount || 0), 0))}</td>
+                {withToll && <td className="px-3 py-2 text-right">{nf(rows.reduce((s, r) => s + (+r.toll_amount || 0), 0))}</td>}
+                {withToll && <td className="px-3 py-2 text-right text-[#005ba3]">{nf(rows.reduce((s, r) => s + (+r.total_payable || 0), 0))}</td>}
+              </tr>
             </tbody>
           </table>
         </div>
-      )}
+        );
+      })()}
+    </div>
+  );
+}
+
+// One toll-gate challan (document + amount) per tanker for the whole
+// fortnight; the amount is reimbursed to the vendor on top of trip amounts.
+function TollPanel({ runId, tolls, tankers, editable }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({}); // tanker -> {amount, remarks, file}
+  const byTanker = new Map(tolls.map(t => [t.tanker_number, t]));
+  const setF = (tn, k, v) => setForm(p => ({ ...p, [tn]: { ...p[tn], [k]: v } }));
+  const refresh = () => {
+    qc.invalidateQueries(['billing-run', runId]);
+    qc.invalidateQueries(['billing-summary']);
+    qc.invalidateQueries(['billing-runs']);
+  };
+  const save = tn => {
+    const f = form[tn] || {};
+    const existing = byTanker.get(tn);
+    const amount = f.amount !== undefined ? f.amount : existing?.amount;
+    if (amount === undefined || amount === '' || +amount < 0)
+      return toast.error('Enter the toll challan amount');
+    const fd = new FormData();
+    fd.append('tanker_number', tn);
+    fd.append('amount', amount);
+    fd.append('remarks', f.remarks !== undefined ? f.remarks : (existing?.remarks || ''));
+    if (f.file) fd.append('file', f.file);
+    api.post(`/billing/runs/${runId}/tolls`, fd)
+      .then(() => { toast.success(`Toll challan saved for ${tn}`); setForm(p => ({ ...p, [tn]: undefined })); refresh(); })
+      .catch(e => toast.error(e.response?.data?.error || e.message));
+  };
+  const del = tn => {
+    const ex = byTanker.get(tn);
+    if (!ex) return;
+    window.confirm(`Remove the toll challan for ${tn}?`) &&
+      api.delete(`/billing/runs/${runId}/tolls/${ex.id}`)
+        .then(refresh)
+        .catch(e => toast.error(e.response?.data?.error || e.message));
+  };
+  const download = ex =>
+    api.get(`/billing/runs/${runId}/tolls/${ex.id}/file`, { responseType: 'blob' }).then(r => {
+      const url = URL.createObjectURL(r.data);
+      const a = document.createElement('a');
+      a.href = url; a.download = ex.file_name || 'challan'; a.click();
+      URL.revokeObjectURL(url);
+    });
+
+  const tollTotal = tolls.reduce((s, t) => s + (+t.amount || 0), 0);
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-3 py-2 text-xs text-gray-600 bg-blue-50/60">
+        One challan per tanker for the fortnight (PDF/JPG/PNG, max 5 MB). The amount is added to the
+        vendor's payable and goes through the same approval chain. · Total tolls: <b>₹ {nf(tollTotal)}</b>
+      </div>
+      <table className="w-full text-xs">
+        <thead className="bg-blue-50 text-left text-gray-600">
+          <tr>{['Tanker', 'Vendor', 'Toll Amount (₹)', 'Challan', 'Remarks', ''].map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
+        </thead>
+        <tbody>
+          {tankers.map(t => {
+            const ex = byTanker.get(t.tanker_number);
+            const f = form[t.tanker_number] || {};
+            return (
+              <tr key={t.tanker_number} className="border-t border-gray-100">
+                <td className="px-3 py-1.5 font-semibold text-[#005ba3]">{t.tanker_number}</td>
+                <td className="px-3 py-1.5">{t.vendor_name || '—'}</td>
+                <td className="px-3 py-1.5 text-right">
+                  {editable
+                    ? <input type="number" step="0.01" min="0" className="input py-0.5 px-1 text-xs w-28 text-right"
+                             value={f.amount !== undefined ? f.amount : (ex?.amount ?? '')}
+                             onChange={e => setF(t.tanker_number, 'amount', e.target.value)}/>
+                    : nf(ex?.amount)}
+                </td>
+                <td className="px-3 py-1.5">
+                  {ex?.has_file && (
+                    <button className="text-[#005ba3] underline mr-2" onClick={() => download(ex)}>
+                      {ex.file_name || 'challan'}
+                    </button>
+                  )}
+                  {editable && (
+                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="text-[11px]"
+                           onChange={e => setF(t.tanker_number, 'file', e.target.files[0])}/>
+                  )}
+                  {!ex?.has_file && !editable && '—'}
+                </td>
+                <td className="px-3 py-1.5">
+                  {editable
+                    ? <input type="text" className="input py-0.5 px-1 text-xs w-40" placeholder="remarks"
+                             value={f.remarks !== undefined ? f.remarks : (ex?.remarks ?? '')}
+                             onChange={e => setF(t.tanker_number, 'remarks', e.target.value)}/>
+                    : (ex?.remarks || '—')}
+                </td>
+                <td className="px-3 py-1.5 whitespace-nowrap">
+                  {editable && (<>
+                    <button className="btn-secondary text-[11px] px-2 py-0.5 mr-1" onClick={() => save(t.tanker_number)}>
+                      {ex ? 'Update' : 'Save'}
+                    </button>
+                    {ex && (
+                      <button className="p-1 text-gray-400 hover:text-red-600" title="Remove challan"
+                              onClick={() => del(t.tanker_number)}>
+                        <Trash2 size={12}/>
+                      </button>
+                    )}
+                  </>)}
+                </td>
+              </tr>
+            );
+          })}
+          {!tankers.length && <tr><td colSpan={6} className="px-3 py-4 text-gray-400">No tankers in this run.</td></tr>}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -560,13 +695,16 @@ function PaymentReport() {
             </span>
           </div>
 
-          {tab !== 'trips' && (
+          {tab !== 'trips' && (() => {
+            const withToll = tab === 'tankers' || tab === 'vendors';
+            return (
             <div className="card overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-blue-50 text-left text-gray-600">
                   <tr>{[tab === 'dates' ? 'Date' : tab === 'tankers' ? 'Tanker' : 'Vendor',
                         tab === 'tankers' ? 'Vendor' : 'Tankers', 'Trips',
-                        'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']
+                        'Billed KM', 'System KM', 'Google KM', 'Amount (₹)',
+                        ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : [])]
                         .map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
                 </thead>
                 <tbody>
@@ -579,6 +717,8 @@ function PaymentReport() {
                       <td className="px-3 py-1.5 text-right">{nf(r.system_km)}</td>
                       <td className="px-3 py-1.5 text-right">{nf(r.google_km)}</td>
                       <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.amount)}</td>
+                      {withToll && <td className="px-3 py-1.5 text-right">{nf(r.toll_amount)}</td>}
+                      {withToll && <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.total_payable)}</td>}
                     </tr>
                   ))}
                   <tr className="bg-blue-100 font-bold">
@@ -588,11 +728,14 @@ function PaymentReport() {
                     <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.system_km || 0), 0))}</td>
                     <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.google_km || 0), 0))}</td>
                     <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.amount || 0), 0))}</td>
+                    {withToll && <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.toll_amount || 0), 0))}</td>}
+                    {withToll && <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.total_payable || 0), 0))}</td>}
                   </tr>
                 </tbody>
               </table>
             </div>
-          )}
+            );
+          })()}
 
           {tab === 'trips' && (
             <div className="card overflow-hidden">
