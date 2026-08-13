@@ -7,7 +7,7 @@
 //     recalc totals and distance — the single write path for execution data.
 
 const { haversineKm, ROAD_FACTOR } = require('../utils/geo');
-const { getMasterDistanceKm, upsertMasterDistanceKm } = require('./distanceLookup');
+const { getMasterDistanceKm, upsertMasterDistanceKm, normalisePair } = require('./distanceLookup');
 const { googleLegKm } = require('./roadDistance');
 
 const KG_FACTOR = 1.0285;
@@ -23,7 +23,7 @@ const coord = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : nu
 // Per-leg km resolution cascade: Distance Master (exact) → Google Routes API
 // (cached back into Distance Master) → Haversine × road factor (flagged estimated).
 // Persists calculated_km / km_estimated_leg_count / km_incomplete and returns the breakdown.
-async function computeExecutionDistance(client, execId, userId) {
+async function computeExecutionDistance(client, execId, userId, masterCache) {
   const head = await client.query(`
     SELECT tp.start_point_id, tp.delivery_point_id,
            sp.name AS start_name, sp.latitude AS start_lat, sp.longitude AS start_lng,
@@ -59,7 +59,7 @@ async function computeExecutionDistance(client, execId, userId) {
     const a = nodes[i], z = nodes[i + 1];
     let km = 0, source = 'missing', isNew = false, googleKm = null;
 
-    const master = await getMasterDistanceKm(client, a.type, a.id, z.type, z.id);
+    const master = await getMasterDistanceKm(client, a.type, a.id, z.type, z.id, masterCache);
     if (master != null) {
       km = master.km; source = master.fromGoogle ? 'google' : 'master';
       if (master.fromGoogle) googleKm = master.km;
@@ -69,6 +69,10 @@ async function computeExecutionDistance(client, execId, userId) {
       if (g != null) {
         km = g; source = 'google'; googleKm = g;
         await upsertMasterDistanceKm(client, a.type, a.id, z.type, z.id, g, 'auto: Google Routes API', userId);
+        if (masterCache) { // keep the batch cache in step so the pair isn't re-fetched this run
+          const p = normalisePair(a.type, parseInt(a.id), z.type, parseInt(z.id));
+          masterCache.set(`${p.fromType}:${p.fromId}|${p.toType}:${p.toId}`, { km: g, fromGoogle: true });
+        }
       } else {
         km = haversineKm(a.lat, a.lng, z.lat, z.lng) * ROAD_FACTOR;
         source = 'estimated'; estimated++;

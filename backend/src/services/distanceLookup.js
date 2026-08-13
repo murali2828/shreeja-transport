@@ -16,8 +16,24 @@ function normalisePair(fromType, fromId, toType, toId) {
 }
 
 // Return the stored road km for a pair, or null if none. `db` is a pg client or pool.
-async function getMasterDistanceKm(db, fromType, fromId, toType, toId) {
+// Preload the whole Distance Master into a Map for batch jobs (billing run
+// execute processes ~1000 trips × ~5 legs — per-leg SELECTs are an N+1).
+// Key matches normalisePair ordering. Callers pass the Map as masterCache.
+async function loadMasterDistanceCache(db) {
+  const r = await db.query('SELECT from_type, from_id, to_type, to_id, distance_km, road_notes FROM distance_master');
+  const cache = new Map();
+  for (const row of r.rows) {
+    cache.set(`${row.from_type}:${row.from_id}|${row.to_type}:${row.to_id}`, {
+      km: parseFloat(row.distance_km),
+      fromGoogle: /google/i.test(row.road_notes || ''),
+    });
+  }
+  return cache;
+}
+
+async function getMasterDistanceKm(db, fromType, fromId, toType, toId, masterCache) {
   const p = normalisePair(fromType, parseInt(fromId), toType, parseInt(toId));
+  if (masterCache) return masterCache.get(`${p.fromType}:${p.fromId}|${p.toType}:${p.toId}`) || null;
   const r = await db.query(
     `SELECT distance_km, road_notes FROM distance_master
      WHERE from_type=$1 AND from_id=$2 AND to_type=$3 AND to_id=$4`,
@@ -46,4 +62,4 @@ async function upsertMasterDistanceKm(db, fromType, fromId, toType, toId, km, no
   );
 }
 
-module.exports = { normalisePair, getMasterDistanceKm, upsertMasterDistanceKm };
+module.exports = { normalisePair, getMasterDistanceKm, upsertMasterDistanceKm, loadMasterDistanceCache };

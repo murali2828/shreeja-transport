@@ -18,6 +18,7 @@ const ExcelJS    = require('exceljs');
 const { query, pool } = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { computeExecutionDistance } = require('../services/executionData');
+const { loadMasterDistanceCache } = require('../services/distanceLookup');
 
 const APPROVERS = [
   { level: 1, email: process.env.BILLING_APPROVER_1 || 'Mahesh.k@shreejamilk.com',      name: 'Mahesh K' },
@@ -101,10 +102,14 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
       ORDER BY tp.plan_for_date, t.tanker_number`, [from_date, to_date]);
 
+    // Preload the whole Distance Master once — avoids ~5 SELECTs per trip
+    // (an N+1 of thousands of round-trips on a full fortnight).
+    const masterCache = await loadMasterDistanceCache(client);
+
     let newCombos = 0;
     for (const tr of trips.rows) {
       // System distance with leg breakdown (Master → Google → estimate)
-      const dist = await computeExecutionDistance(client, tr.execution_id, req.user.id);
+      const dist = await computeExecutionDistance(client, tr.execution_id, req.user.id, masterCache);
       newCombos += dist.legs.filter(l => l.is_new).length;
       const sumBy = src => rN(dist.legs.filter(l => l.source === src).reduce((s, l) => s + l.km, 0));
       const transportType = tr.bmcu_count > 1 ? 'BMCU/CC to Dairy/CC' : 'Point to Point';
