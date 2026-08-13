@@ -4,7 +4,7 @@ const router     = express.Router();
 const ExcelJS    = require('exceljs');
 const nodemailer = require('nodemailer');
 const { query }  = require('../config/db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 
 // ─── Mailer factory ───────────────────────────────────────────────────────────
 const { createTransport } = require('../config/mailer');
@@ -767,7 +767,7 @@ function buildTsEmailHtml(rows, reportDate, basis) {
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/reports/send-email  { report_date }  — same workbook as the download
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/send-email', authenticate, async (req, res) => {
+router.post('/send-email', authenticate, authorize('admin','planner'), async (req, res) => {
   const { report_date } = req.body;
   const basis = req.body.date_basis || 'plan';
   if (!report_date) return res.status(400).json({ error: 'report_date required' });

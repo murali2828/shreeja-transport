@@ -6,7 +6,7 @@
 const express = require('express');
 const router  = express.Router();
 const { query, pool } = require('../config/db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/trip-docs/status?plan_for_date=YYYY-MM-DD
@@ -50,7 +50,7 @@ router.get('/:planId(\\d+)', authenticate, async (req, res) => {
 // POST /api/trip-docs/:planId/print  { doc_type: 'gate_pass' | 'coa' }
 // Logs the print and returns document data + duplicate info.
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/:planId(\\d+)/print', authenticate, async (req, res) => {
+router.post('/:planId(\\d+)/print', authenticate, authorize('admin','planner','executor'), async (req, res) => {
   const planId = req.params.planId;
   const { doc_type } = req.body;
   if (!['gate_pass', 'coa', 'unloading'].includes(doc_type))
@@ -146,7 +146,7 @@ router.get('/non-trip', authenticate, async (req, res) => {
 });
 
 // POST /api/trip-docs/non-trip
-router.post('/non-trip', authenticate, async (req, res) => {
+router.post('/non-trip', authenticate, authorize('admin','planner','executor'), async (req, res) => {
   const { tanker_id, delivery_point_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate } = req.body;
   if (!tanker_id) return res.status(400).json({ error: 'tanker_id required' });
   if (!delivery_point_id) return res.status(400).json({ error: 'Issuing delivery point required' });
@@ -174,7 +174,7 @@ router.post('/non-trip', authenticate, async (req, res) => {
 
 // POST /api/trip-docs/non-trip/:id/return — tanker reported back (e.g. from
 // maintenance). Frees the tanker for trip planning again.
-router.post('/non-trip/:id(\\d+)/return', authenticate, async (req, res) => {
+router.post('/non-trip/:id(\\d+)/return', authenticate, authorize('admin','planner','executor'), async (req, res) => {
   try {
     const r = await query(`
       UPDATE non_trip_gate_passes

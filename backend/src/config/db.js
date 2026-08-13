@@ -15,6 +15,12 @@ const pool = new Pool({
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+  // Runaway-query guards (audit 2026-08): a hung analytics/report query must
+  // not pin a pool slot forever, and a transaction left open across an
+  // external call must eventually release.
+  statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT_MS || '30000'),
+  query_timeout: parseInt(process.env.DB_QUERY_TIMEOUT_MS || '35000'),
+  idle_in_transaction_session_timeout: parseInt(process.env.DB_IDLE_TX_TIMEOUT_MS || '300000'),
 });
 
 pool.on('error', (err) => {
@@ -25,8 +31,12 @@ pool.on('error', (err) => {
 async function query(text, params) {
   const start = Date.now();
   const res = await pool.query(text, params);
+  const ms = Date.now() - start;
   if (process.env.NODE_ENV !== 'production') {
-    console.log(`[DB] ${Date.now() - start}ms — ${text.substring(0, 80)}`);
+    console.log(`[DB] ${ms}ms — ${text.substring(0, 80)}`);
+  } else if (ms > 500) {
+    // Slow-query visibility in production (no params — they may hold data)
+    console.warn(`[DB SLOW] ${ms}ms — ${text.replace(/\s+/g, ' ').substring(0, 200)}`);
   }
   return res;
 }
