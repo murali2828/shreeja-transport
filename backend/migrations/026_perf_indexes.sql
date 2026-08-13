@@ -4,12 +4,13 @@
 -- The single most-used join in the app (reports, analytics, billing, executions)
 CREATE INDEX IF NOT EXISTS idx_trip_exec_plan ON trip_executions (trip_plan_id);
 
--- Acknowledgements: joined/subqueried by execution everywhere; the by-ack-entry
--- TS report drives on created_at::date (expression index — the plain created_at
--- index from 021 is unusable under the cast).
-CREATE INDEX IF NOT EXISTS idx_ta_exec         ON trip_acknowledgements (execution_id);
-CREATE INDEX IF NOT EXISTS idx_ta_created_date ON trip_acknowledgements ((created_at::date));
-CREATE INDEX IF NOT EXISTS idx_ta_ack_date     ON trip_acknowledgements (ack_date);
+-- Acknowledgements: joined/subqueried by execution everywhere.
+-- (NOTE: an expression index on created_at::date is NOT possible — the
+-- timestamptz→date cast is timezone-dependent (STABLE), same reason the
+-- original 021 index failed. The plain created_at index from 021 plus
+-- idx_ta_exec cover the by-ack-entry report acceptably at current scale.)
+CREATE INDEX IF NOT EXISTS idx_ta_exec     ON trip_acknowledgements (execution_id);
+CREATE INDEX IF NOT EXISTS idx_ta_ack_date ON trip_acknowledgements (ack_date);
 
 -- Shift rows: joined by execution (+ bmcu_seq_no) in every report/analytics CTE
 CREATE INDEX IF NOT EXISTS idx_tebs_exec_seq ON trip_execution_bmcu_shifts (execution_id, bmcu_seq_no);
