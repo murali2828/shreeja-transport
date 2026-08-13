@@ -426,12 +426,40 @@ function TollPanel({ runId, tolls, tankers, editable }) {
       URL.revokeObjectURL(url);
     });
 
+  const uploadStatement = file => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    toast.loading('Parsing FASTag statement…', { id: 'fastag' });
+    api.post(`/billing/runs/${runId}/fastag`, fd)
+      .then(r => {
+        const { matched, unmatched } = r.data;
+        toast.success(
+          `FASTag: ${matched.length} tanker(s) filled — ` +
+          matched.map(m => `${m.tanker_number} ₹${nf(m.toll_amount)} (${m.trips} tolls)`).join(', '),
+          { id: 'fastag', duration: 10000 });
+        if (unmatched.length)
+          toast(`⚠ Not in this run (ignored): ${unmatched.map(u => `${u.plate} ₹${nf(u.toll_amount)}`).join(', ')}`,
+                { icon: '⚠️', duration: 10000 });
+        refresh();
+      })
+      .catch(e => toast.error(e.response?.data?.error || e.message, { id: 'fastag' }));
+  };
+
   const tollTotal = tolls.reduce((s, t) => s + (+t.amount || 0), 0);
   return (
     <div className="card overflow-hidden">
-      <div className="px-3 py-2 text-xs text-gray-600 bg-blue-50/60">
-        One challan per tanker for the fortnight (PDF/JPG/PNG, max 5 MB). The amount is added to the
-        vendor's payable and goes through the same approval chain. · Total tolls: <b>₹ {nf(tollTotal)}</b>
+      <div className="px-3 py-2 text-xs text-gray-600 bg-blue-50/60 flex flex-wrap items-center gap-3">
+        <span>One challan per tanker for the fortnight (PDF/JPG/PNG, max 5 MB). The amount is added to the
+        vendor's payable and goes through the same approval chain. · Total tolls: <b>₹ {nf(tollTotal)}</b></span>
+        {editable && (
+          <label className="btn-secondary text-[11px] px-2 py-1 cursor-pointer whitespace-nowrap"
+                 title="Upload a FASTag statement PDF (ICICI E-Statement or account summary) — per-tanker toll amounts are read and filled automatically">
+            ⚡ Upload FASTag Statement
+            <input type="file" accept=".pdf" className="sr-only"
+                   onChange={e => { uploadStatement(e.target.files[0]); e.target.value = ''; }}/>
+          </label>
+        )}
       </div>
       <table className="w-full text-xs">
         <thead className="bg-blue-50 text-left text-gray-600">

@@ -336,6 +336,48 @@ router.post('/runs/:id/tolls', authenticate, authorize(...canBill), challanUploa
   }
 });
 
+// Upload a FASTag statement PDF: tolls are parsed per vehicle plate, matched
+// to the run's tankers, and applied as that tanker's toll challan (statement
+// attached as the challan document). Supports ICICI E-Statements (multi-
+// vehicle Vehicle Summary) and generic FASTag account summaries.
+const { parseFastagPdf, normPlate } = require('../services/fastagParser');
+router.post('/runs/:id/fastag', authenticate, authorize(...canBill), challanUpload.single('file'), async (req, res) => {
+  try {
+    if (!(await assertEditableRun(req.params.id, res))) return;
+    if (!req.file || !/\.pdf$/i.test(req.file.originalname || ''))
+      return res.status(400).json({ error: 'Upload the FASTag statement as a PDF' });
+
+    const { vehicles, format } = await parseFastagPdf(req.file.buffer);
+    if (!vehicles.length)
+      return res.status(400).json({ error: 'No vehicle toll debits could be read from this statement — attach challans manually' });
+
+    const runTankers = (await query(
+      'SELECT DISTINCT tanker_number FROM billing_run_trips WHERE run_id=$1', [req.params.id])).rows
+      .map(r => r.tanker_number);
+    const byPlate = new Map(runTankers.map(t => [normPlate(t), t]));
+
+    const matched = [], unmatched = [];
+    for (const v of vehicles) {
+      const tanker = byPlate.get(v.plate);
+      if (!tanker) { unmatched.push(v); continue; }
+      await query(`
+        INSERT INTO billing_run_tolls (run_id, tanker_number, amount, remarks, file_name, file_mime, file_data, created_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        ON CONFLICT (run_id, tanker_number) DO UPDATE SET
+          amount=$3, remarks=$4, file_name=$5, file_mime=$6, file_data=$7, updated_at=NOW()`,
+        [req.params.id, tanker, v.toll_amount,
+         `FASTag statement (${format}): ${v.trips} toll trips`,
+         req.file.originalname, req.file.mimetype, req.file.buffer, req.user.id]);
+      matched.push({ tanker_number: tanker, toll_amount: v.toll_amount, trips: v.trips });
+    }
+    await refreshRunTotal(req.params.id);
+    res.json({ format, matched, unmatched });
+  } catch (err) {
+    console.error('FASTag statement parse error:', err);
+    res.status(500).json({ error: 'Failed to parse the FASTag statement' });
+  }
+});
+
 router.delete('/runs/:id/tolls/:tollId', authenticate, authorize(...canBill), async (req, res) => {
   try {
     if (!(await assertEditableRun(req.params.id, res))) return;
