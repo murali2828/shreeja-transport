@@ -4,8 +4,14 @@ services:
 
   db:
     image: postgres:16-alpine
+    command: ["postgres", "-c", "shared_buffers=256MB",
+              "-c", "statement_timeout=60000",
+              "-c", "idle_in_transaction_session_timeout=300000"]
     container_name: shreeja-db
     restart: always
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     environment:
       POSTGRES_DB:       ${DB_NAME:-dairy_transport}
       POSTGRES_USER:     ${DB_USER:-shreeja_db}
@@ -29,6 +35,9 @@ services:
       dockerfile: Dockerfile
     container_name: shreeja-backend
     restart: always
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     env_file: .env
     environment:
       NODE_ENV: production
@@ -57,8 +66,11 @@ services:
       dockerfile: Dockerfile
     container_name: shreeja-frontend
     restart: always
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       backend:
         condition: service_healthy

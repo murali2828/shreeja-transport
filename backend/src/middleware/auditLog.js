@@ -67,7 +67,9 @@ function sanitize(value) {
   if (value && typeof value === 'object') {
     const out = {};
     for (const [k, v] of Object.entries(value)) {
-      if (SECRET_KEYS.has(k.toLowerCase())) continue;
+      // Substring match (audit 2026-08): catches smtp_password, apiKey,
+      // authToken, passwordConfirm etc., not just the exact denylist keys.
+      if (SECRET_KEYS.has(k.toLowerCase()) || /pass|secret|token|key|auth/i.test(k)) continue;
       out[k] = sanitize(v);
     }
     return out;

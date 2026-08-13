@@ -14,8 +14,14 @@ services:
 
   db:
     image: postgres:16-alpine
+    command: ["postgres", "-c", "shared_buffers=256MB",
+              "-c", "statement_timeout=60000",
+              "-c", "idle_in_transaction_session_timeout=300000"]
     container_name: shreeja-qa-db
     restart: always
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     environment:
       POSTGRES_DB:       ${DB_NAME:-dairy_transport_qa}
       POSTGRES_USER:     ${DB_USER:-shreeja_db}
@@ -39,13 +45,19 @@ services:
       dockerfile: Dockerfile
     container_name: shreeja-qa-backend
     restart: always
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     env_file: .env.qa
     environment:
       NODE_ENV: production
       DB_HOST:  db
       DB_PORT:  5432
       PORT:     5000
+      UPLOAD_DIR: /app/uploads/documents
       TZ: Asia/Kolkata
+    volumes:
+      - qa-docuploads:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -64,8 +76,11 @@ services:
       dockerfile: Dockerfile
     container_name: shreeja-qa-frontend
     restart: always
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     ports:
-      - "8081:80"
+      - "127.0.0.1:8081:80"
     depends_on:
       backend:
         condition: service_healthy
@@ -75,6 +90,8 @@ services:
 volumes:
   qa-pgdata:
     name: shreeja-qa-pgdata
+  qa-docuploads:
+    name: shreeja-qa-docuploads
 
 networks:
   shreeja-qa-net:

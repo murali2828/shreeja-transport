@@ -15,7 +15,12 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '../../uploads
 try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); }
 catch (e) { console.error('Failed to create upload dir:', e.message); }
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const DOC_FILTER = (req, file, cb) => {
+  // Renderable-in-browser types are excluded deliberately (html/svg → stored XSS)
+  const ok = /\.(pdf|jpg|jpeg|png|webp|xlsx|xls|csv|doc|docx)$/i.test(file.originalname || '');
+  cb(ok ? null : new Error('File type not allowed — pdf, images or office documents only'), ok);
+};
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: DOC_FILTER });
 
 const DOC_TYPES = ['RC', 'Fitness Certificate', 'Pollution (PUC)', 'FSSAI Number',
   'Milk Insurance', 'Tanker Insurance', 'State Permit', 'National Permit', 'Agreement', 'Other',
@@ -227,8 +232,14 @@ router.get('/:id/file', authenticate, async (req, res) => {
     );
     if (!r.rows.length) return res.status(404).json({ error: 'No file' });
     const { file_path, file_data, file_name, file_mime } = r.rows[0];
-    res.setHeader('Content-Type', file_mime || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="${(file_name || 'document').replace(/"/g, '')}"`);
+    // Audit 2026-08: only whitelisted render-safe types may display inline;
+    // everything else downloads as an attachment with a sanitized filename.
+    const SAFE_INLINE = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+    const disp = SAFE_INLINE.includes(file_mime) ? 'inline' : 'attachment';
+    const safeName = String(file_name || 'document').replace(/[^A-Za-z0-9._-]/g, '_');
+    res.setHeader('Content-Type', SAFE_INLINE.includes(file_mime) ? file_mime : 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `${disp}; filename="${safeName}"`);
 
     if (file_path) {
       const full = path.join(UPLOAD_DIR, file_path);

@@ -10,7 +10,11 @@ const { authenticate, authorize } = require('../middleware/auth');
 
 const { createTransport } = require('../config/mailer');
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const XL_FILTER = (req, file, cb) => {
+  const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname || '');
+  cb(ok ? null : new Error('Only .xlsx / .xls / .csv files are allowed'), ok);
+};
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: XL_FILTER });
 
 // ─── Helper: maintenance guard ───────────────────────────────────────────────
 // A tanker out on an unreturned Maintainance gate pass cannot be planned.

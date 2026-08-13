@@ -9,7 +9,11 @@ const multer  = require('multer');
 const { pool } = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const XL_FILTER = (req, file, cb) => {
+  const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname || '');
+  cb(ok ? null : new Error('Only .xlsx / .xls / .csv files are allowed'), ok);
+};
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: XL_FILTER });
 
 // ─── Helper: build human-readable node label ─────────────────────────────────
 function nodeLabel(type, row) {

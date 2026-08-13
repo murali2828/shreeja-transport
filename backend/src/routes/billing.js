@@ -29,7 +29,8 @@ const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
 
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
-const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 const { createTransport: baseTransport } = require('../config/mailer');
 // Billing-only QA redirect: set BILLING_EMAIL_REDIRECT on QA to divert ALL
