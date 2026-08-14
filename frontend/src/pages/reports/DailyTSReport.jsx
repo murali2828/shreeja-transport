@@ -143,6 +143,10 @@ export default function DailyTSReport() {
                   <th key={g.prefix} colSpan={g.measures.length}
                     className={`table-th text-center border-l ${g.cls}`}>{g.title}</th>
                 ))}
+                <th className="table-th bg-sky-50 border-l" rowSpan={2}
+                    title="Balance-milk movements explaining why RMRD differs from Dispatch">
+                  RMRD Adjustments
+                </th>
               </tr>
               <tr className="border-b">
                 {GROUPS.map(g => (
@@ -175,6 +179,9 @@ export default function DailyTSReport() {
                       ? <DiffCell key={key} value={r[key]} fmt={fmt}/>
                       : <td key={key} className={`table-td text-right ${mi === 0 ? 'border-l border-gray-100' : ''}`}>{fmt(r[key])}</td>;
                   }))}
+                  <td className="table-td border-l text-[11px] text-gray-600" style={{ minWidth: 220, maxWidth: 340, whiteSpace: 'normal' }}>
+                    {r.rmrd_adjust_note || '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -192,6 +199,7 @@ export default function DailyTSReport() {
                       </td>
                     );
                   }))}
+                  <td className="table-td border-l"/>
                 </tr>
               </tfoot>
             )}
