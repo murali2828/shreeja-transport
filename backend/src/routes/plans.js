@@ -420,6 +420,9 @@ router.get('/movement-export', authenticate, async (req, res) => {
   const { plan_for_date } = req.query;
   if (!plan_for_date) return res.status(400).json({ error: 'plan_for_date required' });
   try {
+    // Month-to-date: 1st of the selected month through the selected date,
+    // with a day-wise quantity subtotal after each day's trips.
+    const monthStart = `${plan_for_date.slice(0, 7)}-01`;
     const plans = await query(`
       SELECT tp.id, tp.plan_for_date::text AS plan_for_date, tp.trip_no,
              t.tanker_number, rm.route_name, sp.name AS starting_point,
@@ -430,8 +433,8 @@ router.get('/movement-export', authenticate, async (req, res) => {
       LEFT JOIN route_masters rm   ON rm.id=tp.route_id
       LEFT JOIN starting_points sp ON sp.id=tp.start_point_id
       LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
-      WHERE tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
-      ORDER BY tp.trip_no`, [plan_for_date]);
+      WHERE tp.plan_for_date BETWEEN $1 AND $2 AND tp.status NOT IN ('cancelled','deleted')
+      ORDER BY tp.plan_for_date, tp.trip_no`, [monthStart, plan_for_date]);
     const bm = await query(`
       SELECT pb.trip_plan_id, pb.seq_no, pb.shift_code, pb.expected_qty,
              b.bmcu_code, b.bmcu_name
@@ -449,11 +452,11 @@ router.get('/movement-export', authenticate, async (req, res) => {
 
     ws.mergeCells('A1:O1');
     const title = ws.getCell('A1');
-    title.value = `SHREEJA SECONDARY TRANSPORT — Tanker Movement Plan — ${plan_for_date}`;
+    title.value = `SHREEJA SECONDARY TRANSPORT — Tanker Movement Plan — ${monthStart} to ${plan_for_date}`;
     title.font = { bold: true, size: 13 };
     title.alignment = { horizontal: 'center' };
     ws.mergeCells('A2:O2');
-    ws.getCell('A2').value = `Completed plan of ${plan_for_date} — same layout as the Trip Plan upload template.`;
+    ws.getCell('A2').value = `Month-to-date movement plan (${monthStart} → ${plan_for_date}) with day-wise quantity subtotals — same layout as the Trip Plan upload template.`;
     ws.getCell('A2').font = { italic: true, size: 9, color: { argb: 'FF595959' } };
 
     const headerRow = ws.addRow([
@@ -466,9 +469,29 @@ router.get('/movement-export', authenticate, async (req, res) => {
       c.alignment = { horizontal: 'center' };
     });
 
+    const subtotalRow = (label, qty, trips, fill) => {
+      const r = ws.addRow([label, null, null, null, null, null,
+        `${trips} trip(s)`, null, null, qty, null, null, null, null, null]);
+      r.eachCell({ includeEmpty: true }, (c, col) => {
+        if (col > 15) return;
+        c.font = { bold: true, color: { argb: 'FF003A6B' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+      });
+      r.getCell(10).numFmt = '#,##0.00';
+    };
+
+    let dayQty = 0, dayTrips = 0, grandQty = 0, grandTrips = 0, curDay = null;
+    const flushDay = () => {
+      if (curDay != null) subtotalRow(`${curDay} TOTAL`, dayQty, dayTrips, 'FFDCFCE7');
+      dayQty = 0; dayTrips = 0;
+    };
     for (const p of plans.rows) {
+      if (p.plan_for_date !== curDay) { flushDay(); curDay = p.plan_for_date; }
       const rows = bmByPlan[p.id] || [{}];
+      let tripQty = 0;
       rows.forEach((b, i) => {
+        const q = b.expected_qty != null ? parseFloat(b.expected_qty) : null;
+        if (q != null) tripQty += q;
         ws.addRow([
           i === 0 ? p.plan_for_date : null,
           i === 0 ? p.trip_no : null,
@@ -479,7 +502,7 @@ router.get('/movement-export', authenticate, async (req, res) => {
           b.bmcu_name || null,
           b.bmcu_code || null,
           i === 0 ? p.shifts_milk : null,
-          b.expected_qty != null ? parseFloat(b.expected_qty) : null,
+          q,
           b.shift_code || null,
           i === 0 && p.expected_km != null ? parseFloat(p.expected_km) : null,
           i === 0 ? p.driver_name : null,
@@ -487,7 +510,11 @@ router.get('/movement-export', authenticate, async (req, res) => {
           i === 0 ? p.remarks : null,
         ]);
       });
+      dayQty += tripQty; grandQty += tripQty;
+      dayTrips += 1; grandTrips += 1;
     }
+    flushDay();
+    subtotalRow(`GRAND TOTAL ${monthStart} → ${plan_for_date}`, grandQty, grandTrips, 'FFDBEAFE');
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=tanker_movement_plan_${plan_for_date}.xlsx`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
