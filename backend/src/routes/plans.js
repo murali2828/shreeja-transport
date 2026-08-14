@@ -459,6 +459,12 @@ router.get('/movement-export', authenticate, async (req, res) => {
     ws.getCell('A2').value = `Month-to-date movement plan (${monthStart} → ${plan_for_date}) with day-wise quantity subtotals — same layout as the Trip Plan upload template.`;
     ws.getCell('A2').font = { italic: true, size: 9, color: { argb: 'FF595959' } };
 
+    const THIN = { style: 'thin', color: { argb: 'FF9CA3AF' } };
+    const MEDIUM = { style: 'medium', color: { argb: 'FF374151' } };
+    const GRID = { top: THIN, bottom: THIN, left: THIN, right: THIN };
+    const borderRow = (row, border = GRID) =>
+      row.eachCell({ includeEmpty: true }, (c, col) => { if (col <= 15) c.border = border; });
+
     const headerRow = ws.addRow([
       'plan_for_date', 'trip_no', 'tanker_number', 'route_name', 'starting_point', 'delivery_point',
       'bmcu_name', 'bmcu_code', 'shifts_milk', 'expected_qty', 'description',
@@ -468,6 +474,7 @@ router.get('/movement-export', authenticate, async (req, res) => {
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2E75B6' } };
       c.alignment = { horizontal: 'center' };
     });
+    borderRow(headerRow, { top: MEDIUM, bottom: MEDIUM, left: THIN, right: THIN });
 
     const subtotalRow = (label, qty, trips, fill) => {
       const r = ws.addRow([label, null, null, null, null, null,
@@ -476,6 +483,7 @@ router.get('/movement-export', authenticate, async (req, res) => {
         if (col > 15) return;
         c.font = { bold: true, color: { argb: 'FF003A6B' } };
         c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+        c.border = { top: MEDIUM, bottom: MEDIUM, left: THIN, right: THIN };
       });
       r.getCell(10).numFmt = '#,##0.00';
     };
@@ -492,7 +500,7 @@ router.get('/movement-export', authenticate, async (req, res) => {
       rows.forEach((b, i) => {
         const q = b.expected_qty != null ? parseFloat(b.expected_qty) : null;
         if (q != null) tripQty += q;
-        ws.addRow([
+        const dataRow = ws.addRow([
           i === 0 ? p.plan_for_date : null,
           i === 0 ? p.trip_no : null,
           i === 0 ? p.tanker_number : null,
@@ -509,6 +517,10 @@ router.get('/movement-export', authenticate, async (req, res) => {
           i === 0 ? p.loader_name : null,
           i === 0 ? p.remarks : null,
         ]);
+        // Full thin grid; first row of each trip gets a medium top rule so
+        // trips read as bordered blocks.
+        borderRow(dataRow, i === 0 ? { top: MEDIUM, bottom: THIN, left: THIN, right: THIN } : GRID);
+        dataRow.getCell(10).numFmt = '#,##0.00';
       });
       dayQty += tripQty; grandQty += tripQty;
       dayTrips += 1; grandTrips += 1;
