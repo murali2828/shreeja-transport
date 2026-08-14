@@ -300,6 +300,11 @@ router.post('/upload', authenticate, authorize('admin'), upload.single('file'), 
 
         // Skip empty rows
         if (!fromType || !fromId || !toType || !toId) { skipped++; continue; }
+        // The template pre-fills ALL pairs; planners enter km only where a
+        // distance is applicable. A BLANK distance cell means "not filled" —
+        // skip silently. Only a non-empty, non-numeric value is an error.
+        const rawKm = String(row.distance_km ?? '').trim();
+        if (rawKm === '') { skipped++; continue; }
         if (isNaN(distKm) || distKm < 0) {
           errors.push(`Sheet "${sheetName}" Row ${rowNum}: invalid distance_km "${row.distance_km}"`);
           continue;
