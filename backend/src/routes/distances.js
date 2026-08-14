@@ -365,15 +365,17 @@ router.get('/export', authenticate, async (req, res) => {
     `);
 
     const wb = XLSX.utils.book_new();
-    const headers = ['ID','From Type','From ID','From Name','To Type','To ID','To Name','Distance KM','Road Notes','Updated At'];
+    const headers = ['ID','From Type','From ID','From Name','To Type','To ID','To Name','Distance KM','Google KM (ref)','Road Notes','Updated At'];
     const rows = [headers, ...r.rows.map(row => [
       row.id, row.from_type, row.from_id, row.from_name,
       row.to_type, row.to_id, row.to_name,
-      parseFloat(row.distance_km), row.road_notes || '',
+      parseFloat(row.distance_km),
+      row.google_km != null ? parseFloat(row.google_km) : '',
+      row.road_notes || '',
       row.updated_at ? new Date(row.updated_at).toLocaleDateString() : ''
     ])];
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [6,16,8,35,16,8,35,12,25,14].map(w => ({ wch: w }));
+    ws['!cols'] = [6,16,8,35,16,8,35,12,13,25,14].map(w => ({ wch: w }));
     XLSX.utils.book_append_sheet(wb, ws, 'Distances');
 
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
