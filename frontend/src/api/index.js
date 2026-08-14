@@ -89,6 +89,13 @@ export const downloadPlanTemplate = () =>
     a.href = url; a.download = 'trip_plan_template.xlsx'; a.click();
     URL.revokeObjectURL(url);
   });
+export const downloadMovementPlan = (date) =>
+  api.get('/plans/movement-export', { params: { plan_for_date: date }, responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `tanker_movement_plan_${date}.xlsx`; a.click();
+    URL.revokeObjectURL(url);
+  });
 
 // ── Executions ────────────────────────────────────────────────────────────────
 export const getExecutions      = (p)     => api.get('/executions', { params: p });

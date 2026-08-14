@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Download, Upload, Send, Trash2, Edit2, Zap, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getPlans, deletePlan, publishPlans, uploadPlans, downloadPlanTemplate, getPlanCoverage } from '../../api/index';
+import { getPlans, deletePlan, publishPlans, uploadPlans, downloadPlanTemplate, downloadMovementPlan, getPlanCoverage } from '../../api/index';
 
 export default function TripPlanList() {
   const navigate = useNavigate();
@@ -207,6 +207,11 @@ export default function TripPlanList() {
           </button>
           <button onClick={downloadPlanTemplate} className="btn-secondary flex items-center gap-1.5">
             <Download size={14}/> Template
+          </button>
+          <button onClick={() => downloadMovementPlan(dateFilter)}
+            title="Download the completed plan of the selected date in the trip-plan template layout"
+            className="btn-secondary flex items-center gap-1.5">
+            <Download size={14}/> Movement Plan
           </button>
           <label className="btn-secondary flex items-center gap-1.5 cursor-pointer">
             <Upload size={14}/> Upload

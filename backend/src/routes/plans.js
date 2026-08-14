@@ -410,6 +410,92 @@ router.delete('/email-config/:id', authenticate, authorize('admin'), async (req,
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /api/plans/movement-export?plan_for_date=YYYY-MM-DD
+// Tanker Movement Plan: the COMPLETED plan of a day exported in the SAME
+// layout as the trip-plan upload template (identical row-3 headers) —
+// trip header on the first BMCU row, additional BMCU rows carry only G/H.
+router.get('/movement-export', authenticate, async (req, res) => {
+  const { plan_for_date } = req.query;
+  if (!plan_for_date) return res.status(400).json({ error: 'plan_for_date required' });
+  try {
+    const plans = await query(`
+      SELECT tp.id, tp.plan_for_date::text AS plan_for_date, tp.trip_no,
+             t.tanker_number, rm.route_name, sp.name AS starting_point,
+             dp.name AS delivery_point, tp.shifts_milk, tp.expected_km,
+             tp.driver_name, tp.loader_name, tp.remarks
+      FROM trip_plans tp
+      LEFT JOIN tankers t          ON t.id=tp.tanker_id
+      LEFT JOIN route_masters rm   ON rm.id=tp.route_id
+      LEFT JOIN starting_points sp ON sp.id=tp.start_point_id
+      LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
+      WHERE tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
+      ORDER BY tp.trip_no`, [plan_for_date]);
+    const bm = await query(`
+      SELECT pb.trip_plan_id, pb.seq_no, pb.shift_code, pb.expected_qty,
+             b.bmcu_code, b.bmcu_name
+      FROM trip_plan_bmcus pb JOIN bmcus b ON b.id=pb.bmcu_id
+      WHERE pb.trip_plan_id = ANY($1)
+      ORDER BY pb.trip_plan_id, pb.seq_no`,
+      [plans.rows.map(p => p.id)]);
+    const bmByPlan = {};
+    for (const r of bm.rows) (bmByPlan[r.trip_plan_id] ||= []).push(r);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Trip Plans');
+    const colWidths = [14, 8, 18, 20, 20, 20, 28, 14, 12, 13, 18, 11, 18, 18, 18];
+    ws.columns = colWidths.map(w => ({ width: w }));
+
+    ws.mergeCells('A1:O1');
+    const title = ws.getCell('A1');
+    title.value = `SHREEJA SECONDARY TRANSPORT — Tanker Movement Plan — ${plan_for_date}`;
+    title.font = { bold: true, size: 13 };
+    title.alignment = { horizontal: 'center' };
+    ws.mergeCells('A2:O2');
+    ws.getCell('A2').value = `Completed plan of ${plan_for_date} — same layout as the Trip Plan upload template.`;
+    ws.getCell('A2').font = { italic: true, size: 9, color: { argb: 'FF595959' } };
+
+    const headerRow = ws.addRow([
+      'plan_for_date', 'trip_no', 'tanker_number', 'route_name', 'starting_point', 'delivery_point',
+      'bmcu_name', 'bmcu_code', 'shifts_milk', 'expected_qty', 'description',
+      'expected_km', 'driver_name', 'loader_name', 'remarks']);
+    headerRow.eachCell(c => {
+      c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2E75B6' } };
+      c.alignment = { horizontal: 'center' };
+    });
+
+    for (const p of plans.rows) {
+      const rows = bmByPlan[p.id] || [{}];
+      rows.forEach((b, i) => {
+        ws.addRow([
+          i === 0 ? p.plan_for_date : null,
+          i === 0 ? p.trip_no : null,
+          i === 0 ? p.tanker_number : null,
+          i === 0 ? p.route_name : null,
+          i === 0 ? p.starting_point : null,
+          i === 0 ? p.delivery_point : null,
+          b.bmcu_name || null,
+          b.bmcu_code || null,
+          i === 0 ? p.shifts_milk : null,
+          b.expected_qty != null ? parseFloat(b.expected_qty) : null,
+          b.shift_code || null,
+          i === 0 && p.expected_km != null ? parseFloat(p.expected_km) : null,
+          i === 0 ? p.driver_name : null,
+          i === 0 ? p.loader_name : null,
+          i === 0 ? p.remarks : null,
+        ]);
+      });
+    }
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    res.setHeader('Content-Disposition', `attachment; filename=tanker_movement_plan_${plan_for_date}.xlsx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    console.error('Movement plan export error:', err);
+    res.status(500).json({ error: 'Failed to export the movement plan' });
+  }
+});
+
 // GET /api/plans/template/download
 router.get('/template/download', authenticate, async (req, res) => {
   try {

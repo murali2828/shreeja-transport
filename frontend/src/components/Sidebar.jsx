@@ -89,7 +89,7 @@ export default function Sidebar({ collapsed = false }) {
         </NavSection>
       )}
 
-      {(isPlanner || isViewer) && (
+      {(isPlanner || isViewer || isBiller) && (
         <NavSection label={collapsed ? '' : 'Execution'}>
           {ni('/execution',        <Play size={15}/>,        'Active Trips')}
           {ni('/execution/closed', <CheckSquare size={15}/>, 'Closed Trips')}
@@ -106,7 +106,7 @@ export default function Sidebar({ collapsed = false }) {
         </NavSection>
       )}
 
-      {(isPlanner || isViewer) && (
+      {(isPlanner || isViewer || isBiller) && (
         <NavSection label={collapsed ? '' : 'Reports'}>
           {ni('/reports', <BarChart2 size={15}/>, 'Daily TS Report')}
           {ni('/reports/bmcu-breakup', <BarChart2 size={15}/>, 'BMCU Break Up')}
