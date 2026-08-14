@@ -100,7 +100,7 @@ export default function Sidebar({ collapsed = false }) {
         </NavSection>
       )}
 
-      {(isBiller || isViewer) && (
+      {(isBiller || isViewer) && user?.billing_enabled !== false && (
         <NavSection label={collapsed ? '' : 'Billing'}>
           {ni('/billing', <IndianRupee size={15}/>, 'Tanker Payments')}
         </NavSection>

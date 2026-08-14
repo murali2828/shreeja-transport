@@ -71,7 +71,7 @@ router.post('/login', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
-    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: user.role, must_change_password: mustChange } });
+    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: user.role, must_change_password: mustChange, billing_enabled: process.env.BILLING_ENABLED === 'true' } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

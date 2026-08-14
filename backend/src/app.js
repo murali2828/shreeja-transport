@@ -69,7 +69,14 @@ app.use('/api/executions', require('./routes/executions'));
 app.use('/api/reports',    require('./routes/reports'));
 app.use('/api/analytics',  require('./routes/analytics'));
 app.use('/api/tanker-rates', require('./routes/tankerRates'));
-app.use('/api/billing',    require('./routes/billing'));
+// Billing is gated: enabled only where BILLING_ENABLED=true (QA during UAT).
+// Production runs with the flag unset until the module gets business sign-off.
+if (process.env.BILLING_ENABLED === 'true') {
+  app.use('/api/billing', require('./routes/billing'));
+} else {
+  app.use('/api/billing', (_req, res) =>
+    res.status(503).json({ error: 'Billing module is not enabled in this environment' }));
+}
 app.use('/api/distances',  require('./routes/distances'));
 app.use('/api/optimize',   require('./routes/optimize'));
 app.use('/api/vendors',    require('./routes/vendors'));
