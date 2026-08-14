@@ -126,7 +126,9 @@ router.get('/coverage', authenticate, async (req, res) => {
 });
 
 // GET /api/plans/:id
-router.get('/:id', authenticate, async (req, res) => {
+// Digits only — otherwise this catch-all shadows later literal routes
+// (/movement-export, /email-config, ...).
+router.get('/:id(\\d+)', authenticate, async (req, res) => {
   try {
     const plan = await query(`
       SELECT tp.*,
