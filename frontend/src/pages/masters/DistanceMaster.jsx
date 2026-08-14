@@ -25,6 +25,7 @@ const api = {
   downloadTemplate: ()  => blobDownload('/distances/template', 'distance_master_template.xlsx'),
   exportAll:        ()  => blobDownload('/distances/export', 'distance_master_export.xlsx'),
   missingCoords:    ()  => blobDownload('/distances/missing-coords', 'missing_coordinates_report.xlsx'),
+  googleRefresh:    (id) => client.post(`/distances/${id}/google-refresh`),
   uploadFile:       (formData) => client.post('/distances/upload', formData),
   getBmcus:         ()  => client.get('/masters/bmcus'),
   getStartPoints:   ()  => client.get('/masters/starting-points'),
@@ -220,6 +221,11 @@ export default function DistanceMaster() {
   const activeDelivPts = delivPts.filter(d => d.is_active);
   const activeTestPts  = testPts.filter(t => t.is_active);
 
+  const fetchGoogleRef = (id) =>
+    api.googleRefresh(id)
+      .then(r => { toast.success(`Google reference: ${r.data.google_km} km`); qc.invalidateQueries(['distances']); })
+      .catch(e => toast.error(e.response?.data?.error || 'Google fetch failed'));
+
   const deleteMut = useMutation({
     mutationFn: api.deleteDistance,
     onSuccess: () => {
@@ -351,6 +357,7 @@ export default function DistanceMaster() {
                 <th className="table-th">From Node</th>
                 <th className="table-th">To Node</th>
                 <th className="table-th w-28 text-right">Distance (KM)</th>
+                <th className="table-th w-32 text-right" title="Google Routes API distance for the same pair — reference only, never overwrites your entered distance">Google KM (ref)</th>
                 <th className="table-th">Road Notes</th>
                 <th className="table-th w-24">Updated By</th>
                 <th className="table-th w-20">Actions</th>
@@ -381,6 +388,15 @@ export default function DistanceMaster() {
                   </td>
                   <td className="table-td text-right font-bold text-[#005ba3]">
                     {parseFloat(d.distance_km).toFixed(1)} km
+                  </td>
+                  <td className="table-td text-right text-green-700">
+                    {d.google_km != null ? `${parseFloat(d.google_km).toFixed(1)} km` : (
+                      <button className="text-[11px] underline text-gray-400 hover:text-green-700"
+                              title="Fetch the Google Routes distance for this pair (reference only)"
+                              onClick={() => fetchGoogleRef(d.id)}>
+                        fetch
+                      </button>
+                    )}
                   </td>
                   <td className="table-td text-gray-500 text-xs">{d.road_notes || '—'}</td>
                   <td className="table-td text-xs text-gray-400">{d.updated_by_name || '—'}</td>

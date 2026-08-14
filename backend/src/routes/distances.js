@@ -385,6 +385,37 @@ router.get('/export', authenticate, async (req, res) => {
   }
 });
 
+// ─── POST /:id/google-refresh — fetch the Google reference for a pair ────────
+// Stores the Google Routes km in google_km WITHOUT touching distance_km, so
+// manually entered distances can be compared against Google.
+const { googleLegKm } = require('../services/roadDistance');
+router.post('/:id(\\d+)/google-refresh', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const row = (await pool.query('SELECT * FROM distance_master WHERE id=$1', [req.params.id])).rows[0];
+    if (!row) return res.status(404).json({ error: 'Distance entry not found' });
+    const coords = async (type, id) => {
+      const table = { bmcu: 'bmcus', starting_point: 'starting_points',
+                      delivery_point: 'delivery_points', testing_point: 'testing_points' }[type];
+      const r = await pool.query(`SELECT latitude, longitude FROM ${table} WHERE id=$1`, [id]);
+      const lat = parseFloat(r.rows[0]?.latitude), lng = parseFloat(r.rows[0]?.longitude);
+      return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+    };
+    const a = await coords(row.from_type, row.from_id);
+    const z = await coords(row.to_type, row.to_id);
+    if (!a || !z)
+      return res.status(400).json({ error: 'One of the locations has no coordinates — add lat/lng in its master first (see Missing Coordinates report)' });
+    const km = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
+    if (km == null)
+      return res.status(502).json({ error: 'Google Routes API did not return a distance for this pair' });
+    const g = Math.round(km * 100) / 100;
+    await pool.query('UPDATE distance_master SET google_km=$1, updated_at=NOW() WHERE id=$2', [g, req.params.id]);
+    res.json({ google_km: g });
+  } catch (err) {
+    console.error('Google refresh error:', err);
+    res.status(500).json({ error: 'Failed to fetch the Google reference distance' });
+  }
+});
+
 // ─── GET /missing-coords — Excel of location nodes without lat/lng ───────────
 // Nodes lacking coordinates cannot use Google Routes: their legs fall back to
 // estimates (or go missing). Includes 30-day usage so the team fixes the

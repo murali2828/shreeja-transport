@@ -54,10 +54,10 @@ async function upsertMasterDistanceKm(db, fromType, fromId, toType, toId, km, no
   if (fromType === toType && parseInt(fromId) === parseInt(toId)) return; // self-pair: nothing to store
   const p = normalisePair(fromType, parseInt(fromId), toType, parseInt(toId));
   await db.query(
-    `INSERT INTO distance_master (from_type, from_id, to_type, to_id, distance_km, road_notes, created_by, updated_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+    `INSERT INTO distance_master (from_type, from_id, to_type, to_id, distance_km, google_km, road_notes, created_by, updated_by)
+     VALUES ($1,$2,$3,$4,$5,$5,$6,$7,$7)
      ON CONFLICT (from_type, from_id, to_type, to_id)
-     DO UPDATE SET distance_km=$5, road_notes=$6, updated_by=$7, updated_at=NOW()`,
+     DO UPDATE SET distance_km=$5, google_km=$5, road_notes=$6, updated_by=$7, updated_at=NOW()`,
     [p.fromType, p.fromId, p.toType, p.toId, parseFloat(km), note || null, userId || null]
   );
 }
