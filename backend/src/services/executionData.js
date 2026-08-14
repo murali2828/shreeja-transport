@@ -7,7 +7,7 @@
 //     recalc totals and distance — the single write path for execution data.
 
 const { haversineKm, ROAD_FACTOR } = require('../utils/geo');
-const { getMasterDistanceKm, upsertMasterDistanceKm } = require('./distanceLookup');
+const { getMasterDistanceKm, upsertMasterDistanceKm, normalisePair } = require('./distanceLookup');
 const { googleLegKm } = require('./roadDistance');
 
 const KG_FACTOR = 1.0285;
@@ -23,7 +23,7 @@ const coord = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : nu
 // Per-leg km resolution cascade: Distance Master (exact) → Google Routes API
 // (cached back into Distance Master) → Haversine × road factor (flagged estimated).
 // Persists calculated_km / km_estimated_leg_count / km_incomplete and returns the breakdown.
-async function computeExecutionDistance(client, execId, userId) {
+async function computeExecutionDistance(client, execId, userId, masterCache) {
   const head = await client.query(`
     SELECT tp.start_point_id, tp.delivery_point_id,
            sp.name AS start_name, sp.latitude AS start_lat, sp.longitude AS start_lng,
@@ -57,27 +57,37 @@ async function computeExecutionDistance(client, execId, userId) {
 
   for (let i = 0; i < nodes.length - 1; i++) {
     const a = nodes[i], z = nodes[i + 1];
-    let km = 0, source = 'missing';
+    let km = 0, source = 'missing', isNew = false, googleKm = null;
 
-    const master = await getMasterDistanceKm(client, a.type, a.id, z.type, z.id);
+    const master = await getMasterDistanceKm(client, a.type, a.id, z.type, z.id, masterCache);
     if (master != null) {
-      km = master; source = 'master';
+      km = master.km; source = master.fromGoogle ? 'google' : 'master';
+      if (master.fromGoogle) googleKm = master.km;
     } else if (a.lat != null && a.lng != null && z.lat != null && z.lng != null) {
+      isNew = true; // pair was NOT in the Distance Master — new combination
       const g = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
       if (g != null) {
-        km = g; source = 'google';
+        km = g; source = 'google'; googleKm = g;
         await upsertMasterDistanceKm(client, a.type, a.id, z.type, z.id, g, 'auto: Google Routes API', userId);
+        if (masterCache) { // keep the batch cache in step so the pair isn't re-fetched this run
+          const p = normalisePair(a.type, parseInt(a.id), z.type, parseInt(z.id));
+          masterCache.set(`${p.fromType}:${p.fromId}|${p.toType}:${p.toId}`, { km: g, fromGoogle: true });
+        }
       } else {
         km = haversineKm(a.lat, a.lng, z.lat, z.lng) * ROAD_FACTOR;
         source = 'estimated'; estimated++;
       }
     } else {
       incomplete = true; // no master value and missing coordinates
+      isNew = true;      // also an unknown (new) combination
     }
 
     km = Math.round(km * 100) / 100;
     total += km;
-    legs.push({ from_label: a.label, to_label: z.label, km, source });
+    const leg = { from_label: a.label, to_label: z.label, km, source };
+    if (isNew) leg.is_new = true; // new combination — flagged for approval
+    if (googleKm != null) leg.google_km = Math.round(googleKm * 100) / 100; // Google reference, survives manual edits
+    legs.push(leg);
   }
 
   total = Math.round(total * 100) / 100;

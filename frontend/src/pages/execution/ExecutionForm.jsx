@@ -581,10 +581,32 @@ export default function ExecutionForm() {
     queryFn:  () => getTripDocPlan(exec.trip_plan_id).then(r => r.data),
     enabled:  !!exec?.trip_plan_id,
   });
+  // Dedicated manual timestamps: DATE picked from a calendar, TIME typed as
+  // HH:MM. OUT applies to the Gate Pass (tanker leaving); IN applies to
+  // COA/Unload (tanker arriving at the plant). Both blank = server NOW().
+  const [outDate, setOutDate] = useState(''); const [outTime, setOutTime] = useState('');
+  const [inDate, setInDate] = useState('');   const [inTime, setInTime] = useState('');
+  // (date, "HH:MM") → ISO string, null when both blank; throws on bad input.
+  const parseTypedTs = (date, time, label) => {
+    const d = String(date || '').trim(), t = String(time || '').trim();
+    if (!d && !t) return null;
+    if (!d) throw new Error(`${label}: pick the date from the calendar`);
+    if (!t) throw new Error(`${label}: type the time as HH:MM (e.g. 14:30)`);
+    const m = t.match(/^(\d{1,2})[:.](\d{2})$/);
+    if (!m || +m[1] > 23 || +m[2] > 59)
+      throw new Error(`${label}: time must be HH:MM in 24-hour format (e.g. 06:15 or 18:45)`);
+    const iso = `${d}T${m[1].padStart(2, '0')}:${m[2]}`;
+    const dt = new Date(iso);
+    if (isNaN(dt)) throw new Error(`${label}: invalid date/time`);
+    if (dt.getTime() > Date.now() + 5 * 60 * 1000) throw new Error(`${label}: time cannot be in the future`);
+    return iso;
+  };
   const printMut = useMutation({
-    mutationFn: ({ docType }) => printTripDoc(exec.trip_plan_id, docType),
+    mutationFn: ({ docType, ts }) => printTripDoc(exec.trip_plan_id, docType, ts),
     onSuccess: (res, { docType }) => {
       qc.invalidateQueries(['trip-doc-plan']);
+      if (docType === 'gate_pass') { setOutDate(''); setOutTime(''); }
+      else { setInDate(''); setInTime(''); }
       if (docType === 'unloading') {
         toast.success(res.data.is_duplicate
           ? `Already recorded — unloading completed at ${new Date(res.data.first_printed_at).toLocaleString('en-IN')}`
@@ -915,16 +937,43 @@ export default function ExecutionForm() {
           const gpDone = !!docStatus.gate_pass;
           const coaDone = !!docStatus.coa;
           const fmt = ts => ts ? new Date(ts).toLocaleString('en-IN') : '';
+          const fire = (docType, date, time, label, guard) => {
+            let ts;
+            try { ts = parseTypedTs(date, time, label); } catch (e) { return toast.error(e.message); }
+            if (guard && !guard(ts)) return;
+            printMut.mutate({ docType, ts });
+          };
+          const today = new Date().toISOString().slice(0, 10);
           return (<>
-            <button onClick={() => printMut.mutate({ docType: 'gate_pass' })}
+            {/* Tanker OUT — applies to the Gate Pass */}
+            <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
+                   title="Tanker OUT — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click Gate Pass.">
+              OUT
+              <input type="date" className="input py-0.5 px-1 text-[11px]" max={today}
+                     value={outDate} onChange={e => setOutDate(e.target.value)}/>
+              <input type="text" placeholder="HH:MM" maxLength={5}
+                     className="input py-0.5 px-1 text-[11px] w-16"
+                     value={outTime} onChange={e => setOutTime(e.target.value)}/>
+            </label>
+            <button onClick={() => fire('gate_pass', outDate, outTime, 'Tanker OUT')}
               disabled={printMut.isPending}
-              title={gpDone ? `Trip started — first printed ${fmt(docStatus.gate_pass.first_printed_at)} (reprint = duplicate)` : 'Print Gate Pass (starts the trip clock)'}
+              title={gpDone ? `Tanker OUT — first recorded ${fmt(docStatus.gate_pass.first_printed_at)} (reprint = duplicate)` : 'Print Gate Pass (records tanker OUT; type the actual time or leave blank for now)'}
               className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg font-medium ${gpDone ? 'bg-green-100 text-green-700' : 'btn-secondary'}`}>
               <Printer size={12}/> Gate Pass{gpDone ? ' ✓' : ''}
             </button>
-            <button onClick={() => printMut.mutate({ docType: 'coa' })}
+            {/* Tanker IN — applies to COA / Unload */}
+            <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
+                   title="Tanker IN (arrival at the plant) — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click COA or Unload.">
+              IN
+              <input type="date" className="input py-0.5 px-1 text-[11px]" max={today}
+                     value={inDate} onChange={e => setInDate(e.target.value)}/>
+              <input type="text" placeholder="HH:MM" maxLength={5}
+                     className="input py-0.5 px-1 text-[11px] w-16"
+                     value={inTime} onChange={e => setInTime(e.target.value)}/>
+            </label>
+            <button onClick={() => fire('coa', inDate, inTime, 'Tanker IN')}
               disabled={printMut.isPending || !gpDone}
-              title={!gpDone ? 'Print the Gate Pass first' : coaDone ? `Arrived — first printed ${fmt(docStatus.coa.first_printed_at)} (reprint = duplicate)` : 'Print COA (marks arrival at delivery point)'}
+              title={!gpDone ? 'Print the Gate Pass first' : coaDone ? `Tanker IN — first recorded ${fmt(docStatus.coa.first_printed_at)} (reprint = duplicate)` : 'Print COA (records tanker IN at the plant; type the actual time or leave blank for now)'}
               className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg font-medium ${coaDone ? 'bg-green-100 text-green-700' : 'btn-secondary'} ${!gpDone ? 'opacity-40 cursor-not-allowed' : ''}`}>
               <Printer size={12}/> COA{coaDone ? ' ✓' : ''}
             </button>
@@ -934,11 +983,11 @@ export default function ExecutionForm() {
                 <button
                   onClick={() => {
                     if (unloadDone) return toast(`Unloading was completed at ${fmt(docStatus.unloading.first_printed_at)}`, { icon: 'ℹ️' });
-                    if (window.confirm(`Record UNLOADING COMPLETED for Trip #${exec.trip_no} now? This timestamp cannot be changed.`))
-                      printMut.mutate({ docType: 'unloading' });
+                    fire('unloading', inDate, inTime, 'Tanker IN', ts =>
+                      window.confirm(`Record UNLOADING COMPLETED for Trip #${exec.trip_no}${ts ? ` at ${ts.replace('T', ' ')}` : ' now'}? This timestamp cannot be changed.`));
                   }}
                   disabled={printMut.isPending || !coaDone}
-                  title={!coaDone ? 'Print the COA first (tanker must arrive)' : unloadDone ? `Unloading completed at ${fmt(docStatus.unloading.first_printed_at)}` : 'Record unloading completed'}
+                  title={!coaDone ? 'Print the COA first (tanker must arrive)' : unloadDone ? `Unloading completed at ${fmt(docStatus.unloading.first_printed_at)}` : 'Record unloading completed (uses the IN time if typed)'}
                   className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg font-medium ${unloadDone ? 'bg-green-100 text-green-700' : 'btn-secondary'} ${!coaDone ? 'opacity-40 cursor-not-allowed' : ''}`}>
                   ⬇ Unload{unloadDone ? ' ✓' : ''}
                 </button>

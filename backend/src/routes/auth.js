@@ -40,14 +40,10 @@ query(`
   )
 `).catch(err => console.error('Migration error (password_reset_tokens):', err.message));
 
+const { createTransport } = require('../config/mailer');
 function getEmailTransporter() {
   return {
-    transporter: nodemailer.createTransport({
-      host:   process.env.SMTP_HOST,
-      port:   parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    }),
+    transporter: createTransport(),
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
   };
 }
@@ -75,7 +71,7 @@ router.post('/login', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
-    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: user.role, must_change_password: mustChange } });
+    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: user.role, must_change_password: mustChange, billing_enabled: process.env.BILLING_ENABLED === 'true' } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -100,7 +96,7 @@ router.get('/users', authenticate, authorize('admin'), async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-const VALID_ROLES = ['admin', 'planner', 'executor', 'viewer'];
+const VALID_ROLES = ['admin', 'planner', 'executor', 'viewer', 'biller'];
 
 // POST /api/auth/users
 router.post('/users', authenticate, authorize('admin'), async (req, res) => {

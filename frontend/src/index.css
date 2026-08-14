@@ -30,10 +30,28 @@
   ::-webkit-scrollbar-track  { background: rgba(255,255,255,0.1); }
   ::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.35); border-radius: 8px; }
   ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.55); }
-  /* Visible scrollbar for light backgrounds (tables, cards) */
-  .overflow-x-scroll::-webkit-scrollbar-track  { background: #e5e7eb; }
-  .overflow-x-scroll::-webkit-scrollbar-thumb  { background: #93c5fd; border-radius: 8px; }
-  .overflow-x-scroll::-webkit-scrollbar-thumb:hover { background: #3b82f6; }
+  /* Visible scrollbar for light backgrounds (tables, cards).
+     Horizontally scrolling tables use .overflow-x-auto / .overflow-x-scroll —
+     give those a chunky, clearly visible bar instead of the 6px translucent
+     one styled for the blue page background. */
+  .overflow-x-scroll::-webkit-scrollbar,
+  .overflow-x-auto::-webkit-scrollbar        { width: 12px; height: 12px; }
+  .overflow-x-scroll::-webkit-scrollbar-track,
+  .overflow-x-auto::-webkit-scrollbar-track  { background: #e2e8f0; border-radius: 8px; }
+  .overflow-x-scroll::-webkit-scrollbar-thumb,
+  .overflow-x-auto::-webkit-scrollbar-thumb  {
+    background: #0369a1; border-radius: 8px; border: 2px solid #e2e8f0;
+  }
+  .overflow-x-scroll::-webkit-scrollbar-thumb:hover,
+  .overflow-x-auto::-webkit-scrollbar-thumb:hover { background: #005ba3; }
+  /* Firefox only — setting scrollbar-color in Chromium disables the
+     ::-webkit-scrollbar styling above and hides the bar behind overlays. */
+  @supports (-moz-appearance: none) {
+    .overflow-x-scroll, .overflow-x-auto {
+      scrollbar-width: auto;
+      scrollbar-color: #0369a1 #e2e8f0;
+    }
+  }
 }
 
 @layer components {

@@ -9,7 +9,11 @@ const multer  = require('multer');
 const { pool } = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const XL_FILTER = (req, file, cb) => {
+  const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname || '');
+  cb(ok ? null : new Error('Only .xlsx / .xls / .csv files are allowed'), ok);
+};
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: XL_FILTER });
 
 // ─── Helper: build human-readable node label ─────────────────────────────────
 function nodeLabel(type, row) {
@@ -140,7 +144,7 @@ router.get('/summary', authenticate, async (req, res) => {
 // POST /api/distances
 // Body: { from_type, from_id, to_type, to_id, distance_km, road_notes }
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.post('/', authenticate, authorize('admin'), async (req, res) => {
   try {
     const { from_type, from_id, to_type, to_id, distance_km, road_notes } = req.body;
     if (!from_type || !from_id || !to_type || !to_id || distance_km == null)
@@ -168,7 +172,7 @@ router.post('/', authenticate, authorize('admin', 'planner'), async (req, res) =
 // ─────────────────────────────────────────────────────────────────────────────
 // PUT /api/distances/:id
 // ─────────────────────────────────────────────────────────────────────────────
-router.put('/:id', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
   try {
     const { distance_km, road_notes } = req.body;
     const r = await pool.query(
@@ -186,7 +190,7 @@ router.put('/:id', authenticate, authorize('admin', 'planner'), async (req, res)
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /api/distances/:id
 // ─────────────────────────────────────────────────────────────────────────────
-router.delete('/:id', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
   try {
     const r = await pool.query('DELETE FROM distance_master WHERE id=$1 RETURNING id', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
@@ -267,7 +271,7 @@ router.get('/template', authenticate, async (req, res) => {
 // POST /api/distances/upload
 // Bulk upload from the Excel template
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/upload', authenticate, authorize('admin', 'planner'), upload.single('file'), async (req, res) => {
+router.post('/upload', authenticate, authorize('admin'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   const client = await pool.connect();
@@ -296,6 +300,11 @@ router.post('/upload', authenticate, authorize('admin', 'planner'), upload.singl
 
         // Skip empty rows
         if (!fromType || !fromId || !toType || !toId) { skipped++; continue; }
+        // The template pre-fills ALL pairs; planners enter km only where a
+        // distance is applicable. A BLANK distance cell means "not filled" —
+        // skip silently. Only a non-empty, non-numeric value is an error.
+        const rawKm = String(row.distance_km ?? '').trim();
+        if (rawKm === '') { skipped++; continue; }
         if (isNaN(distKm) || distKm < 0) {
           errors.push(`Sheet "${sheetName}" Row ${rowNum}: invalid distance_km "${row.distance_km}"`);
           continue;
@@ -361,19 +370,156 @@ router.get('/export', authenticate, async (req, res) => {
     `);
 
     const wb = XLSX.utils.book_new();
-    const headers = ['ID','From Type','From ID','From Name','To Type','To ID','To Name','Distance KM','Road Notes','Updated At'];
+    const headers = ['ID','From Type','From ID','From Name','To Type','To ID','To Name','Distance KM','Google KM (ref)','Road Notes','Updated At'];
     const rows = [headers, ...r.rows.map(row => [
       row.id, row.from_type, row.from_id, row.from_name,
       row.to_type, row.to_id, row.to_name,
-      parseFloat(row.distance_km), row.road_notes || '',
+      parseFloat(row.distance_km),
+      row.google_km != null ? parseFloat(row.google_km) : '',
+      row.road_notes || '',
       row.updated_at ? new Date(row.updated_at).toLocaleDateString() : ''
     ])];
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [6,16,8,35,16,8,35,12,25,14].map(w => ({ wch: w }));
+    ws['!cols'] = [6,16,8,35,16,8,35,12,13,25,14].map(w => ({ wch: w }));
     XLSX.utils.book_append_sheet(wb, ws, 'Distances');
 
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Disposition', 'attachment; filename=distance_master_export.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /:id/google-refresh — fetch the Google reference for a pair ────────
+// Stores the Google Routes km in google_km WITHOUT touching distance_km, so
+// manually entered distances can be compared against Google.
+const { googleLegKm } = require('../services/roadDistance');
+router.post('/:id(\\d+)/google-refresh', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const row = (await pool.query('SELECT * FROM distance_master WHERE id=$1', [req.params.id])).rows[0];
+    if (!row) return res.status(404).json({ error: 'Distance entry not found' });
+    const coords = async (type, id) => {
+      const table = { bmcu: 'bmcus', starting_point: 'starting_points',
+                      delivery_point: 'delivery_points', testing_point: 'testing_points' }[type];
+      const r = await pool.query(`SELECT latitude, longitude FROM ${table} WHERE id=$1`, [id]);
+      const lat = parseFloat(r.rows[0]?.latitude), lng = parseFloat(r.rows[0]?.longitude);
+      return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+    };
+    const a = await coords(row.from_type, row.from_id);
+    const z = await coords(row.to_type, row.to_id);
+    if (!a || !z)
+      return res.status(400).json({ error: 'One of the locations has no coordinates — add lat/lng in its master first (see Missing Coordinates report)' });
+    const km = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
+    if (km == null)
+      return res.status(502).json({ error: 'Google Routes API did not return a distance for this pair' });
+    const g = Math.round(km * 100) / 100;
+    await pool.query('UPDATE distance_master SET google_km=$1, updated_at=NOW() WHERE id=$2', [g, req.params.id]);
+    res.json({ google_km: g });
+  } catch (err) {
+    console.error('Google refresh error:', err);
+    res.status(500).json({ error: 'Failed to fetch the Google reference distance' });
+  }
+});
+
+// ─── POST /google-refresh-all — batch-fetch Google refs for pairs missing one ─
+// Processes up to BATCH rows per call with bounded concurrency; the screen
+// calls it repeatedly until nothing more was fetched. Pairs whose locations
+// lack coordinates are skipped (they surface in the Missing Coordinates report).
+router.post('/google-refresh-all', authenticate, authorize('admin'), async (req, res) => {
+  const BATCH = 150, CONCURRENCY = 5;
+  try {
+    const rows = (await pool.query(
+      `SELECT id, from_type, from_id, to_type, to_id FROM distance_master
+       WHERE google_km IS NULL ORDER BY id LIMIT $1`, [BATCH])).rows;
+
+    // Preload all node coordinates once
+    const coordMap = new Map();
+    for (const [type, table] of [['bmcu', 'bmcus'], ['starting_point', 'starting_points'],
+                                 ['delivery_point', 'delivery_points'], ['testing_point', 'testing_points']]) {
+      const r = await pool.query(`SELECT id, latitude, longitude FROM ${table}`);
+      for (const n of r.rows) {
+        const lat = parseFloat(n.latitude), lng = parseFloat(n.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) coordMap.set(`${type}:${n.id}`, { lat, lng });
+      }
+    }
+
+    let fetched = 0, skipped = 0, failed = 0;
+    for (let i = 0; i < rows.length; i += CONCURRENCY) {
+      await Promise.all(rows.slice(i, i + CONCURRENCY).map(async row => {
+        const a = coordMap.get(`${row.from_type}:${row.from_id}`);
+        const z = coordMap.get(`${row.to_type}:${row.to_id}`);
+        if (!a || !z) { skipped++; return; }
+        const km = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
+        if (km == null) { failed++; return; }
+        await pool.query('UPDATE distance_master SET google_km=$1, updated_at=NOW() WHERE id=$2',
+          [Math.round(km * 100) / 100, row.id]);
+        fetched++;
+      }));
+    }
+    const remaining = parseInt((await pool.query(
+      'SELECT COUNT(*) FROM distance_master WHERE google_km IS NULL')).rows[0].count);
+    res.json({ fetched, skipped, failed, remaining });
+  } catch (err) {
+    console.error('Google refresh-all error:', err);
+    res.status(500).json({ error: 'Failed to batch-fetch Google references' });
+  }
+});
+
+// ─── GET /missing-coords — Excel of location nodes without lat/lng ───────────
+// Nodes lacking coordinates cannot use Google Routes: their legs fall back to
+// estimates (or go missing). Includes 30-day usage so the team fixes the
+// busiest locations first.
+router.get('/missing-coords', authenticate, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT 'BMCU' AS node_type, b.bmcu_code AS code, b.bmcu_name AS name,
+             b.is_active,
+             CASE WHEN b.latitude IS NULL AND b.longitude IS NULL THEN 'Latitude + Longitude'
+                  WHEN b.latitude IS NULL THEN 'Latitude' ELSE 'Longitude' END AS missing,
+             (SELECT COUNT(DISTINCT teb.execution_id) FROM trip_execution_bmcus teb
+               JOIN trip_executions te ON te.id = teb.execution_id
+               JOIN trip_plans tp ON tp.id = te.trip_plan_id
+               WHERE teb.bmcu_id = b.id AND teb.is_deleted = FALSE
+                 AND tp.plan_for_date >= CURRENT_DATE - 30)::int AS trips_last_30_days
+      FROM bmcus b WHERE b.latitude IS NULL OR b.longitude IS NULL
+      UNION ALL
+      SELECT 'Starting Point', NULL, sp.name, sp.is_active,
+             CASE WHEN sp.latitude IS NULL AND sp.longitude IS NULL THEN 'Latitude + Longitude'
+                  WHEN sp.latitude IS NULL THEN 'Latitude' ELSE 'Longitude' END,
+             (SELECT COUNT(*) FROM trip_plans tp
+               WHERE tp.start_point_id = sp.id AND tp.plan_for_date >= CURRENT_DATE - 30
+                 AND tp.status NOT IN ('cancelled','deleted'))::int
+      FROM starting_points sp WHERE sp.latitude IS NULL OR sp.longitude IS NULL
+      UNION ALL
+      SELECT 'Delivery Point', NULL, dp.name, dp.is_active,
+             CASE WHEN dp.latitude IS NULL AND dp.longitude IS NULL THEN 'Latitude + Longitude'
+                  WHEN dp.latitude IS NULL THEN 'Latitude' ELSE 'Longitude' END,
+             (SELECT COUNT(*) FROM trip_plans tp
+               WHERE tp.delivery_point_id = dp.id AND tp.plan_for_date >= CURRENT_DATE - 30
+                 AND tp.status NOT IN ('cancelled','deleted'))::int
+      FROM delivery_points dp WHERE dp.latitude IS NULL OR dp.longitude IS NULL
+      UNION ALL
+      SELECT 'Testing Point', NULL, tpt.name, tpt.is_active,
+             CASE WHEN tpt.latitude IS NULL AND tpt.longitude IS NULL THEN 'Latitude + Longitude'
+                  WHEN tpt.latitude IS NULL THEN 'Latitude' ELSE 'Longitude' END,
+             0
+      FROM testing_points tpt WHERE tpt.latitude IS NULL OR tpt.longitude IS NULL
+      ORDER BY trips_last_30_days DESC, node_type, name`);
+
+    const wb = XLSX.utils.book_new();
+    const headers = ['Type', 'BMCU Code', 'Name', 'Missing', 'Active', 'Trips (last 30 days)'];
+    const rows = [headers, ...r.rows.map(row => [
+      row.node_type, row.code || '', row.name, row.missing,
+      row.is_active ? 'Yes' : 'No', row.trips_last_30_days,
+    ])];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [16, 14, 38, 22, 8, 18].map(w => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws, 'Missing Coordinates');
+
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename=missing_coordinates_report.xlsx');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
   } catch (err) {

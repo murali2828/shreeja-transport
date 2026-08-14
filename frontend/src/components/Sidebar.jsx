@@ -5,7 +5,7 @@ import { NavLink } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   Truck, LayoutDashboard, MapPin, Route, Users, Settings,
-  ClipboardList, Play, CheckSquare, BarChart2, Mail,
+  ClipboardList, Play, CheckSquare, BarChart2, Mail, IndianRupee,
   ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText
 } from 'lucide-react';
 
@@ -41,6 +41,7 @@ export default function Sidebar({ collapsed = false }) {
   const isAdmin   = user?.role === 'admin';
   const isPlanner  = user?.role === 'planner' || isAdmin;
   const isViewer   = user?.role === 'viewer';
+  const isBiller  = user?.role === 'biller' || isAdmin;
   const isExecutor = user?.role === 'executor';
 
   const ni = (to, icon, label, end) =>
@@ -53,7 +54,7 @@ export default function Sidebar({ collapsed = false }) {
         {ni('/', <LayoutDashboard size={15}/>, 'Dashboard', true)}
       </div>
 
-      {isPlanner && (
+      {isAdmin && (
         <NavSection label={collapsed ? '' : 'Masters'}>
           {ni('/masters/tankers',    <Truck size={15}/>,       'Tankers')}
           {ni('/masters/vendors',    <Building2 size={15}/>,   'Vendors')}
@@ -62,6 +63,7 @@ export default function Sidebar({ collapsed = false }) {
           {ni('/masters/routes',     <Route size={15}/>,       'Routes')}
           {ni('/masters/locations',  <Navigation size={15}/>,  'Locations')}
           {ni('/masters/distances',  <Route size={15}/>,       'Distance Master')}
+          {ni('/masters/tanker-rates', <Truck size={15}/>,     'Tanker Rates')}
           {isAdmin && (
             <>
               {ni('/masters/users',        <Users size={15}/>, 'Users')}
@@ -87,7 +89,7 @@ export default function Sidebar({ collapsed = false }) {
         </NavSection>
       )}
 
-      {(isPlanner || isViewer) && (
+      {(isPlanner || isViewer || isBiller) && (
         <NavSection label={collapsed ? '' : 'Execution'}>
           {ni('/execution',        <Play size={15}/>,        'Active Trips')}
           {ni('/execution/closed', <CheckSquare size={15}/>, 'Closed Trips')}
@@ -98,10 +100,17 @@ export default function Sidebar({ collapsed = false }) {
         </NavSection>
       )}
 
-      {(isPlanner || isViewer) && (
+      {(isBiller || isViewer) && user?.billing_enabled !== false && (
+        <NavSection label={collapsed ? '' : 'Billing'}>
+          {ni('/billing', <IndianRupee size={15}/>, 'Tanker Payments')}
+        </NavSection>
+      )}
+
+      {(isPlanner || isViewer || isBiller) && (
         <NavSection label={collapsed ? '' : 'Reports'}>
           {ni('/reports', <BarChart2 size={15}/>, 'Daily TS Report')}
           {ni('/reports/bmcu-breakup', <BarChart2 size={15}/>, 'BMCU Break Up')}
+          {ni('/reports/analytics', <BarChart2 size={15}/>, 'Analytics')}
           {ni('/reports/trip-durations', <BarChart2 size={15}/>, 'Trip Durations')}
           {ni('/reports/day-utilisation', <BarChart2 size={15}/>, 'Day Utilisation')}
           {isAdmin && ni('/reports/audit', <Users size={15}/>, 'User Activity')}

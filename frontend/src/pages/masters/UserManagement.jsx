@@ -170,7 +170,8 @@ export default function UserManagement() {
                   <option value="executor">Executor</option>
                   <option value="planner">Planner</option>
                   <option value="admin">Admin</option>
-                  <option value="viewer">Viewer</option>
+                  <option value="biller">Biller</option>
+                <option value="viewer">Viewer</option>
                 </select>
               </Field>
               <Field label="User ID" required>

@@ -4,17 +4,10 @@ const router     = express.Router();
 const ExcelJS    = require('exceljs');
 const nodemailer = require('nodemailer');
 const { query }  = require('../config/db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 
 // ─── Mailer factory ───────────────────────────────────────────────────────────
-function createTransport() {
-  return nodemailer.createTransport({
-    host:   process.env.SMTP_HOST,
-    port:   parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-  });
-}
+const { createTransport } = require('../config/mailer');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // DAILY TS REPORT — reconciliation format (per Report_TMS.xlsx spec)
@@ -88,6 +81,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
   // RMRD totals per execution from shift rows (qty in litres; kgs/fat/snf derived).
   const execIds = r.rows.map(x => x.execution_id).filter(Boolean);
   const rmrdByExec = {};
+  const adjNotes = {};   // execId -> ["+1,044.0 L balance lifted at Reddigunta", ...]
   if (execIds.length) {
     const sr = await query(`
       SELECT tebs.execution_id, tebs.rmrd_qty, tebs.rmrd_fat_pct, tebs.rmrd_snf_pct
@@ -131,25 +125,42 @@ async function buildTsReport(reportDate, basis = 'plan') {
     // used to leave its entries behind, and counting those orphans applied the
     // adjustment (e.g. a Left Over deduction) twice.
     const er = await query(`
-      SELECT e.execution_id, e.kind, e.category, e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id
+      SELECT e.execution_id, e.kind, e.category, e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id,
+             sb.bmcu_name AS source_name, rb.bmcu_name AS dest_name, tp2.trip_no AS entry_trip_no
       FROM trip_execution_bmcu_entries e
       JOIN trip_execution_bmcus b
         ON b.execution_id=e.execution_id AND b.seq_no=e.bmcu_seq_no AND b.is_deleted=FALSE
+      JOIN trip_executions te2 ON te2.id = e.execution_id
+      JOIN trip_plans tp2      ON tp2.id = te2.trip_plan_id
+      LEFT JOIN bmcus sb ON sb.id = e.source_bmcu_id
+      LEFT JOIN bmcus rb ON rb.id = e.bmcu_id
       WHERE e.execution_id = ANY($1)`, [execIds]);
+    // Human-readable per-trip notes explaining WHY RMRD differs from dispatch
+    // (shown as the "RMRD Adjustments" column). One phrase per adjustment.
+    const note = (execId, text) => (adjNotes[execId] ||= []).push(text);
+    const qL = v => `${rN(parseFloat(v), 1)} L`;
     for (const e of er.rows) {
       if (!e.qty_litres) continue;
       if (e.kind === 'balance_milk' && e.category === 'Left Over milk') {
         applyAdj(e.execution_id, -1, e.qty_litres, e.fat_pct, e.snf_pct);
+        note(e.execution_id, `−${qL(e.qty_litres)} left over${e.dest_name ? ` at ${e.dest_name}` : ''}`);
       } else if (e.kind === 'balance_milk' && e.category === 'Lifted milk') {
         applyAdj(e.execution_id, 1, e.qty_litres, e.fat_pct, e.snf_pct);
+        note(e.execution_id, `+${qL(e.qty_litres)} balance lifted${e.dest_name ? ` at ${e.dest_name}` : ''}`);
       } else if (e.kind === 'new_mpp') {
         applyAdj(e.execution_id, 1, e.qty_litres, e.fat_pct, e.snf_pct);
+        note(e.execution_id, `+${qL(e.qty_litres)} new MPP${e.dest_name ? ` ${e.dest_name}` : ''}`);
       } else if (e.kind === 'internal_shifting') {
         applyAdj(e.execution_id, 1, e.qty_litres, e.fat_pct, e.snf_pct); // receiving trip
+        note(e.execution_id, `+${qL(e.qty_litres)} shifted in${e.source_name ? ` from ${e.source_name}` : ''}${e.dest_name ? ` to ${e.dest_name}` : ''}`);
         // Deduct from the trip that carries the source plant (prefer the same trip).
         const srcExecs = bm2exec[e.source_bmcu_id] || [];
         const target = srcExecs.includes(e.execution_id) ? e.execution_id : srcExecs[0];
-        if (target) applyAdj(target, -1, e.qty_litres, e.fat_pct, e.snf_pct);
+        if (target) {
+          applyAdj(target, -1, e.qty_litres, e.fat_pct, e.snf_pct);
+          if (target !== e.execution_id)
+            note(target, `−${qL(e.qty_litres)} shifted out${e.source_name ? ` of ${e.source_name}` : ''} to Trip #${e.entry_trip_no}`);
+        }
       }
     }
   }
@@ -184,6 +195,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
       shifts_milk: row.shifts_milk,
       entered_by: row.entered_by,
       has_ack: hasAck,
+      rmrd_adjust_note: (adjNotes[row.execution_id] || []).join('; ') || null,
       rmrd_litres: rN(rmrd.litres), rmrd_kgs: rN(rmrd.kgs, 2),
       rmrd_fat: pct(rmrd.kg_fat, rmrd.kgs), rmrd_snf: pct(rmrd.kg_snf, rmrd.kgs),
       rmrd_kg_fat: rN(rmrd.kg_fat, 2), rmrd_kg_snf: rN(rmrd.kg_snf, 2),
@@ -308,10 +320,11 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
   ws.columns = [
     { width: 14 }, { width: 12 }, { width: 12 }, { width: 16 }, { width: 20 }, { width: 18 }, { width: 18 }, { width: 14 },
     ...Array(TS_NMEAS).fill({ width: 11 }),
+    { width: 44 },  // RMRD Adjustments remarks
   ];
 
   // Row 1 — title
-  ws.mergeCells(1, 1, 1, NINFO + TS_NMEAS);
+  ws.mergeCells(1, 1, 1, NINFO + TS_NMEAS + 1);
   const title = ws.getCell(1, 1);
   title.value = `Daily TS Report — ${reportDate} (${TS_BASIS_LABEL(basis)})`;
   title.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
@@ -347,6 +360,18 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
     });
     for (let i = 0; i < g.keys.length; i++) ws.getCell(2, startCol + i).border = BORDER;
   });
+  {
+    // Trailing remarks column: why RMRD differs from dispatch on this trip
+    const col = NINFO + TS_NMEAS + 1;
+    ws.mergeCells(2, col, 3, col);
+    const c = ws.getCell(2, col);
+    c.value = 'RMRD Adjustments';
+    c.font = { bold: true, color: { argb: HEADER_TEXT } };
+    c.fill = fillOf('FFE0F2FE');
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    c.border = BORDER;
+    ws.getCell(3, col).border = BORDER;
+  }
   ws.getRow(2).height = 20;
 
   // Data rows, grouped by delivery point (rows arrive sorted by it) with a
@@ -377,6 +402,11 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
           : { bold: true, color: { argb: 'FF003A6B' } };
       });
     });
+    const rc = tr2.getCell(NINFO + TS_NMEAS + 1);
+    rc.fill = fillOf(fill);
+    rc.border = doubleTop
+      ? { ...BORDER, top: { style: 'double', color: { argb: 'FF94A3B8' } } }
+      : BORDER;
   };
 
   let ri = 4;
@@ -406,6 +436,13 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
         }
       });
     });
+    {
+      const c = row.getCell(NINFO + TS_NMEAS + 1);
+      c.value = x.rmrd_adjust_note || '';
+      c.border = BORDER;
+      c.font = { size: 9, color: { argb: 'FF57534E' } };
+      c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+    }
     ri++;
     grp.push(x);
     // Close the delivery-point group when the next row belongs to another one.
@@ -481,10 +518,13 @@ async function addMilkShiftingSheet(wb, days) {
     const kgSnf  = calcKgSnf(kgs, e.snf_pct);
     sumL += litres; sumKg += kgs; sumFat += kgFat; sumSnf += kgSnf;
     const row = ws.getRow(3 + i);
+    // Guard: entries without fat/snf must write blank, not NaN — a literal
+    // NaN in the XML makes the workbook unreadable by strict parsers.
+    const numOrNull = v => { const n = parseFloat(v); return Number.isFinite(n) ? rN(n, 2) : null; };
     const vals = [fmtDate(e.date), e.source_name || '', e.dest_name || '',
       e.milk_date && e.shift ? shiftLabel(e.milk_date, e.shift) : '',
-      rN(litres, 2), rN(kgs, 2), rN(parseFloat(e.fat_pct), 2), rN(parseFloat(e.snf_pct), 2),
-      rN(kgFat, 2), rN(kgSnf, 2)];
+      rN(litres, 2), rN(kgs, 2), numOrNull(e.fat_pct), numOrNull(e.snf_pct),
+      numOrNull(kgFat), numOrNull(kgSnf)];
     vals.forEach((v, ci) => {
       const c = row.getCell(ci + 1);
       c.value = v ?? '';
@@ -774,7 +814,7 @@ function buildTsEmailHtml(rows, reportDate, basis) {
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/reports/send-email  { report_date }  — same workbook as the download
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/send-email', authenticate, async (req, res) => {
+router.post('/send-email', authenticate, authorize('admin','planner'), async (req, res) => {
   const { report_date } = req.body;
   const basis = req.body.date_basis || 'plan';
   if (!report_date) return res.status(400).json({ error: 'report_date required' });

@@ -89,6 +89,13 @@ export const downloadPlanTemplate = () =>
     a.href = url; a.download = 'trip_plan_template.xlsx'; a.click();
     URL.revokeObjectURL(url);
   });
+export const downloadMovementPlan = (date) =>
+  api.get('/plans/movement-export', { params: { plan_for_date: date }, responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `tanker_movement_plan_${date}.xlsx`; a.click();
+    URL.revokeObjectURL(url);
+  });
 
 // ── Executions ────────────────────────────────────────────────────────────────
 export const getExecutions      = (p)     => api.get('/executions', { params: p });
@@ -102,12 +109,12 @@ export const saveAcknowledgements = (id, d) => api.post(`/executions/${id}/ackno
 export const cancelExecution      = (id, reason) => api.post(`/executions/${id}/cancel`, { reason });
 
 // ── Trip Documents (Gate Pass / COA prints) ──────────────────────────────────
-export const printTripDoc     = (planId, doc_type) => api.post(`/trip-docs/${planId}/print`, { doc_type });
+export const printTripDoc     = (planId, doc_type, printed_at) => api.post(`/trip-docs/${planId}/print`, { doc_type, printed_at: printed_at || undefined });
 export const getTripDocStatus = (date)   => api.get('/trip-docs/status', { params: { plan_for_date: date } });
 export const getTripDocPlan   = (planId) => api.get(`/trip-docs/${planId}`);
 export const getNonTripGatePasses  = (p) => api.get('/trip-docs/non-trip', { params: p });
 export const createNonTripGatePass = (d) => api.post('/trip-docs/non-trip', d);
-export const markNonTripReturned   = (id) => api.post(`/trip-docs/non-trip/${id}/return`);
+export const markNonTripReturned   = (id, returned_at) => api.post(`/trip-docs/non-trip/${id}/return`, { returned_at: returned_at || undefined });
 export const getTankerPosition     = ()  => api.get('/trip-docs/tanker-position');
 
 // ── Day wise Tanker Utilisation ───────────────────────────────────────────────
@@ -228,5 +235,22 @@ export const saveOptimizerAsPlans  = (sid, trips) => api.post(`/optimize/${sid}/
 export const getOptimizeSessions   = (p)     => api.get('/optimize/sessions', { params: p });
 export const getOptimizeSession    = (id)    => api.get(`/optimize/sessions/${id}`);
 export const getOptimizeCompare    = (p)     => api.get('/optimize/compare', { params: p });
+
+// ── Tanker Rates ──────────────────────────────────────────────────────────────
+export const getTankerRates            = (p)     => api.get('/tanker-rates', { params: p });
+export const createTankerRate          = (d)     => api.post('/tanker-rates', d);
+export const updateTankerRate          = (id, d) => api.put(`/tanker-rates/${id}`, d);
+export const deleteTankerRate          = (id)    => api.delete(`/tanker-rates/${id}`);
+export const uploadTankerRates         = (fd)    => api.post('/tanker-rates/upload', fd);
+export const downloadTankerRateTemplate = () =>
+  api.get('/tanker-rates/template', { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'tanker_rates_template.xlsx'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+export const getAnalyticsSummary  = (p)     => api.get('/analytics/summary', { params: p });
 
 export default api;

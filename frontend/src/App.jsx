@@ -40,6 +40,10 @@ import TankerPosition       from './pages/execution/TankerPosition';
 
 // Reports
 import DailyTSReport   from './pages/reports/DailyTSReport';
+import Analytics       from './pages/reports/Analytics';
+import TankerRates     from './pages/masters/TankerRates';
+import TankerBilling   from './pages/billing/TankerBilling';
+import BillingDecision from './pages/billing/BillingDecision';
 import AuditLog        from './pages/reports/AuditLog';
 import BmcuBreakup     from './pages/reports/BmcuBreakup';
 import TripDurations   from './pages/reports/TripDurations';
@@ -66,6 +70,7 @@ function AppRoutes() {
       <Route path="/login"           element={<Login/>}/>
       <Route path="/forgot-password" element={<ForgotPassword/>}/>
       <Route path="/reset-password"  element={<ResetPassword/>}/>
+      <Route path="/billing-decision" element={<BillingDecision/>}/>
       <Route path="/change-password" element={
         <ProtectedRoute allowMustChange><ChangePassword/></ProtectedRoute>
       }/>
@@ -78,25 +83,28 @@ function AppRoutes() {
 
         {/* Masters — admin + planner */}
         <Route path="masters/tankers" element={
-          <ProtectedRoute roles={['admin','planner']}><TankerMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><TankerMaster/></ProtectedRoute>
         }/>
         <Route path="masters/bmcus" element={
-          <ProtectedRoute roles={['admin','planner']}><BmcuMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><BmcuMaster/></ProtectedRoute>
         }/>
         <Route path="masters/routes" element={
-          <ProtectedRoute roles={['admin','planner']}><RouteMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><RouteMaster/></ProtectedRoute>
         }/>
         <Route path="masters/locations" element={
-          <ProtectedRoute roles={['admin','planner']}><LocationMasters/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><LocationMasters/></ProtectedRoute>
+        }/>
+        <Route path="masters/tanker-rates" element={
+          <ProtectedRoute roles={['admin','viewer']}><TankerRates/></ProtectedRoute>
         }/>
         <Route path="masters/distances" element={
-          <ProtectedRoute roles={['admin','planner']}><DistanceMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><DistanceMaster/></ProtectedRoute>
         }/>
         <Route path="masters/vendors" element={
-          <ProtectedRoute roles={['admin','planner']}><VendorMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><VendorMaster/></ProtectedRoute>
         }/>
         <Route path="masters/documents" element={
-          <ProtectedRoute roles={['admin','planner','executor']}><TankerDocuments/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','executor']}><TankerDocuments/></ProtectedRoute>
         }/>
         <Route path="masters/users" element={
           <ProtectedRoute roles={['admin']}><UserManagement/></ProtectedRoute>
@@ -135,7 +143,11 @@ function AppRoutes() {
         <Route path="execution/:id/acknowledge" element={<AcknowledgementForm/>}/>
 
         {/* Reports — all roles */}
+        <Route path="billing" element={
+          <ProtectedRoute roles={['admin','biller','viewer']}><TankerBilling/></ProtectedRoute>
+        }/>
         <Route path="reports" element={<DailyTSReport/>}/>
+        <Route path="reports/analytics" element={<Analytics/>}/>
         <Route path="reports/bmcu-breakup" element={<BmcuBreakup/>}/>
         <Route path="reports/trip-durations" element={<TripDurations/>}/>
         <Route path="reports/day-utilisation" element={<DayUtilisation/>}/>
