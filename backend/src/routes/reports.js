@@ -474,10 +474,13 @@ async function addMilkShiftingSheet(wb, days) {
     const kgSnf  = calcKgSnf(kgs, e.snf_pct);
     sumL += litres; sumKg += kgs; sumFat += kgFat; sumSnf += kgSnf;
     const row = ws.getRow(3 + i);
+    // Guard: entries without fat/snf must write blank, not NaN — a literal
+    // NaN in the XML makes the workbook unreadable by strict parsers.
+    const numOrNull = v => { const n = parseFloat(v); return Number.isFinite(n) ? rN(n, 2) : null; };
     const vals = [fmtDate(e.date), e.source_name || '', e.dest_name || '',
       e.milk_date && e.shift ? shiftLabel(e.milk_date, e.shift) : '',
-      rN(litres, 2), rN(kgs, 2), rN(parseFloat(e.fat_pct), 2), rN(parseFloat(e.snf_pct), 2),
-      rN(kgFat, 2), rN(kgSnf, 2)];
+      rN(litres, 2), rN(kgs, 2), numOrNull(e.fat_pct), numOrNull(e.snf_pct),
+      numOrNull(kgFat), numOrNull(kgSnf)];
     vals.forEach((v, ci) => {
       const c = row.getCell(ci + 1);
       c.value = v ?? '';
