@@ -436,7 +436,7 @@ router.get('/movement-export', authenticate, async (req, res) => {
       WHERE tp.plan_for_date BETWEEN $1 AND $2 AND tp.status NOT IN ('cancelled','deleted')
       ORDER BY tp.plan_for_date, tp.trip_no`, [monthStart, plan_for_date]);
     const bm = await query(`
-      SELECT pb.trip_plan_id, pb.seq_no, pb.shift_code, pb.expected_qty,
+      SELECT pb.trip_plan_id, pb.seq_no, pb.shift_code, pb.expected_qty, pb.description,
              b.bmcu_code, b.bmcu_name
       FROM trip_plan_bmcus pb JOIN bmcus b ON b.id=pb.bmcu_id
       WHERE pb.trip_plan_id = ANY($1)
@@ -511,7 +511,7 @@ router.get('/movement-export', authenticate, async (req, res) => {
           b.bmcu_code || null,
           i === 0 ? p.shifts_milk : null,
           q,
-          b.shift_code || null,
+          b.description || null,
           i === 0 && p.expected_km != null ? parseFloat(p.expected_km) : null,
           i === 0 ? p.driver_name : null,
           i === 0 ? p.loader_name : null,
