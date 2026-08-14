@@ -1,5 +1,5 @@
 // frontend/src/pages/masters/DistanceMaster.jsx
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus, Download, Upload, Trash2, Edit2, Search, Route,
@@ -26,6 +26,7 @@ const api = {
   exportAll:        ()  => blobDownload('/distances/export', 'distance_master_export.xlsx'),
   missingCoords:    ()  => blobDownload('/distances/missing-coords', 'missing_coordinates_report.xlsx'),
   googleRefresh:    (id) => client.post(`/distances/${id}/google-refresh`),
+  googleRefreshAll: ()  => client.post('/distances/google-refresh-all'),
   uploadFile:       (formData) => client.post('/distances/upload', formData),
   getBmcus:         ()  => client.get('/masters/bmcus'),
   getStartPoints:   ()  => client.get('/masters/starting-points'),
@@ -221,6 +222,29 @@ export default function DistanceMaster() {
   const activeDelivPts = delivPts.filter(d => d.is_active);
   const activeTestPts  = testPts.filter(t => t.is_active);
 
+  // Auto-fetch Google references for any pairs missing one — runs once per
+  // page visit; already-fetched pairs are never re-queried.
+  const [autoFetching, setAutoFetching] = useState(false);
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (autoRan.current || !distances.length) return;
+    if (!distances.some(d => d.google_km == null)) return;
+    autoRan.current = true;
+    setAutoFetching(true);
+    (async () => {
+      let total = 0;
+      for (let i = 0; i < 20; i++) {
+        const r = await api.googleRefreshAll();
+        total += r.data.fetched;
+        if (!r.data.fetched) break;
+      }
+      if (total) {
+        toast.success(`Google reference distances fetched for ${total} pair(s)`);
+        qc.invalidateQueries(['distances']);
+      }
+    })().catch(() => {}).finally(() => setAutoFetching(false));
+  }, [distances]);
+
   const fetchGoogleRef = (id) =>
     api.googleRefresh(id)
       .then(r => { toast.success(`Google reference: ${r.data.google_km} km`); qc.invalidateQueries(['distances']); })
@@ -357,7 +381,9 @@ export default function DistanceMaster() {
                 <th className="table-th">From Node</th>
                 <th className="table-th">To Node</th>
                 <th className="table-th w-28 text-right">Distance (KM)</th>
-                <th className="table-th w-32 text-right" title="Google Routes API distance for the same pair — reference only, never overwrites your entered distance">Google KM (ref)</th>
+                <th className="table-th w-32 text-right" title="Google Routes API distance for the same pair — reference only, never overwrites your entered distance">
+                  Google KM (ref){autoFetching && <RefreshCw size={11} className="inline ml-1 animate-spin text-green-600"/>}
+                </th>
                 <th className="table-th">Road Notes</th>
                 <th className="table-th w-24">Updated By</th>
                 <th className="table-th w-20">Actions</th>

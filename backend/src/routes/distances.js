@@ -418,6 +418,50 @@ router.post('/:id(\\d+)/google-refresh', authenticate, authorize('admin'), async
   }
 });
 
+// ─── POST /google-refresh-all — batch-fetch Google refs for pairs missing one ─
+// Processes up to BATCH rows per call with bounded concurrency; the screen
+// calls it repeatedly until nothing more was fetched. Pairs whose locations
+// lack coordinates are skipped (they surface in the Missing Coordinates report).
+router.post('/google-refresh-all', authenticate, authorize('admin'), async (req, res) => {
+  const BATCH = 150, CONCURRENCY = 5;
+  try {
+    const rows = (await pool.query(
+      `SELECT id, from_type, from_id, to_type, to_id FROM distance_master
+       WHERE google_km IS NULL ORDER BY id LIMIT $1`, [BATCH])).rows;
+
+    // Preload all node coordinates once
+    const coordMap = new Map();
+    for (const [type, table] of [['bmcu', 'bmcus'], ['starting_point', 'starting_points'],
+                                 ['delivery_point', 'delivery_points'], ['testing_point', 'testing_points']]) {
+      const r = await pool.query(`SELECT id, latitude, longitude FROM ${table}`);
+      for (const n of r.rows) {
+        const lat = parseFloat(n.latitude), lng = parseFloat(n.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) coordMap.set(`${type}:${n.id}`, { lat, lng });
+      }
+    }
+
+    let fetched = 0, skipped = 0, failed = 0;
+    for (let i = 0; i < rows.length; i += CONCURRENCY) {
+      await Promise.all(rows.slice(i, i + CONCURRENCY).map(async row => {
+        const a = coordMap.get(`${row.from_type}:${row.from_id}`);
+        const z = coordMap.get(`${row.to_type}:${row.to_id}`);
+        if (!a || !z) { skipped++; return; }
+        const km = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
+        if (km == null) { failed++; return; }
+        await pool.query('UPDATE distance_master SET google_km=$1, updated_at=NOW() WHERE id=$2',
+          [Math.round(km * 100) / 100, row.id]);
+        fetched++;
+      }));
+    }
+    const remaining = parseInt((await pool.query(
+      'SELECT COUNT(*) FROM distance_master WHERE google_km IS NULL')).rows[0].count);
+    res.json({ fetched, skipped, failed, remaining });
+  } catch (err) {
+    console.error('Google refresh-all error:', err);
+    res.status(500).json({ error: 'Failed to batch-fetch Google references' });
+  }
+});
+
 // ─── GET /missing-coords — Excel of location nodes without lat/lng ───────────
 // Nodes lacking coordinates cannot use Google Routes: their legs fall back to
 // estimates (or go missing). Includes 30-day usage so the team fixes the
