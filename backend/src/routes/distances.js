@@ -144,7 +144,7 @@ router.get('/summary', authenticate, async (req, res) => {
 // POST /api/distances
 // Body: { from_type, from_id, to_type, to_id, distance_km, road_notes }
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.post('/', authenticate, authorize('admin'), async (req, res) => {
   try {
     const { from_type, from_id, to_type, to_id, distance_km, road_notes } = req.body;
     if (!from_type || !from_id || !to_type || !to_id || distance_km == null)
@@ -172,7 +172,7 @@ router.post('/', authenticate, authorize('admin', 'planner'), async (req, res) =
 // ─────────────────────────────────────────────────────────────────────────────
 // PUT /api/distances/:id
 // ─────────────────────────────────────────────────────────────────────────────
-router.put('/:id', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
   try {
     const { distance_km, road_notes } = req.body;
     const r = await pool.query(
@@ -190,7 +190,7 @@ router.put('/:id', authenticate, authorize('admin', 'planner'), async (req, res)
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /api/distances/:id
 // ─────────────────────────────────────────────────────────────────────────────
-router.delete('/:id', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
   try {
     const r = await pool.query('DELETE FROM distance_master WHERE id=$1 RETURNING id', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
@@ -271,7 +271,7 @@ router.get('/template', authenticate, async (req, res) => {
 // POST /api/distances/upload
 // Bulk upload from the Excel template
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/upload', authenticate, authorize('admin', 'planner'), upload.single('file'), async (req, res) => {
+router.post('/upload', authenticate, authorize('admin'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   const client = await pool.connect();

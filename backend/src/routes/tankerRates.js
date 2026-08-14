@@ -110,7 +110,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // ── POST /api/tanker-rates ───────────────────────────────────────────────────
-router.post('/', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.post('/', authenticate, authorize('admin'), async (req, res) => {
   const v = validateRow(req.body);
   if (v.error) return res.status(400).json({ error: v.error });
   try {
@@ -134,7 +134,7 @@ router.post('/', authenticate, authorize('admin', 'planner'), async (req, res) =
 });
 
 // ── PUT /api/tanker-rates/:id ────────────────────────────────────────────────
-router.put('/:id', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
   const v = validateRow(req.body);
   if (v.error) return res.status(400).json({ error: v.error });
   try {
@@ -159,7 +159,7 @@ router.put('/:id', authenticate, authorize('admin', 'planner'), async (req, res)
 });
 
 // ── DELETE /api/tanker-rates/:id ─────────────────────────────────────────────
-router.delete('/:id', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
   try {
     const r = await query('DELETE FROM tanker_rates WHERE id=$1 RETURNING id', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Rate not found' });
@@ -286,7 +286,7 @@ router.get('/template', authenticate, async (req, res) => {
 // Parses the matrix template above: effective dates + diesel prices from the
 // header block, then per capacity-row × state-pair × transport-type one rate
 // row each. Blank rate cells are skipped; duplicates/overlaps rejected.
-router.post('/upload', authenticate, authorize('admin', 'planner'), upload.single('file'), async (req, res) => {
+router.post('/upload', authenticate, authorize('admin'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: false });

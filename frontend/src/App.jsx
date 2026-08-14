@@ -83,28 +83,28 @@ function AppRoutes() {
 
         {/* Masters — admin + planner */}
         <Route path="masters/tankers" element={
-          <ProtectedRoute roles={['admin','planner']}><TankerMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><TankerMaster/></ProtectedRoute>
         }/>
         <Route path="masters/bmcus" element={
-          <ProtectedRoute roles={['admin','planner']}><BmcuMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><BmcuMaster/></ProtectedRoute>
         }/>
         <Route path="masters/routes" element={
-          <ProtectedRoute roles={['admin','planner']}><RouteMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><RouteMaster/></ProtectedRoute>
         }/>
         <Route path="masters/locations" element={
-          <ProtectedRoute roles={['admin','planner']}><LocationMasters/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><LocationMasters/></ProtectedRoute>
         }/>
         <Route path="masters/tanker-rates" element={
-          <ProtectedRoute roles={['admin','planner','viewer']}><TankerRates/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','viewer']}><TankerRates/></ProtectedRoute>
         }/>
         <Route path="masters/distances" element={
-          <ProtectedRoute roles={['admin','planner']}><DistanceMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><DistanceMaster/></ProtectedRoute>
         }/>
         <Route path="masters/vendors" element={
-          <ProtectedRoute roles={['admin','planner']}><VendorMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']}><VendorMaster/></ProtectedRoute>
         }/>
         <Route path="masters/documents" element={
-          <ProtectedRoute roles={['admin','planner','executor']}><TankerDocuments/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','executor']}><TankerDocuments/></ProtectedRoute>
         }/>
         <Route path="masters/users" element={
           <ProtectedRoute roles={['admin']}><UserManagement/></ProtectedRoute>

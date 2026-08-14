@@ -54,7 +54,7 @@ export default function Sidebar({ collapsed = false }) {
         {ni('/', <LayoutDashboard size={15}/>, 'Dashboard', true)}
       </div>
 
-      {isPlanner && (
+      {isAdmin && (
         <NavSection label={collapsed ? '' : 'Masters'}>
           {ni('/masters/tankers',    <Truck size={15}/>,       'Tankers')}
           {ni('/masters/vendors',    <Building2 size={15}/>,   'Vendors')}

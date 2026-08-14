@@ -25,7 +25,7 @@ router.get('/tankers', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/tankers', authenticate, authorize('admin','planner'), async (req, res) => {
+router.post('/tankers', authenticate, authorize('admin'), async (req, res) => {
   const { tanker_number, compartments, capacity_litres, per_km_rate,
           vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p, vendor_id,
           induction_type, validity_start, validity_end } = req.body;
@@ -50,7 +50,7 @@ router.post('/tankers', authenticate, authorize('admin','planner'), async (req, 
   }
 });
 
-router.put('/tankers/:id', authenticate, authorize('admin','planner'), async (req, res) => {
+router.put('/tankers/:id', authenticate, authorize('admin'), async (req, res) => {
   const { tanker_number, compartments, capacity_litres, per_km_rate, is_active,
           vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p, vendor_id,
           induction_type, validity_start, validity_end } = req.body;
@@ -92,7 +92,7 @@ router.get('/bmcus', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/bmcus', authenticate, authorize('admin','planner'), async (req, res) => {
+router.post('/bmcus', authenticate, authorize('admin'), async (req, res) => {
   const { bmcu_code, bmcu_name, address, district, state, contact, latitude, longitude } = req.body;
   if (!bmcu_code || !bmcu_name) return res.status(400).json({ error: 'bmcu_code and bmcu_name required' });
   try {
@@ -109,7 +109,7 @@ router.post('/bmcus', authenticate, authorize('admin','planner'), async (req, re
   }
 });
 
-router.put('/bmcus/:id', authenticate, authorize('admin','planner'), async (req, res) => {
+router.put('/bmcus/:id', authenticate, authorize('admin'), async (req, res) => {
   const { bmcu_name, address, district, state, contact, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
@@ -137,7 +137,7 @@ router.get('/starting-points', authenticate, async (req, res) => {
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.post('/starting-points', authenticate, authorize('admin','planner'), async (req, res) => {
+router.post('/starting-points', authenticate, authorize('admin'), async (req, res) => {
   const { name, location, description, latitude, longitude } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
@@ -148,7 +148,7 @@ router.post('/starting-points', authenticate, authorize('admin','planner'), asyn
     res.status(201).json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.put('/starting-points/:id', authenticate, authorize('admin','planner'), async (req, res) => {
+router.put('/starting-points/:id', authenticate, authorize('admin'), async (req, res) => {
   const { name, location, description, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
@@ -173,7 +173,7 @@ router.get('/testing-points', authenticate, async (req, res) => {
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.post('/testing-points', authenticate, authorize('admin','planner'), async (req, res) => {
+router.post('/testing-points', authenticate, authorize('admin'), async (req, res) => {
   const { name, location, latitude, longitude } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
@@ -184,7 +184,7 @@ router.post('/testing-points', authenticate, authorize('admin','planner'), async
     res.status(201).json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.put('/testing-points/:id', authenticate, authorize('admin','planner'), async (req, res) => {
+router.put('/testing-points/:id', authenticate, authorize('admin'), async (req, res) => {
   const { name, location, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
@@ -209,7 +209,7 @@ router.get('/delivery-points', authenticate, async (req, res) => {
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.post('/delivery-points', authenticate, authorize('admin','planner'), async (req, res) => {
+router.post('/delivery-points', authenticate, authorize('admin'), async (req, res) => {
   const { name, receiver_name, location, latitude, longitude } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
@@ -220,7 +220,7 @@ router.post('/delivery-points', authenticate, authorize('admin','planner'), asyn
     res.status(201).json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.put('/delivery-points/:id', authenticate, authorize('admin','planner'), async (req, res) => {
+router.put('/delivery-points/:id', authenticate, authorize('admin'), async (req, res) => {
   const { name, receiver_name, location, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
@@ -277,7 +277,7 @@ router.get('/routes/:id', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/routes', authenticate, authorize('admin','planner'), async (req, res) => {
+router.post('/routes', authenticate, authorize('admin'), async (req, res) => {
   const { route_name, route_no, start_point_id, testing_point_id, delivery_point_id, distance_km, bmcus } = req.body;
   if (!route_name) return res.status(400).json({ error: 'route_name required' });
   const client = await pool.connect();
@@ -305,7 +305,7 @@ router.post('/routes', authenticate, authorize('admin','planner'), async (req, r
   } finally { client.release(); }
 });
 
-router.put('/routes/:id', authenticate, authorize('admin','planner'), async (req, res) => {
+router.put('/routes/:id', authenticate, authorize('admin'), async (req, res) => {
   const { route_name, route_no, start_point_id, testing_point_id, delivery_point_id, distance_km, is_active, bmcus } = req.body;
   const client = await pool.connect();
   try {

@@ -151,7 +151,7 @@ router.get('/expiring', authenticate, async (req, res) => {
 });
 
 // POST /api/documents
-router.post('/', authenticate, authorize('admin','planner','executor'), async (req, res) => {
+router.post('/', authenticate, authorize('admin','executor'), async (req, res) => {
   const { tanker_id, doc_type, doc_name, doc_number, issue_date, expiry_date, remarks } = req.body;
   if (!tanker_id || !doc_type) return res.status(400).json({ error: 'tanker_id and doc_type required' });
   if (!DOC_TYPES.includes(doc_type)) return res.status(400).json({ error: 'Invalid doc_type' });
@@ -167,7 +167,7 @@ router.post('/', authenticate, authorize('admin','planner','executor'), async (r
 });
 
 // PUT /api/documents/:id
-router.put('/:id', authenticate, authorize('admin','planner','executor'), async (req, res) => {
+router.put('/:id', authenticate, authorize('admin','executor'), async (req, res) => {
   const { doc_type, doc_name, doc_number, issue_date, expiry_date, remarks } = req.body;
   if (doc_type && !DOC_TYPES.includes(doc_type)) return res.status(400).json({ error: 'Invalid doc_type' });
   try {
@@ -187,7 +187,7 @@ router.put('/:id', authenticate, authorize('admin','planner','executor'), async 
 });
 
 // DELETE /api/documents/:id  (soft delete)
-router.delete('/:id', authenticate, authorize('admin','planner'), async (req, res) => {
+router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
   try {
     const r = await query('UPDATE tanker_documents SET is_active=FALSE WHERE id=$1 RETURNING id', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
@@ -197,7 +197,7 @@ router.delete('/:id', authenticate, authorize('admin','planner'), async (req, re
 
 // ─── File attachment (stored in DB) ───────────────────────────────────────────
 // POST /api/documents/:id/file  — upload/replace the scanned document (stored on disk)
-router.post('/:id/file', authenticate, authorize('admin','planner','executor'), upload.single('file'), async (req, res) => {
+router.post('/:id/file', authenticate, authorize('admin','executor'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     // Ensure the document exists and grab any previous on-disk file to clean up.
@@ -252,7 +252,7 @@ router.get('/:id/file', authenticate, async (req, res) => {
 });
 
 // DELETE /api/documents/:id/file  — remove the attachment only
-router.delete('/:id/file', authenticate, authorize('admin','planner'), async (req, res) => {
+router.delete('/:id/file', authenticate, authorize('admin'), async (req, res) => {
   try {
     const prev = await query('SELECT file_path FROM tanker_documents WHERE id=$1', [req.params.id]);
     await query(
