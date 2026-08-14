@@ -446,87 +446,119 @@ router.get('/movement-export', authenticate, async (req, res) => {
     for (const r of bm.rows) (bmByPlan[r.trip_plan_id] ||= []).push(r);
 
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Trip Plans');
-    const colWidths = [14, 8, 18, 20, 20, 20, 28, 14, 12, 13, 18, 11, 18, 18, 18];
-    ws.columns = colWidths.map(w => ({ width: w }));
-
-    ws.mergeCells('A1:O1');
-    const title = ws.getCell('A1');
-    title.value = `SHREEJA SECONDARY TRANSPORT — Tanker Movement Plan — ${monthStart} to ${plan_for_date}`;
-    title.font = { bold: true, size: 13 };
-    title.alignment = { horizontal: 'center' };
-    ws.mergeCells('A2:O2');
-    ws.getCell('A2').value = `Month-to-date movement plan (${monthStart} → ${plan_for_date}) with day-wise quantity subtotals — same layout as the Trip Plan upload template.`;
-    ws.getCell('A2').font = { italic: true, size: 9, color: { argb: 'FF595959' } };
-
     const THIN = { style: 'thin', color: { argb: 'FF9CA3AF' } };
     const MEDIUM = { style: 'medium', color: { argb: 'FF374151' } };
     const GRID = { top: THIN, bottom: THIN, left: THIN, right: THIN };
-    const borderRow = (row, border = GRID) =>
-      row.eachCell({ includeEmpty: true }, (c, col) => { if (col <= 15) c.border = border; });
+    const colWidths = [14, 8, 18, 20, 20, 20, 28, 14, 12, 13, 18, 11, 18, 18, 18];
+    const ddmm = iso => `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
 
-    const headerRow = ws.addRow([
-      'plan_for_date', 'trip_no', 'tanker_number', 'route_name', 'starting_point', 'delivery_point',
-      'bmcu_name', 'bmcu_code', 'shifts_milk', 'expected_qty', 'description',
-      'expected_km', 'driver_name', 'loader_name', 'remarks']);
-    headerRow.eachCell(c => {
+    // One sheet per day (named DD.MM), each in the trip-plan template layout
+    // with the day's quantity subtotal at the bottom.
+    const byDay = new Map();
+    for (const pRow of plans.rows) {
+      if (!byDay.has(pRow.plan_for_date)) byDay.set(pRow.plan_for_date, []);
+      byDay.get(pRow.plan_for_date).push(pRow);
+    }
+
+    const daySummaries = [];
+    for (const [day, dayPlans] of byDay) {
+      const ws = wb.addWorksheet(ddmm(day));
+      ws.columns = colWidths.map(w => ({ width: w }));
+      const borderRow = (row, border = GRID) =>
+        row.eachCell({ includeEmpty: true }, (c, col) => { if (col <= 15) c.border = border; });
+
+      ws.mergeCells('A1:O1');
+      const title = ws.getCell('A1');
+      title.value = `SHREEJA SECONDARY TRANSPORT — Tanker Movement Plan — ${day}`;
+      title.font = { bold: true, size: 13 };
+      title.alignment = { horizontal: 'center' };
+      ws.mergeCells('A2:O2');
+      ws.getCell('A2').value = 'Same layout as the Trip Plan upload template.';
+      ws.getCell('A2').font = { italic: true, size: 9, color: { argb: 'FF595959' } };
+
+      const headerRow = ws.addRow([
+        'plan_for_date', 'trip_no', 'tanker_number', 'route_name', 'starting_point', 'delivery_point',
+        'bmcu_name', 'bmcu_code', 'shifts_milk', 'expected_qty', 'description',
+        'expected_km', 'driver_name', 'loader_name', 'remarks']);
+      headerRow.eachCell(c => {
+        c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2E75B6' } };
+        c.alignment = { horizontal: 'center' };
+      });
+      borderRow(headerRow, { top: MEDIUM, bottom: MEDIUM, left: THIN, right: THIN });
+
+      const subtotalRow = (label, qty, trips, fill) => {
+        const r = ws.addRow([label, null, null, null, null, null,
+          `${trips} trip(s)`, null, null, qty, null, null, null, null, null]);
+        r.eachCell({ includeEmpty: true }, (c, col) => {
+          if (col > 15) return;
+          c.font = { bold: true, color: { argb: 'FF003A6B' } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+          c.border = { top: MEDIUM, bottom: MEDIUM, left: THIN, right: THIN };
+        });
+        r.getCell(10).numFmt = '#,##0.00';
+      };
+
+      let dayQty = 0;
+      for (const pl of dayPlans) {
+        const rows = bmByPlan[pl.id] || [{}];
+        rows.forEach((b, i) => {
+          const q = b.expected_qty != null ? parseFloat(b.expected_qty) : null;
+          if (q != null) dayQty += q;
+          const dataRow = ws.addRow([
+            i === 0 ? pl.plan_for_date : null,
+            i === 0 ? pl.trip_no : null,
+            i === 0 ? pl.tanker_number : null,
+            i === 0 ? pl.route_name : null,
+            i === 0 ? pl.starting_point : null,
+            i === 0 ? pl.delivery_point : null,
+            b.bmcu_name || null,
+            b.bmcu_code || null,
+            i === 0 ? pl.shifts_milk : null,
+            q,
+            b.description || null,
+            i === 0 && pl.expected_km != null ? parseFloat(pl.expected_km) : null,
+            i === 0 ? pl.driver_name : null,
+            i === 0 ? pl.loader_name : null,
+            i === 0 ? pl.remarks : null,
+          ]);
+          // Full thin grid; first row of each trip gets a medium top rule so
+          // trips read as bordered blocks.
+          borderRow(dataRow, i === 0 ? { top: MEDIUM, bottom: THIN, left: THIN, right: THIN } : GRID);
+          dataRow.getCell(10).numFmt = '#,##0.00';
+        });
+      }
+      subtotalRow(`${day} TOTAL`, dayQty, dayPlans.length, 'FFDCFCE7');
+      daySummaries.push({ day, trips: dayPlans.length, qty: dayQty });
+    }
+
+    // Summary sheet: day-wise totals + grand total
+    const wsS = wb.addWorksheet('Summary');
+    wsS.columns = [{ width: 14 }, { width: 10 }, { width: 16 }];
+    wsS.mergeCells('A1:C1');
+    wsS.getCell('A1').value = `Tanker Movement Plan Summary — ${monthStart} → ${plan_for_date}`;
+    wsS.getCell('A1').font = { bold: true, size: 12 };
+    const sh = wsS.addRow(['Date', 'Trips', 'Expected Qty (L)']);
+    sh.eachCell(c => {
       c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2E75B6' } };
-      c.alignment = { horizontal: 'center' };
+      c.border = GRID;
     });
-    borderRow(headerRow, { top: MEDIUM, bottom: MEDIUM, left: THIN, right: THIN });
-
-    const subtotalRow = (label, qty, trips, fill) => {
-      const r = ws.addRow([label, null, null, null, null, null,
-        `${trips} trip(s)`, null, null, qty, null, null, null, null, null]);
-      r.eachCell({ includeEmpty: true }, (c, col) => {
-        if (col > 15) return;
-        c.font = { bold: true, color: { argb: 'FF003A6B' } };
-        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
-        c.border = { top: MEDIUM, bottom: MEDIUM, left: THIN, right: THIN };
-      });
-      r.getCell(10).numFmt = '#,##0.00';
-    };
-
-    let dayQty = 0, dayTrips = 0, grandQty = 0, grandTrips = 0, curDay = null;
-    const flushDay = () => {
-      if (curDay != null) subtotalRow(`${curDay} TOTAL`, dayQty, dayTrips, 'FFDCFCE7');
-      dayQty = 0; dayTrips = 0;
-    };
-    for (const p of plans.rows) {
-      if (p.plan_for_date !== curDay) { flushDay(); curDay = p.plan_for_date; }
-      const rows = bmByPlan[p.id] || [{}];
-      let tripQty = 0;
-      rows.forEach((b, i) => {
-        const q = b.expected_qty != null ? parseFloat(b.expected_qty) : null;
-        if (q != null) tripQty += q;
-        const dataRow = ws.addRow([
-          i === 0 ? p.plan_for_date : null,
-          i === 0 ? p.trip_no : null,
-          i === 0 ? p.tanker_number : null,
-          i === 0 ? p.route_name : null,
-          i === 0 ? p.starting_point : null,
-          i === 0 ? p.delivery_point : null,
-          b.bmcu_name || null,
-          b.bmcu_code || null,
-          i === 0 ? p.shifts_milk : null,
-          q,
-          b.description || null,
-          i === 0 && p.expected_km != null ? parseFloat(p.expected_km) : null,
-          i === 0 ? p.driver_name : null,
-          i === 0 ? p.loader_name : null,
-          i === 0 ? p.remarks : null,
-        ]);
-        // Full thin grid; first row of each trip gets a medium top rule so
-        // trips read as bordered blocks.
-        borderRow(dataRow, i === 0 ? { top: MEDIUM, bottom: THIN, left: THIN, right: THIN } : GRID);
-        dataRow.getCell(10).numFmt = '#,##0.00';
-      });
-      dayQty += tripQty; grandQty += tripQty;
-      dayTrips += 1; grandTrips += 1;
+    for (const s of daySummaries) {
+      const r = wsS.addRow([s.day, s.trips, s.qty]);
+      r.eachCell(c => { c.border = GRID; });
+      r.getCell(3).numFmt = '#,##0.00';
     }
-    flushDay();
-    subtotalRow(`GRAND TOTAL ${monthStart} → ${plan_for_date}`, grandQty, grandTrips, 'FFDBEAFE');
+    const gt = wsS.addRow(['GRAND TOTAL',
+      daySummaries.reduce((s, d) => s + d.trips, 0),
+      daySummaries.reduce((s, d) => s + d.qty, 0)]);
+    gt.eachCell(c => {
+      c.font = { bold: true, color: { argb: 'FF003A6B' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+      c.border = { top: MEDIUM, bottom: MEDIUM, left: THIN, right: THIN };
+    });
+    gt.getCell(3).numFmt = '#,##0.00';
+
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=tanker_movement_plan_${plan_for_date}.xlsx`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
