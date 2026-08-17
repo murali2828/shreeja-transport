@@ -446,7 +446,9 @@ router.post('/google-refresh-all', authenticate, authorize('admin'), async (req,
       JOIN nodes z ON z.t = dm.to_type AND z.id = dm.to_id
         AND z.latitude IS NOT NULL AND z.longitude IS NOT NULL
       WHERE dm.google_km IS NULL
-      ORDER BY dm.id LIMIT $1`, [BATCH])).rows;
+      -- Random order: pairs Google can't route stay NULL, and in id-order
+      -- they'd permanently clog the batch window and stall the loop.
+      ORDER BY random() LIMIT $1`, [BATCH])).rows;
 
     // Preload all node coordinates once
     const coordMap = new Map();
