@@ -57,6 +57,9 @@ async function computeExecutionDistance(client, execId, userId, masterCache) {
 
   for (let i = 0; i < nodes.length - 1; i++) {
     const a = nodes[i], z = nodes[i + 1];
+    // Same node twice in a row (e.g. a Balance Milk row duplicating a BMCU):
+    // zero-length self-leg — skip entirely (no leg, no new-combination flag).
+    if (a.type === z.type && a.id === z.id) continue;
     let km = 0, source = 'missing', isNew = false, googleKm = null;
 
     const master = await getMasterDistanceKm(client, a.type, a.id, z.type, z.id, masterCache);
