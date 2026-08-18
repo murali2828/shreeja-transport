@@ -53,7 +53,7 @@ const challanUpload = multer({ storage: multer.memoryStorage(),
 // Run grand total = km-based trip amounts + toll challan reimbursements
 async function refreshRunTotal(runId) {
   await query(`UPDATE billing_runs SET total_amount =
-      COALESCE((SELECT SUM(amount) FROM billing_run_trips WHERE run_id=$1), 0)
+      COALESCE((SELECT SUM(amount) FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE), 0)
     + COALESCE((SELECT SUM(amount) FROM billing_run_tolls WHERE run_id=$1), 0),
     updated_at=NOW() WHERE id=$1`, [runId]);
 }
@@ -116,7 +116,8 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
              (SELECT COUNT(DISTINCT teb.bmcu_id) FROM trip_execution_bmcus teb
                WHERE teb.execution_id = te.id AND teb.is_deleted = FALSE)::int AS bmcu_count,
              (SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id = te.id) AS ack_litres,
-             (SELECT SUM(ta.qty_kgs)    FROM trip_acknowledgements ta WHERE ta.execution_id = te.id) AS ack_kgs
+             (SELECT SUM(ta.qty_kgs)    FROM trip_acknowledgements ta WHERE ta.execution_id = te.id) AS ack_kgs,
+             tp.is_sale_tanker
       FROM trip_plans tp
       JOIN trip_executions te ON te.trip_plan_id = tp.id
       LEFT JOIN tankers t          ON t.id  = tp.tanker_id
@@ -146,13 +147,13 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
           (run_id, execution_id, plan_for_date, tanker_number, capacity_litres,
            vendor_id, vendor_name, route_name, start_point, delivery_point,
            bmcu_count, ack_litres, ack_kgs, transport_type,
-           system_km, google_km, master_km, estimated_km, billed_km, legs)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+           system_km, google_km, master_km, estimated_km, billed_km, legs, is_sale_tanker)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
         [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
          tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
          tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), transportType,
          rN(dist.total_km), sumBy('google'), sumBy('master'), sumBy('estimated'),
-         rN(dist.total_km), JSON.stringify(dist.legs)]);
+         rN(dist.total_km), JSON.stringify(dist.legs), !!tr.is_sale_tanker]);
     }
     await client.query('COMMIT');
     res.json({ id: runId, trips: trips.rows.length, new_combinations: newCombos });
@@ -212,7 +213,7 @@ router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, r
   try {
     const run = await query('SELECT status FROM billing_runs WHERE id=$1', [req.params.id]);
     if (!run.rows.length) return res.status(404).json({ error: 'Run not found' });
-    if (!['draft', 'rejected'].includes(run.rows[0].status))
+    if (!['draft', 'rejected', 'pending_vendor'].includes(run.rows[0].status))
       return res.status(400).json({ error: 'Run is under approval or approved — lines cannot be edited' });
 
     const results = [];
@@ -224,6 +225,7 @@ router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, r
       let   billedKm       = u.billed_km !== undefined ? rN(u.billed_km) : t.billed_km;
       const remarks        = u.remarks !== undefined ? (u.remarks || null) : t.remarks;
       const transportType  = u.transport_type !== undefined ? u.transport_type : t.transport_type;
+      const excluded        = u.excluded !== undefined ? !!u.excluded : t.excluded;
       if (state && !STATES.includes(state))
         return res.status(400).json({ error: `Invalid state: ${state}` });
       if (u.transport_type !== undefined && !['BMCU/CC to Dairy/CC', 'Point to Point'].includes(u.transport_type))
@@ -265,10 +267,10 @@ router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, r
       await query(`
         UPDATE billing_run_trips
         SET state=$1, billed_km=$2, remarks=$3, transport_type=$4,
-            rate_id=$5, rate_per_km=$6, amount=$7, legs=$8, updated_at=NOW()
-        WHERE id=$9`,
+            rate_id=$5, rate_per_km=$6, amount=$7, legs=$8, excluded=$9, updated_at=NOW()
+        WHERE id=$10`,
         [state, billedKm, remarks, transportType, rateId, ratePerKm, amount,
-         JSON.stringify(legsArr), u.id]);
+         JSON.stringify(legsArr), excluded, u.id]);
       results.push({ id: u.id, rate_per_km: ratePerKm, amount, no_rate: state != null && !rate });
     }
     // refresh run total (trips + tolls)
@@ -284,7 +286,7 @@ router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, r
 // ── DELETE /api/billing/runs/:id — discard a draft/rejected run ──────────────
 router.delete('/runs/:id', authenticate, authorize(...canBill), async (req, res) => {
   try {
-    const r = await query(`DELETE FROM billing_runs WHERE id=$1 AND status IN ('draft','rejected') RETURNING id`,
+    const r = await query(`DELETE FROM billing_runs WHERE id=$1 AND status IN ('draft','rejected','pending_vendor') RETURNING id`,
       [req.params.id]);
     if (!r.rows.length) return res.status(400).json({ error: 'Only draft/rejected runs can be deleted' });
     res.json({ ok: true });
@@ -295,7 +297,7 @@ router.delete('/runs/:id', authenticate, authorize(...canBill), async (req, res)
 async function assertEditableRun(runId, res) {
   const run = (await query('SELECT status FROM billing_runs WHERE id=$1', [runId])).rows[0];
   if (!run) { res.status(404).json({ error: 'Run not found' }); return false; }
-  if (!['draft', 'rejected'].includes(run.status)) {
+  if (!['draft', 'rejected', 'pending_vendor'].includes(run.status)) {
     res.status(400).json({ error: 'Run is under approval or approved — toll challans cannot be changed' });
     return false;
   }
@@ -409,21 +411,21 @@ async function runSummaries(runId) {
     SELECT tanker_number, MAX(vendor_name) AS vendor_name, COUNT(*)::int AS trips,
            SUM(billed_km) AS billed_km, SUM(system_km) AS system_km,
            SUM(google_km) AS google_km, SUM(amount) AS amount
-    FROM billing_run_trips WHERE run_id=$1
+    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE
     GROUP BY tanker_number ORDER BY tanker_number`, [runId]);
   const vendors = await query(`
     SELECT COALESCE(vendor_name,'— No vendor mapped —') AS vendor_name,
            COUNT(DISTINCT tanker_number)::int AS tankers, COUNT(*)::int AS trips,
            SUM(billed_km) AS billed_km, SUM(system_km) AS system_km,
            SUM(google_km) AS google_km, SUM(amount) AS amount
-    FROM billing_run_trips WHERE run_id=$1
+    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE
     GROUP BY COALESCE(vendor_name,'— No vendor mapped —') ORDER BY 1`, [runId]);
   const dates = await query(`
     SELECT plan_for_date::text AS date, COUNT(*)::int AS trips,
            COUNT(DISTINCT tanker_number)::int AS tankers,
            SUM(billed_km) AS billed_km, SUM(system_km) AS system_km,
            SUM(google_km) AS google_km, SUM(amount) AS amount
-    FROM billing_run_trips WHERE run_id=$1
+    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE
     GROUP BY plan_for_date ORDER BY plan_for_date`, [runId]);
 
   // Merge toll challans: per tanker directly; per vendor via the tanker's
@@ -480,17 +482,18 @@ async function buildRunWorkbook(runId) {
   ws1.addRow([]);
   head(ws1, ['Date', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
     'BMCU Count', 'BMCU Details', 'Ack Kgs', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM', 'Estimated KM',
-    'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Remarks']);
+    'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Sale Tanker', 'Excluded', 'Remarks']);
   ws1.getColumn(9).width = 60;
   trips.forEach(t => ws1.addRow([t.plan_for_date, t.tanker_number, rN(t.capacity_litres / 1000, 1),
     t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id), t.ack_kgs,
     t.state, t.transport_type, t.system_km, t.google_km, t.master_km, t.estimated_km,
-    t.billed_km, t.rate_per_km, t.amount, t.remarks]));
+    t.billed_km, t.rate_per_km, t.excluded ? 0 : t.amount,
+    t.is_sale_tanker ? 'Yes' : '', t.excluded ? 'Yes' : '', t.remarks]));
   const totRow = ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '',
     rN(trips.reduce((s, t) => s + (+t.system_km || 0), 0)),
     rN(trips.reduce((s, t) => s + (+t.google_km || 0), 0)), '', '',
     rN(trips.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
-    rN(trips.reduce((s, t) => s + (+t.amount || 0), 0)), '']);
+    rN(trips.reduce((s, t) => s + (t.excluded ? 0 : (+t.amount || 0)), 0)), '', '', '']);
   totRow.font = { bold: true };
 
   const ws2 = wb.addWorksheet('Tanker Wise');
@@ -629,7 +632,7 @@ async function notifyBiller(runId, subject, bodyHtml) {
 // ── Transporter publishing — on final approval, email each vendor an Excel of
 // THEIR trips (km, rate, amount). Vendors without an email in the Vendor
 // master are reported back to the biller instead.
-async function publishRunToVendors(runId) {
+async function publishRunToVendors(runId, { draft = false } = {}) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
   const trips = (await query(`
     SELECT t.*, t.plan_for_date::text AS plan_for_date, v.email AS vendor_email
@@ -648,7 +651,7 @@ async function publishRunToVendors(runId) {
 
   const results = [];
   for (const [key, v] of byVendor) {
-    const tripTotal = v.trips.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+    const tripTotal = v.trips.reduce((s, t) => s + (t.excluded ? 0 : (parseFloat(t.amount) || 0)), 0);
     const vendorTankers = [...new Set(v.trips.map(t => t.tanker_number))];
     const vendorTolls = vendorTankers.filter(tn => tollBy.has(tn)).map(tn => ({ tanker: tn, amount: tollBy.get(tn) }));
     const tollTotal = vendorTolls.reduce((s, t) => s + t.amount, 0);
@@ -659,7 +662,7 @@ async function publishRunToVendors(runId) {
     }
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Trips');
-    ws.addRow([`${v.name} — Tanker Payment ${run.from_date} → ${run.to_date} (Run #${runId}, APPROVED)`]).font = { bold: true, size: 13 };
+    ws.addRow([`${v.name} — Tanker Payment ${run.from_date} → ${run.to_date} (Run #${runId}, ${draft ? 'DRAFT — for verification' : 'APPROVED'})`]).font = { bold: true, size: 13 };
     ws.addRow([]);
     const head = ws.addRow(['Date', 'Tanker', 'Capacity (KL)', 'Route', 'Delivery Point', 'State',
       'Transport Type', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Remarks']);
@@ -667,7 +670,8 @@ async function publishRunToVendors(runId) {
     ws.columns.forEach(c => { c.width = 16; });
     v.trips.forEach(t => ws.addRow([t.plan_for_date, t.tanker_number,
       t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.route_name, t.delivery_point,
-      t.state, t.transport_type, t.billed_km, t.rate_per_km, t.amount, t.remarks]));
+      t.state, t.transport_type, t.billed_km, t.rate_per_km,
+      t.excluded ? 0 : t.amount, t.excluded ? `EXCLUDED (Sale Tanker) — ${t.remarks || ''}`.trim() : t.remarks]));
     ws.addRow(['TRIPS TOTAL', '', '', '', '', '', '',
       rN(v.trips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '', rN(tripTotal), '']).font = { bold: true };
     vendorTolls.forEach(t =>
@@ -679,8 +683,16 @@ async function publishRunToVendors(runId) {
       await createTransport().sendMail({
         from: process.env.SMTP_FROM,
         to: v.email,
-        subject: `Shreeja Tanker Payment ${run.from_date} → ${run.to_date} — ${v.name} · ₹ ${nf(total)}`,
-        html: `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
+        subject: `${draft ? '[DRAFT for verification] ' : ''}Shreeja Tanker Payment ${run.from_date} → ${run.to_date} — ${v.name} · ₹ ${nf(total)}`,
+        html: draft ? `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
+          <p>Dear ${esc(v.name)},</p>
+          <p>Please review your <b>DRAFT</b> tanker cards for <b>${run.from_date} → ${run.to_date}</b> in the attached sheet
+          (${v.trips.length} trips · draft payable ₹ ${nf(total)}). Rows marked EXCLUDED (Sale Tanker) are shown for your
+          reference only and are not billed.</p>
+          <p>Reply to this email or contact the Shreeja billing team with any corrections to distance, state or trip
+          details — the biller will update the run before it goes for final approval.</p>
+          <p style="color:#9ca3af;font-size:11px;">Shreeja TMS — automated mail; do not reply to book corrections by phone if preferred.</p></div>`
+          : `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
           <p>Dear ${esc(v.name)},</p>
           <p>The tanker payment for <b>${run.from_date} → ${run.to_date}</b> has been approved.
           Your trip sheet is attached: <b>${v.trips.length} trips · ₹ ${nf(tripTotal)}</b>${tollTotal > 0
@@ -698,22 +710,68 @@ async function publishRunToVendors(runId) {
   return results;
 }
 
-// ── POST /api/billing/runs/:id/submit — start the approval chain ─────────────
+// ── POST /api/billing/runs/:id/push-vendor — send draft tanker cards to each
+// vendor for verification before finalizing. Run stays editable; biller can
+// still fix corrections the vendor reports back, then Submit as normal.
+router.post('/runs/:id/push-vendor', authenticate, authorize(...canBill), async (req, res) => {
+  try {
+    const runId = req.params.id;
+    const run = (await query('SELECT * FROM billing_runs WHERE id=$1', [runId])).rows[0];
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (!['draft', 'rejected', 'pending_vendor'].includes(run.status))
+      return res.status(400).json({ error: 'Run is already submitted or approved' });
+
+    const results = await publishRunToVendors(runId, { draft: true }); // reuses the per-vendor tanker-card mailer
+    await query(`UPDATE billing_runs SET status='pending_vendor', updated_at=NOW() WHERE id=$1`, [runId]);
+    res.json({ ok: true, status: 'pending_vendor', results });
+  } catch (err) {
+    console.error('Billing push-vendor error:', err);
+    res.status(500).json({ error: 'Failed to push draft cards to vendors' });
+  }
+});
+
+// ── POST /api/billing/runs/:id/submit — finalize & start the approval chain ─
 router.post('/runs/:id/submit', authenticate, authorize(...canBill), async (req, res) => {
   try {
     const runId = req.params.id;
     const run = (await query('SELECT * FROM billing_runs WHERE id=$1', [runId])).rows[0];
     if (!run) return res.status(404).json({ error: 'Run not found' });
-    if (!['draft', 'rejected'].includes(run.status))
+    if (!['draft', 'rejected', 'pending_vendor'].includes(run.status))
       return res.status(400).json({ error: 'Run is already submitted or approved' });
 
     const missing = await query(`
       SELECT COUNT(*)::int AS n FROM billing_run_trips
-      WHERE run_id=$1 AND (state IS NULL OR rate_per_km IS NULL OR billed_km IS NULL)`, [runId]);
+      WHERE run_id=$1 AND excluded=FALSE AND (state IS NULL OR rate_per_km IS NULL OR billed_km IS NULL)`, [runId]);
     if (missing.rows[0].n > 0)
       return res.status(400).json({ error: `${missing.rows[0].n} trip(s) missing state / rate / billed km — complete them before submitting` });
 
+    // Mandatory toll: every tanker with non-excluded trips must have a toll
+    // challan (amount + statement file). Tankers without one are pulled out
+    // of THIS run — their trips return to the unbilled pool and get carried
+    // forward automatically the next time a fortnight is executed.
+    const tankers = (await query(
+      `SELECT DISTINCT tanker_number FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE`, [runId])).rows
+      .map(r => r.tanker_number);
+    const validTolls = new Set((await query(
+      `SELECT tanker_number FROM billing_run_tolls
+       WHERE run_id=$1 AND amount > 0 AND file_data IS NOT NULL`, [runId])).rows.map(r => r.tanker_number));
+    const carried = tankers.filter(tn => !validTolls.has(tn));
+    let carriedTrips = 0;
+    if (carried.length) {
+      const del = await query(
+        `DELETE FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE AND tanker_number = ANY($2) RETURNING id`,
+        [runId, carried]);
+      carriedTrips = del.rows.length;
+    }
+
+    const remaining = (await query(
+      `SELECT COUNT(*)::int AS n FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE`, [runId])).rows[0].n;
     await refreshRunTotal(runId);
+    if (remaining === 0) {
+      await query(`UPDATE billing_runs SET status='draft', updated_at=NOW() WHERE id=$1`, [runId]);
+      return res.json({ ok: true, status: 'draft', carried_forward: carried, carried_trips: carriedTrips,
+        message: 'Every tanker in this run is missing its toll challan — nothing was submitted. All trips remain unbilled and will be carried forward the next time you execute a fortnight.' });
+    }
 
     // (Re)create the approval chain with fresh tokens — resubmission restarts from L1
     await query('DELETE FROM billing_run_approvals WHERE run_id=$1', [runId]);
@@ -725,7 +783,7 @@ router.post('/runs/:id/submit', authenticate, authorize(...canBill), async (req,
     }
     await query(`UPDATE billing_runs SET status='pending_l1', submitted_at=NOW(), updated_at=NOW() WHERE id=$1`, [runId]);
     await sendApprovalEmail(runId, 1);
-    res.json({ ok: true, status: 'pending_l1' });
+    res.json({ ok: true, status: 'pending_l1', carried_forward: carried, carried_trips: carriedTrips });
   } catch (err) {
     console.error('Billing submit error:', err);
     res.status(500).json({ error: 'Failed to submit for approval' });
@@ -829,7 +887,7 @@ router.post('/decide', async (req, res) => {
 // the amounts finance can actually pay.
 async function reportData(q) {
   const params = [q.from, q.to];
-  const cond = ['t.plan_for_date BETWEEN $1 AND $2'];
+  const cond = ['t.plan_for_date BETWEEN $1 AND $2', 't.excluded = FALSE'];
   if ((q.status || 'approved') !== 'all') { params.push('approved'); cond.push(`br.status = $${params.length}`); }
   if (q.tanker) { params.push(q.tanker); cond.push(`t.tanker_number = $${params.length}`); }
   if (q.vendor) { params.push(q.vendor); cond.push(`COALESCE(t.vendor_name,'— No vendor mapped —') = $${params.length}`); }
