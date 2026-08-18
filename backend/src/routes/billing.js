@@ -456,6 +456,21 @@ async function buildRunWorkbook(runId) {
   const { tankers, vendors, dates } = await runSummaries(runId);
   const approvals = (await query('SELECT level, approver_email, status, remarks, decided_at FROM billing_run_approvals WHERE run_id=$1 ORDER BY level', [runId])).rows;
 
+  // BMCU details per trip (code + name, in pickup order) for the Trip Wise
+  // sheet's "BMCU Details" column — bmcu_count alone doesn't name the plants.
+  const bmcuByExec = {};
+  if (trips.length) {
+    const bm = await query(`
+      SELECT teb.execution_id, teb.seq_no, b.bmcu_code, b.bmcu_name
+      FROM trip_execution_bmcus teb JOIN bmcus b ON b.id = teb.bmcu_id
+      WHERE teb.execution_id = ANY($1) AND teb.is_deleted = FALSE
+      ORDER BY teb.execution_id, teb.seq_no`,
+      [trips.map(t => t.execution_id)]);
+    for (const r of bm.rows)
+      (bmcuByExec[r.execution_id] ||= []).push(`${r.bmcu_code} - ${r.bmcu_name}`);
+  }
+  const bmcuDetails = execId => (bmcuByExec[execId] || []).join(' → ') || '—';
+
   const wb = new ExcelJS.Workbook();
   const head = (ws, cols) => { const r = ws.addRow(cols); r.font = { bold: true };
     ws.columns.forEach(c => { c.width = 16; }); };
@@ -464,13 +479,14 @@ async function buildRunWorkbook(runId) {
   ws1.addRow([`Tanker Payment Billing — Run #${runId} · ${run.from_date} → ${run.to_date} · Status: ${run.status}`]).font = { bold: true, size: 13 };
   ws1.addRow([]);
   head(ws1, ['Date', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
-    'BMCUs', 'Ack Kgs', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM', 'Estimated KM',
+    'BMCU Count', 'BMCU Details', 'Ack Kgs', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM', 'Estimated KM',
     'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Remarks']);
+  ws1.getColumn(9).width = 60;
   trips.forEach(t => ws1.addRow([t.plan_for_date, t.tanker_number, rN(t.capacity_litres / 1000, 1),
-    t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, t.ack_kgs,
+    t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id), t.ack_kgs,
     t.state, t.transport_type, t.system_km, t.google_km, t.master_km, t.estimated_km,
     t.billed_km, t.rate_per_km, t.amount, t.remarks]));
-  const totRow = ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '',
+  const totRow = ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '',
     rN(trips.reduce((s, t) => s + (+t.system_km || 0), 0)),
     rN(trips.reduce((s, t) => s + (+t.google_km || 0), 0)), '', '',
     rN(trips.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
