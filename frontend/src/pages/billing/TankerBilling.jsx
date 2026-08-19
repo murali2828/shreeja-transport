@@ -41,6 +41,8 @@ export default function TankerBilling() {
   const [ratePreviews, setRatePreviews] = useState({}); // tripId -> rate_per_km | null (unsaved)
   const [expanded, setExpanded] = useState({}); // tripId -> bool
   const [tab, setTab] = useState('trips');     // trips | tankers | vendors
+  const [searchRoute, setSearchRoute] = useState('');
+  const [searchTanker, setSearchTanker] = useState('');
 
   const { data: runs } = useQuery({
     queryKey: ['billing-runs'],
@@ -226,6 +228,9 @@ export default function TankerBilling() {
   // ── run detail ─────────────────────────────────────────────────────────────
   const [label, color] = STATUS_LABEL[run?.status] || ['…', '#666'];
   const trips = run?.trips || [];
+  const filteredTrips = trips.filter(t =>
+    (!searchRoute || (t.route_name || '').toLowerCase().includes(searchRoute.toLowerCase())) &&
+    (!searchTanker || (t.tanker_number || '').toLowerCase().includes(searchTanker.toLowerCase())));
   const missing = trips.filter(t => !val(t, 'state') || t.rate_per_km == null).length;
   const newComboCount = trips.reduce((s, t) => {
     const legs = Array.isArray(t.legs) ? t.legs : (t.legs ? JSON.parse(t.legs) : []);
@@ -310,7 +315,7 @@ export default function TankerBilling() {
       )}
 
       {/* tabs */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 items-center flex-wrap">
         {[['trips', 'Trip Wise'], ['dates', 'Date Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise'], ['tolls', 'Toll Challans']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold"
@@ -318,6 +323,19 @@ export default function TankerBilling() {
             {l}
           </button>
         ))}
+        {tab === 'trips' && (<>
+          <input type="text" placeholder="Search route…" value={searchRoute}
+                 onChange={e => setSearchRoute(e.target.value)}
+                 className="input text-xs py-1 px-2 w-36"/>
+          <input type="text" placeholder="Search tanker…" value={searchTanker}
+                 onChange={e => setSearchTanker(e.target.value)}
+                 className="input text-xs py-1 px-2 w-32"/>
+          {(searchRoute || searchTanker) && (
+            <button className="text-xs text-white/90 underline" onClick={() => { setSearchRoute(''); setSearchTanker(''); }}>
+              clear
+            </button>
+          )}
+        </>)}
         {missing > 0 && editable && <span className="text-xs text-white/90 self-center">⚠ {missing} trip(s) missing state / rate</span>}
       </div>
 
@@ -331,7 +349,7 @@ export default function TankerBilling() {
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
               <tbody>
-                {trips.map(t => (
+                {filteredTrips.map(t => (
                   <FragmentRow key={t.id} t={t} editable={editable} expanded={!!expanded[t.id]}
                     carried={run?.from_date && t.plan_for_date < run.from_date}
                     onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
@@ -339,13 +357,19 @@ export default function TankerBilling() {
                     legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}
                     ratePreview={ratePreviews[t.id]} previewRate={previewRate} />
                 ))}
+                {filteredTrips.length === 0 && (
+                  <tr><td colSpan={18} className="px-3 py-4 text-center text-gray-400">No trips match this search.</td></tr>
+                )}
                 <tr className="bg-blue-100 font-bold">
-                  <td className="px-2 py-2" colSpan={12}>TOTAL — {trips.length} trips ({trips.filter(t => val(t,"excluded")).length} excluded)</td>
-                  <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
-                  <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
-                  <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
+                  <td className="px-2 py-2" colSpan={12}>
+                    TOTAL — {filteredTrips.length}{filteredTrips.length !== trips.length ? ` of ${trips.length}` : ''} trips
+                    ({filteredTrips.filter(t => val(t,"excluded")).length} excluded)
+                  </td>
+                  <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
                   <td/>
-                  <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (val(t,"excluded") ? 0 : (+t.amount || 0)), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (val(t,"excluded") ? 0 : (+t.amount || 0)), 0))}</td>
                   <td/>
                 </tr>
               </tbody>
@@ -577,6 +601,7 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
       <td className="px-2 py-1.5 font-semibold text-[#005ba3] whitespace-nowrap">
         {t.tanker_number}
         {t.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px]" title="Sale Tanker trip — planning marked this trip for sale, not vendor purchase">Sale</span>}
+        {t.is_milma && <span className="ml-1 px-1 rounded bg-teal-600 text-white text-[10px]" title="Milma — milk sold directly at the BMCU, no delivery-point acknowledgement. Auto-excluded from vendor billing by default; milk still counts in TS/Analytics reports.">Milma</span>}
       </td>
       <td className="px-2 py-1.5 text-right">{t.capacity_litres ? (t.capacity_litres / 1000).toFixed(1) : '—'}</td>
       <td className="px-2 py-1.5">{t.vendor_name || <span className="text-red-600">no vendor</span>}</td>

@@ -1240,26 +1240,37 @@ router.get('/bmcu-breakup/excel', authenticate, async (req, res) => {
 // Utilization % = Ack Qty Ltrs / tanker capacity × 100; remark ABOVE/BELOW threshold.
 // ═════════════════════════════════════════════════════════════════════════════
 async function buildDayUtilisation(fromDate, toDate, threshold) {
+  // LEFT JOIN acknowledgements — trips sold directly at the BMCU (e.g. Milma
+  // tankers) never get a delivery-point acknowledgement, so an INNER JOIN
+  // dropped them from utilisation entirely. Dispatch quantity (already
+  // collected, tanker-loaded) stands in whenever no ack exists, mirroring
+  // the fallback Analytics → Utilisation already uses.
   const r = await query(`
     SELECT tp.trip_no, t.tanker_number, t.capacity_litres,
            rm.route_name, sp.name AS starting_point, dp.name AS delivery_point,
-           MIN(ta.ack_date)      AS ack_date,
-           SUM(ta.qty_litres)    AS ack_litres,
-           SUM(ta.qty_kgs)       AS ack_kgs,
-           SUM(ta.kg_fat)        AS ack_kg_fat,
-           SUM(ta.kg_snf)        AS ack_kg_snf
+           COALESCE(MIN(ta.ack_date), te.execution_date) AS ack_date,
+           COUNT(ta.id) AS ack_count,
+           COALESCE(SUM(ta.qty_litres), disp.litres) AS ack_litres,
+           COALESCE(SUM(ta.qty_kgs),    disp.kgs)    AS ack_kgs,
+           COALESCE(SUM(ta.kg_fat),     disp.kg_fat) AS ack_kg_fat,
+           COALESCE(SUM(ta.kg_snf),     disp.kg_snf) AS ack_kg_snf
     FROM trip_executions te
     JOIN trip_plans tp           ON tp.id=te.trip_plan_id
-    JOIN trip_acknowledgements ta ON ta.execution_id=te.id
+    LEFT JOIN trip_acknowledgements ta ON ta.execution_id=te.id
     LEFT JOIN tankers t          ON t.id=tp.tanker_id
     LEFT JOIN route_masters rm   ON rm.id=tp.route_id
     LEFT JOIN starting_points sp ON sp.id=tp.start_point_id
     LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
+    LEFT JOIN LATERAL (
+      SELECT SUM(teb.qty_litres) AS litres, SUM(teb.qty_kgs) AS kgs,
+             SUM(teb.kg_fat) AS kg_fat, SUM(teb.kg_snf) AS kg_snf
+      FROM trip_execution_bmcus teb WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE
+    ) disp ON TRUE
     WHERE te.status != 'cancelled' AND tp.status NOT IN ('cancelled','deleted')
     GROUP BY tp.id, tp.trip_no, t.tanker_number, t.capacity_litres,
-             rm.route_name, sp.name, dp.name, te.id
-    HAVING MIN(ta.ack_date) BETWEEN $1 AND $2
-    ORDER BY MIN(ta.ack_date), tp.trip_no`, [fromDate, toDate]);
+             rm.route_name, sp.name, dp.name, te.id, disp.litres, disp.kgs, disp.kg_fat, disp.kg_snf
+    HAVING COALESCE(MIN(ta.ack_date), te.execution_date) BETWEEN $1 AND $2
+    ORDER BY COALESCE(MIN(ta.ack_date), te.execution_date), tp.trip_no`, [fromDate, toDate]);
 
   return r.rows.map((x, i) => {
     const litres = parseFloat(x.ack_litres) || 0;
@@ -1277,7 +1288,10 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
       kg_fat: rN(x.ack_kg_fat), kg_snf: rN(x.ack_kg_snf),
       capacity: cap || null,
       utilization: util,
-      remarks: util == null ? '' : util >= threshold ? `ABOVE ${threshold}` : `BELOW ${threshold}`,
+      remarks: [
+        util == null ? '' : util >= threshold ? `ABOVE ${threshold}` : `BELOW ${threshold}`,
+        parseInt(x.ack_count) === 0 ? '(dispatch qty — no ack, e.g. sold at BMCU)' : '',
+      ].filter(Boolean).join(' '),
     };
   });
 }

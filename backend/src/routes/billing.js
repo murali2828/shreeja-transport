@@ -115,9 +115,20 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
              rm.route_name, sp.name AS start_point, dp.name AS delivery_point,
              (SELECT COUNT(DISTINCT teb.bmcu_id) FROM trip_execution_bmcus teb
                WHERE teb.execution_id = te.id AND teb.is_deleted = FALSE)::int AS bmcu_count,
-             (SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id = te.id) AS ack_litres,
-             (SELECT SUM(ta.qty_kgs)    FROM trip_acknowledgements ta WHERE ta.execution_id = te.id) AS ack_kgs,
-             tp.is_sale_tanker
+             COALESCE(
+               (SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id = te.id),
+               (SELECT SUM(teb.qty_litres) FROM trip_execution_bmcus teb WHERE teb.execution_id = te.id AND teb.is_deleted = FALSE)
+             ) AS ack_litres,
+             COALESCE(
+               (SELECT SUM(ta.qty_kgs) FROM trip_acknowledgements ta WHERE ta.execution_id = te.id),
+               (SELECT SUM(teb.qty_kgs) FROM trip_execution_bmcus teb WHERE teb.execution_id = te.id AND teb.is_deleted = FALSE)
+             ) AS ack_kgs,
+             tp.is_sale_tanker,
+             -- Milma: milk sold directly at the BMCU, never acknowledged at a
+             -- delivery point. Still shown here (dispatch qty stands in for
+             -- ack) so the biller can check it out of vendor billing, but
+             -- excluded by default since it isn't our regular movement.
+             (dp.name ILIKE 'Milma%') AS is_milma
       FROM trip_plans tp
       JOIN trip_executions te ON te.trip_plan_id = tp.id
       LEFT JOIN tankers t          ON t.id  = tp.tanker_id
@@ -127,7 +138,8 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
       LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
       WHERE tp.plan_for_date BETWEEN ($1::date - INTERVAL '31 days') AND $2
         AND tp.status NOT IN ('cancelled','deleted')
-        AND EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
+        AND (EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
+             OR dp.name ILIKE 'Milma%')
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
       ORDER BY tp.plan_for_date, t.tanker_number`, [from_date, to_date]);
 
@@ -147,13 +159,15 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
           (run_id, execution_id, plan_for_date, tanker_number, capacity_litres,
            vendor_id, vendor_name, route_name, start_point, delivery_point,
            bmcu_count, ack_litres, ack_kgs, transport_type,
-           system_km, google_km, master_km, estimated_km, billed_km, legs, is_sale_tanker)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+           system_km, google_km, master_km, estimated_km, billed_km, legs,
+           is_sale_tanker, is_milma, excluded)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
         [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
          tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
          tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), transportType,
          rN(dist.total_km), sumBy('google'), sumBy('master'), sumBy('estimated'),
-         rN(dist.total_km), JSON.stringify(dist.legs), !!tr.is_sale_tanker]);
+         rN(dist.total_km), JSON.stringify(dist.legs),
+         !!tr.is_sale_tanker, !!tr.is_milma, !!tr.is_milma]);
     }
     await client.query('COMMIT');
     res.json({ id: runId, trips: trips.rows.length, new_combinations: newCombos });
@@ -482,18 +496,18 @@ async function buildRunWorkbook(runId) {
   ws1.addRow([]);
   head(ws1, ['Date', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
     'BMCU Count', 'BMCU Details', 'Ack Kgs', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM', 'Estimated KM',
-    'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Sale Tanker', 'Excluded', 'Remarks']);
+    'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Sale Tanker', 'Milma', 'Excluded', 'Remarks']);
   ws1.getColumn(9).width = 60;
   trips.forEach(t => ws1.addRow([t.plan_for_date, t.tanker_number, rN(t.capacity_litres / 1000, 1),
     t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id), t.ack_kgs,
     t.state, t.transport_type, t.system_km, t.google_km, t.master_km, t.estimated_km,
     t.billed_km, t.rate_per_km, t.excluded ? 0 : t.amount,
-    t.is_sale_tanker ? 'Yes' : '', t.excluded ? 'Yes' : '', t.remarks]));
+    t.is_sale_tanker ? 'Yes' : '', t.is_milma ? 'Yes' : '', t.excluded ? 'Yes' : '', t.remarks]));
   const totRow = ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '',
     rN(trips.reduce((s, t) => s + (+t.system_km || 0), 0)),
     rN(trips.reduce((s, t) => s + (+t.google_km || 0), 0)), '', '',
     rN(trips.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
-    rN(trips.reduce((s, t) => s + (t.excluded ? 0 : (+t.amount || 0)), 0)), '', '', '']);
+    rN(trips.reduce((s, t) => s + (t.excluded ? 0 : (+t.amount || 0)), 0)), '', '', '', '']);
   totRow.font = { bold: true };
 
   const ws2 = wb.addWorksheet('Tanker Wise');
