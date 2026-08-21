@@ -209,7 +209,8 @@ router.get('/runs/:id', authenticate, authorize(...canBill, 'viewer'), async (re
       FROM billing_runs br WHERE br.id = $1`, [req.params.id]);
     if (!run.rows.length) return res.status(404).json({ error: 'Run not found' });
     const trips = await query(`
-      SELECT t.*, t.plan_for_date::text AS plan_for_date
+      SELECT t.*, t.plan_for_date::text AS plan_for_date,
+             (t.is_sale_tanker OR t.tanker_number ILIKE 'SALE%') AS is_sale_tanker
       FROM billing_run_trips t WHERE t.run_id = $1
       ORDER BY t.plan_for_date, t.tanker_number`, [req.params.id]);
     const approvals = await query(`
@@ -469,7 +470,10 @@ router.get('/runs/:id/summary', authenticate, authorize(...canBill, 'viewer'), a
 // ── Excel report (trip / tanker / vendor sheets, incl. system+google km) ─────
 async function buildRunWorkbook(runId) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
-  const trips = (await query('SELECT t.*, t.plan_for_date::text AS plan_for_date FROM billing_run_trips t WHERE t.run_id=$1 ORDER BY t.plan_for_date, t.tanker_number', [runId])).rows;
+  const trips = (await query(`
+    SELECT t.*, t.plan_for_date::text AS plan_for_date,
+           (t.is_sale_tanker OR t.tanker_number ILIKE 'SALE%') AS is_sale_tanker
+    FROM billing_run_trips t WHERE t.run_id=$1 ORDER BY t.plan_for_date, t.tanker_number`, [runId])).rows;
   const { tankers, vendors, dates } = await runSummaries(runId);
   const approvals = (await query('SELECT level, approver_email, status, remarks, decided_at FROM billing_run_approvals WHERE run_id=$1 ORDER BY level', [runId])).rows;
 
@@ -659,12 +663,13 @@ async function notifyBiller(runId, subject, bodyHtml) {
 async function publishRunToVendors(runId, { draft = false } = {}) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
   const allTrips = (await query(`
-    SELECT t.*, t.plan_for_date::text AS plan_for_date, v.email AS vendor_email
+    SELECT t.*, t.plan_for_date::text AS plan_for_date, v.email AS vendor_email,
+           (t.is_sale_tanker OR t.tanker_number ILIKE 'SALE%') AS is_sale_tanker
     FROM billing_run_trips t LEFT JOIN vendors v ON v.id = t.vendor_id
     WHERE t.run_id=$1 ORDER BY t.plan_for_date, t.tanker_number`, [runId])).rows;
   // Sale Tanker / excluded trips never go to vendors for verification or
   // payment — they live on their own tab/sheet, not in vendor billing.
-  const trips = allTrips.filter(t => !t.excluded);
+  const trips = allTrips.filter(t => !t.excluded && !t.is_sale_tanker);
   if (!trips.length)
     return [`No billable trips in this run — all ${allTrips.length} trip(s) are Sale Tanker / excluded. Nothing to push to vendors.`];
 
