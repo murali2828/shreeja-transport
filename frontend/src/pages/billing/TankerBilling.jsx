@@ -113,7 +113,15 @@ export default function TankerBilling() {
   const pushVendorMut = useMutation({
     mutationFn: () => api.post(`/billing/runs/${openRunId}/push-vendor`),
     onSuccess: r => {
-      toast.success('Draft tanker cards emailed to vendors for verification');
+      // Report what actually happened per vendor — a vendor with no email in
+      // the Vendor master is silently skipped by the mailer, and the biller
+      // must know rather than wait for a verification that never arrives.
+      const { sent = 0, failed = 0, results = [] } = r.data || {};
+      if (sent > 0) toast.success(`Draft tanker cards emailed to ${sent} vendor(s) for verification`);
+      if (failed > 0)
+        toast.error(`${failed} vendor(s) NOT emailed:\n${results.filter(x => x.startsWith('✗')).join('\n')}`,
+                    { duration: 12000 });
+      if (!sent && !failed) toast.error('No vendor emails were sent — nothing payable in this run');
       qc.invalidateQueries(['billing-run', openRunId]);
       qc.invalidateQueries(['billing-runs']);
     },
@@ -228,10 +236,16 @@ export default function TankerBilling() {
   // ── run detail ─────────────────────────────────────────────────────────────
   const [label, color] = STATUS_LABEL[run?.status] || ['…', '#666'];
   const trips = run?.trips || [];
-  const filteredTrips = trips.filter(t =>
+  // Sale-tanker trips are milk SOLD, not moved for us: they carry no vendor
+  // payment, so they live in their own tab and never appear in Trip Wise or
+  // in any payment total. (The milk itself is still reported in TS/Analytics,
+  // which read trip data directly and are untouched by billing.)
+  const payableTrips = trips.filter(t => !t.is_sale_tanker);
+  const saleTrips    = trips.filter(t => t.is_sale_tanker);
+  const filteredTrips = payableTrips.filter(t =>
     (!searchRoute || (t.route_name || '').toLowerCase().includes(searchRoute.toLowerCase())) &&
     (!searchTanker || (t.tanker_number || '').toLowerCase().includes(searchTanker.toLowerCase())));
-  const missing = trips.filter(t => !val(t, 'state') || t.rate_per_km == null).length;
+  const missing = payableTrips.filter(t => !val(t, 'state') || t.rate_per_km == null).length;
   const newComboCount = trips.reduce((s, t) => {
     const legs = Array.isArray(t.legs) ? t.legs : (t.legs ? JSON.parse(t.legs) : []);
     return s + legs.filter(l => l.is_new).length;
@@ -246,7 +260,9 @@ export default function TankerBilling() {
         <div>
           <h2 className="page-title">Billing Run #{openRunId}</h2>
           <p className="text-xs" style={{ color: 'rgba(255,255,255,0.92)' }}>
-            {run?.from_date} → {run?.to_date} · {trips.length} acknowledged trips {isFetching && '· loading…'}
+            {run?.from_date} → {run?.to_date} · {payableTrips.length} acknowledged trips
+            {saleTrips.length > 0 && ` · ${saleTrips.length} sale tanker trips (not payable)`}
+            {isFetching && ' · loading…'}
           </p>
         </div>
         <span className="px-3 py-1 rounded-full text-xs font-bold text-white" style={{ background: color }}>{label}</span>
@@ -316,7 +332,8 @@ export default function TankerBilling() {
 
       {/* tabs */}
       <div className="flex gap-2 items-center flex-wrap">
-        {[['trips', 'Trip Wise'], ['dates', 'Date Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise'], ['tolls', 'Toll Challans']].map(([k, l]) => (
+        {[['trips', 'Trip Wise'], ['dates', 'Date Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise'],
+          ['sale', `Sale Tankers${saleTrips.length ? ` (${saleTrips.length})` : ''}`], ['tolls', 'Toll Challans']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold"
             style={tab === k ? { background: '#cc785c', color: '#fff' } : { background: '#fff', color: '#57534e' }}>
@@ -362,7 +379,7 @@ export default function TankerBilling() {
                 )}
                 <tr className="bg-blue-100 font-bold">
                   <td className="px-2 py-2" colSpan={12}>
-                    TOTAL — {filteredTrips.length}{filteredTrips.length !== trips.length ? ` of ${trips.length}` : ''} trips
+                    TOTAL — {filteredTrips.length}{filteredTrips.length !== payableTrips.length ? ` of ${payableTrips.length}` : ''} trips
                     ({filteredTrips.filter(t => val(t,"excluded")).length} excluded)
                   </td>
                   <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
@@ -382,7 +399,63 @@ export default function TankerBilling() {
         <TollPanel runId={openRunId} tolls={run?.tolls || []} tankers={summary?.tankers || []} editable={editable}/>
       )}
 
-      {tab !== 'trips' && tab !== 'tolls' && (() => {
+      {/* Sale tankers — milk sold at the BMCU. Never payable to a transport
+          vendor, so this tab is read-only: no state, rate or amount. The milk
+          still flows into TS / Analytics reports as usual. */}
+      {tab === 'sale' && (
+        <div className="card overflow-hidden">
+          <div className="px-3 py-2 text-xs" style={{ background: '#f5f3ff', color: '#4a3aa7' }}>
+            These trips ran on a <b>sale tanker</b> (milk sold, not moved for us). They are
+            <b> not counted in the tanker payment run</b> — no state, rate or amount applies and they are
+            never sent to a transport vendor. The milk continues to be reported in TS / Analytics as usual.
+          </div>
+          <div className="overflow-x-auto max-h-[62vh]">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
+                <tr>{['Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                      'System KM', 'Google KM', 'Remarks']
+                     .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {saleTrips.map(t => (
+                  <tr key={t.id} className="border-t border-gray-100 hover:bg-violet-50/40">
+                    <td className="px-2 py-1.5 whitespace-nowrap">
+                      {t.plan_for_date}
+                      {run?.from_date && t.plan_for_date < run.from_date &&
+                        <span className="ml-1 px-1 rounded bg-amber-500 text-white text-[10px]" title="Carried forward from the previous fortnight">carry-fwd</span>}
+                    </td>
+                    <td className="px-2 py-1.5 font-semibold text-[#005ba3] whitespace-nowrap">
+                      {t.tanker_number}
+                      <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px]">Sale</span>
+                    </td>
+                    <td className="px-2 py-1.5 text-right">{t.capacity_litres ? (t.capacity_litres / 1000).toFixed(1) : '—'}</td>
+                    <td className="px-2 py-1.5">{t.vendor_name || '—'}</td>
+                    <td className="px-2 py-1.5">{t.route_name || '—'}</td>
+                    <td className="px-2 py-1.5">{t.delivery_point || '—'}</td>
+                    <td className="px-2 py-1.5 text-center">{t.bmcu_count}</td>
+                    <td className="px-2 py-1.5 text-right">{nf(t.ack_kgs, 0)}</td>
+                    <td className="px-2 py-1.5 text-right">{nf(t.system_km)}</td>
+                    <td className="px-2 py-1.5 text-right text-green-700">{nf(t.google_km)}</td>
+                    <td className="px-2 py-1.5">{t.remarks || '—'}</td>
+                  </tr>
+                ))}
+                {saleTrips.length === 0 && (
+                  <tr><td colSpan={11} className="px-3 py-4 text-center text-gray-400">No sale tanker trips in this run.</td></tr>
+                )}
+                <tr className="bg-violet-100 font-bold">
+                  <td className="px-2 py-2" colSpan={7}>TOTAL — {saleTrips.length} sale tanker trips (not payable)</td>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.ack_kgs || 0), 0), 0)}</td>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
+                  <td/>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab !== 'trips' && tab !== 'tolls' && tab !== 'sale' && (() => {
         const withToll = tab === 'tankers' || tab === 'vendors';
         const rows = (tab === 'tankers' ? summary?.tankers : tab === 'dates' ? summary?.dates : summary?.vendors) || [];
         return (
@@ -600,8 +673,6 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
       </td>
       <td className="px-2 py-1.5 font-semibold text-[#005ba3] whitespace-nowrap">
         {t.tanker_number}
-        {t.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px]" title="Sale Tanker trip — planning marked this trip for sale, not vendor purchase">Sale</span>}
-        {t.is_milma && <span className="ml-1 px-1 rounded bg-teal-600 text-white text-[10px]" title="Milma — milk sold directly at the BMCU, no delivery-point acknowledgement. Auto-excluded from vendor billing by default; milk still counts in TS/Analytics reports.">Milma</span>}
       </td>
       <td className="px-2 py-1.5 text-right">{t.capacity_litres ? (t.capacity_litres / 1000).toFixed(1) : '—'}</td>
       <td className="px-2 py-1.5">{t.vendor_name || <span className="text-red-600">no vendor</span>}</td>

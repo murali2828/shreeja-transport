@@ -28,6 +28,21 @@ const APPROVERS = [
 const BASE_URL = () => process.env.APP_BASE_URL || 'https://tms.shreejamilk.com';
 const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
 
+// ── Sale tanker ──────────────────────────────────────────────────────────────
+// Milk that is SOLD (not moved for us) runs on a sale tanker. Those trips are
+// never payable to a transport vendor, so they are loaded into the run for
+// visibility only (frontend "Sale Tankers" tab) and are always excluded from
+// the payment total. Detection is deliberately forgiving about spacing,
+// punctuation and case: "SALE TANKER", "Sale-Tanker", "Sale Tanker 2" all
+// match. The planning-level flag (trip_plans.is_sale_tanker) still counts, so
+// a normal tanker can be marked as a sale trip when planned.
+// NOTE: this only governs BILLING. TS/Analytics reports read trip data
+// directly and continue to count sale-tanker milk exactly as before.
+const SALE_TANKER_SQL = `(
+        REGEXP_REPLACE(UPPER(COALESCE(t.tanker_number, '')), '[^A-Z]', '', 'g') LIKE 'SALETANKER%'
+        OR COALESCE(tp.is_sale_tanker, FALSE)
+      )`;
+
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -123,12 +138,15 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
                (SELECT SUM(ta.qty_kgs) FROM trip_acknowledgements ta WHERE ta.execution_id = te.id),
                (SELECT SUM(teb.qty_kgs) FROM trip_execution_bmcus teb WHERE teb.execution_id = te.id AND teb.is_deleted = FALSE)
              ) AS ack_kgs,
-             tp.is_sale_tanker,
-             -- Milma: milk sold directly at the BMCU, never acknowledged at a
-             -- delivery point. Still shown here (dispatch qty stands in for
-             -- ack) so the biller can check it out of vendor billing, but
-             -- excluded by default since it isn't our regular movement.
-             (dp.name ILIKE 'Milma%') AS is_milma
+             -- Sale tanker: milk sold rather than moved for us. Identified by
+             -- the tanker itself being a sale tanker (master record named
+             -- "Sale Tanker…", punctuation/case insensitive) or by planning
+             -- having flagged the trip. Such trips are never payable to a
+             -- transport vendor: they are loaded into the run for visibility
+             -- (Sale Tankers tab) and permanently excluded from the payment
+             -- total. The milk still counts in TS/Analytics reports, which
+             -- read the trip data directly and are unaffected by billing.
+             ${SALE_TANKER_SQL} AS is_sale_tanker
       FROM trip_plans tp
       JOIN trip_executions te ON te.trip_plan_id = tp.id
       LEFT JOIN tankers t          ON t.id  = tp.tanker_id
@@ -139,7 +157,10 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
       WHERE tp.plan_for_date BETWEEN ($1::date - INTERVAL '31 days') AND $2
         AND tp.status NOT IN ('cancelled','deleted')
         AND (EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
-             OR dp.name ILIKE 'Milma%')
+             -- Sale-tanker trips are sold at the BMCU and never acknowledged
+             -- at a delivery point; still load them so they are visible (and
+             -- auditable) in the run's Sale Tankers tab.
+             OR ${SALE_TANKER_SQL})
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
       ORDER BY tp.plan_for_date, t.tanker_number`, [from_date, to_date]);
 
@@ -160,14 +181,15 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
            vendor_id, vendor_name, route_name, start_point, delivery_point,
            bmcu_count, ack_litres, ack_kgs, transport_type,
            system_km, google_km, master_km, estimated_km, billed_km, legs,
-           is_sale_tanker, is_milma, excluded)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+           is_sale_tanker, excluded)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
         [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
          tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
          tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), transportType,
          rN(dist.total_km), sumBy('google'), sumBy('master'), sumBy('estimated'),
          rN(dist.total_km), JSON.stringify(dist.legs),
-         !!tr.is_sale_tanker, !!tr.is_milma, !!tr.is_milma]);
+         // Sale-tanker trips are always excluded from the payment total.
+         !!tr.is_sale_tanker, !!tr.is_sale_tanker]);
     }
     await client.query('COMMIT');
     res.json({ id: runId, trips: trips.rows.length, new_combinations: newCombos });
@@ -239,7 +261,11 @@ router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, r
       let   billedKm       = u.billed_km !== undefined ? rN(u.billed_km) : t.billed_km;
       const remarks        = u.remarks !== undefined ? (u.remarks || null) : t.remarks;
       const transportType  = u.transport_type !== undefined ? u.transport_type : t.transport_type;
-      const excluded        = u.excluded !== undefined ? !!u.excluded : t.excluded;
+      // Sale-tanker trips can never be brought back into the payment total —
+      // they are reported separately (Sale Tankers tab) and stay excluded
+      // whatever the client sends.
+      const excluded        = t.is_sale_tanker ? true
+                            : (u.excluded !== undefined ? !!u.excluded : t.excluded);
       if (state && !STATES.includes(state))
         return res.status(400).json({ error: `Invalid state: ${state}` });
       if (u.transport_type !== undefined && !['BMCU/CC to Dairy/CC', 'Point to Point'].includes(u.transport_type))
@@ -491,23 +517,28 @@ async function buildRunWorkbook(runId) {
   const head = (ws, cols) => { const r = ws.addRow(cols); r.font = { bold: true };
     ws.columns.forEach(c => { c.width = 16; }); };
 
+  // Sale-tanker trips are reported on their own sheet — they are not payable
+  // to any transport vendor, so they never appear among the billed trips.
+  const payableTrips = trips.filter(t => !t.is_sale_tanker);
+  const saleTrips    = trips.filter(t => t.is_sale_tanker);
+
   const ws1 = wb.addWorksheet('Trip Wise');
   ws1.addRow([`Tanker Payment Billing — Run #${runId} · ${run.from_date} → ${run.to_date} · Status: ${run.status}`]).font = { bold: true, size: 13 };
   ws1.addRow([]);
   head(ws1, ['Date', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
     'BMCU Count', 'BMCU Details', 'Ack Kgs', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM', 'Estimated KM',
-    'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Sale Tanker', 'Milma', 'Excluded', 'Remarks']);
+    'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Excluded', 'Remarks']);
   ws1.getColumn(9).width = 60;
-  trips.forEach(t => ws1.addRow([t.plan_for_date, t.tanker_number, rN(t.capacity_litres / 1000, 1),
+  payableTrips.forEach(t => ws1.addRow([t.plan_for_date, t.tanker_number, rN(t.capacity_litres / 1000, 1),
     t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id), t.ack_kgs,
     t.state, t.transport_type, t.system_km, t.google_km, t.master_km, t.estimated_km,
     t.billed_km, t.rate_per_km, t.excluded ? 0 : t.amount,
-    t.is_sale_tanker ? 'Yes' : '', t.is_milma ? 'Yes' : '', t.excluded ? 'Yes' : '', t.remarks]));
+    t.excluded ? 'Yes' : '', t.remarks]));
   const totRow = ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '',
-    rN(trips.reduce((s, t) => s + (+t.system_km || 0), 0)),
-    rN(trips.reduce((s, t) => s + (+t.google_km || 0), 0)), '', '',
-    rN(trips.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
-    rN(trips.reduce((s, t) => s + (t.excluded ? 0 : (+t.amount || 0)), 0)), '', '', '', '']);
+    rN(payableTrips.reduce((s, t) => s + (+t.system_km || 0), 0)),
+    rN(payableTrips.reduce((s, t) => s + (+t.google_km || 0), 0)), '', '',
+    rN(payableTrips.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
+    rN(payableTrips.reduce((s, t) => s + (t.excluded ? 0 : (+t.amount || 0)), 0)), '', '']);
   totRow.font = { bold: true };
 
   const ws2 = wb.addWorksheet('Tanker Wise');
@@ -527,6 +558,24 @@ async function buildRunWorkbook(runId) {
     rN(vendors.reduce((s, v) => s + (+v.amount || 0), 0)),
     rN(vendors.reduce((s, v) => s + (+v.toll_amount || 0), 0)),
     rN(vendors.reduce((s, v) => s + (+v.total_payable || 0), 0))]).font = { bold: true };
+
+  // Sale Tankers — informational only: milk sold at the BMCU, no vendor
+  // payment. The same milk continues to be reported in TS/Analytics.
+  const wsS = wb.addWorksheet('Sale Tankers');
+  wsS.addRow(['Sale tanker trips — NOT payable to any transport vendor. '
+    + 'Listed for information only; the milk is reported in TS / Analytics as usual.'])
+    .font = { bold: true, size: 11 };
+  wsS.addRow([]);
+  head(wsS, ['Date', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
+    'BMCU Count', 'BMCU Details', 'Ack Kgs', 'System KM', 'Google KM', 'Remarks']);
+  wsS.getColumn(9).width = 60;
+  saleTrips.forEach(t => wsS.addRow([t.plan_for_date, t.tanker_number, rN(t.capacity_litres / 1000, 1),
+    t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id),
+    t.ack_kgs, t.system_km, t.google_km, t.remarks]));
+  wsS.addRow([`TOTAL — ${saleTrips.length} trips`, '', '', '', '', '', '', '', '',
+    rN(saleTrips.reduce((s, t) => s + (+t.ack_kgs || 0), 0)),
+    rN(saleTrips.reduce((s, t) => s + (+t.system_km || 0), 0)),
+    rN(saleTrips.reduce((s, t) => s + (+t.google_km || 0), 0)), '']).font = { bold: true };
 
   const tollRows = (await query(
     'SELECT tanker_number, amount, remarks, file_name FROM billing_run_tolls WHERE run_id=$1 ORDER BY tanker_number', [runId])).rows;
@@ -648,10 +697,13 @@ async function notifyBiller(runId, subject, bodyHtml) {
 // master are reported back to the biller instead.
 async function publishRunToVendors(runId, { draft = false } = {}) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
+  // Sale-tanker trips are never a transport vendor's business — they carry no
+  // payment and are left out of the vendor sheets entirely.
   const trips = (await query(`
     SELECT t.*, t.plan_for_date::text AS plan_for_date, v.email AS vendor_email
     FROM billing_run_trips t LEFT JOIN vendors v ON v.id = t.vendor_id
-    WHERE t.run_id=$1 ORDER BY t.plan_for_date, t.tanker_number`, [runId])).rows;
+    WHERE t.run_id=$1 AND t.is_sale_tanker = FALSE
+    ORDER BY t.plan_for_date, t.tanker_number`, [runId])).rows;
 
   const tollRows = (await query('SELECT tanker_number, amount FROM billing_run_tolls WHERE run_id=$1', [runId])).rows;
   const tollBy = new Map(tollRows.map(r => [r.tanker_number, parseFloat(r.amount) || 0]));
@@ -685,7 +737,7 @@ async function publishRunToVendors(runId, { draft = false } = {}) {
     v.trips.forEach(t => ws.addRow([t.plan_for_date, t.tanker_number,
       t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.route_name, t.delivery_point,
       t.state, t.transport_type, t.billed_km, t.rate_per_km,
-      t.excluded ? 0 : t.amount, t.excluded ? `EXCLUDED (Sale Tanker) — ${t.remarks || ''}`.trim() : t.remarks]));
+      t.excluded ? 0 : t.amount, t.excluded ? `EXCLUDED — ${t.remarks || ''}`.trim() : t.remarks]));
     ws.addRow(['TRIPS TOTAL', '', '', '', '', '', '',
       rN(v.trips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '', rN(tripTotal), '']).font = { bold: true };
     vendorTolls.forEach(t =>
@@ -701,7 +753,7 @@ async function publishRunToVendors(runId, { draft = false } = {}) {
         html: draft ? `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
           <p>Dear ${esc(v.name)},</p>
           <p>Please review your <b>DRAFT</b> tanker cards for <b>${run.from_date} → ${run.to_date}</b> in the attached sheet
-          (${v.trips.length} trips · draft payable ₹ ${nf(total)}). Rows marked EXCLUDED (Sale Tanker) are shown for your
+          (${v.trips.length} trips · draft payable ₹ ${nf(total)}). Rows marked EXCLUDED are shown for your
           reference only and are not billed.</p>
           <p>Reply to this email or contact the Shreeja billing team with any corrections to distance, state or trip
           details — the biller will update the run before it goes for final approval.</p>
@@ -735,9 +787,24 @@ router.post('/runs/:id/push-vendor', authenticate, authorize(...canBill), async 
     if (!['draft', 'rejected', 'pending_vendor'].includes(run.status))
       return res.status(400).json({ error: 'Run is already submitted or approved' });
 
+    // Nothing payable → nothing for a vendor to verify. Sale-tanker trips are
+    // never sent, so a run made up only of them must not silently "succeed".
+    const payable = (await query(
+      `SELECT COUNT(*)::int AS n FROM billing_run_trips
+       WHERE run_id=$1 AND excluded=FALSE AND is_sale_tanker=FALSE`, [runId])).rows[0].n;
+    if (!payable)
+      return res.status(400).json({ error: 'No payable trips in this run — sale tanker trips carry no vendor payment. Nothing to send for verification.' });
+
     const results = await publishRunToVendors(runId, { draft: true }); // reuses the per-vendor tanker-card mailer
-    await query(`UPDATE billing_runs SET status='pending_vendor', updated_at=NOW() WHERE id=$1`, [runId]);
-    res.json({ ok: true, status: 'pending_vendor', results });
+    const sent   = results.filter(r => r.startsWith('✓')).length;
+    const failed = results.filter(r => r.startsWith('✗'));
+    // Only move the run into vendor verification if at least one vendor was
+    // actually reached — otherwise the biller would be waiting on a mail that
+    // was never sent (typically: no email in the Vendor master).
+    if (sent > 0)
+      await query(`UPDATE billing_runs SET status='pending_vendor', updated_at=NOW() WHERE id=$1`, [runId]);
+    res.json({ ok: sent > 0, status: sent > 0 ? 'pending_vendor' : run.status,
+               sent, failed: failed.length, results });
   } catch (err) {
     console.error('Billing push-vendor error:', err);
     res.status(500).json({ error: 'Failed to push draft cards to vendors' });

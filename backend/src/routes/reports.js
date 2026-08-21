@@ -1240,7 +1240,7 @@ router.get('/bmcu-breakup/excel', authenticate, async (req, res) => {
 // Utilization % = Ack Qty Ltrs / tanker capacity × 100; remark ABOVE/BELOW threshold.
 // ═════════════════════════════════════════════════════════════════════════════
 async function buildDayUtilisation(fromDate, toDate, threshold) {
-  // LEFT JOIN acknowledgements — trips sold directly at the BMCU (e.g. Milma
+  // LEFT JOIN acknowledgements — trips sold directly at the BMCU (sale
   // tankers) never get a delivery-point acknowledgement, so an INNER JOIN
   // dropped them from utilisation entirely. Dispatch quantity (already
   // collected, tanker-loaded) stands in whenever no ack exists, mirroring
