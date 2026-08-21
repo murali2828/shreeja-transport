@@ -134,13 +134,22 @@ export default function TankerBilling() {
     onError: e => toast.error(e.response?.data?.error || e.message),
   });
 
-  const downloadReport = () =>
-    api.get(`/billing/runs/${openRunId}/report`, { responseType: 'blob' }).then(r => {
+  // Trip report for one run — works at every status (draft, awaiting vendor
+  // verification, under approval, approved), so a run in the payment process
+  // can be reviewed at any time. Sheets: Trip Wise (payable trips only),
+  // Tanker/Vendor/Date Wise, Sale Tankers (not payable), Toll Challans.
+  const downloadRunReport = (runId, meta) =>
+    api.get(`/billing/runs/${runId}/report`, { responseType: 'blob' }).then(r => {
       const url = URL.createObjectURL(r.data);
       const a = document.createElement('a');
-      a.href = url; a.download = `tanker_billing_run_${openRunId}.xlsx`; a.click();
+      a.href = url;
+      a.download = meta?.from_date
+        ? `tanker_billing_run_${runId}_${meta.from_date}_${meta.to_date}.xlsx`
+        : `tanker_billing_run_${runId}.xlsx`;
+      a.click();
       URL.revokeObjectURL(url);
-    });
+    }).catch(e => toast.error(e.response?.data?.error || e.message));
+  const downloadReport = () => downloadRunReport(openRunId, run);
 
   const setEdit = (tripId, field, val) =>
     setEdits(prev => ({ ...prev, [tripId]: { ...prev[tripId], [field]: val } }));
@@ -216,7 +225,14 @@ export default function TankerBilling() {
                   <td className="px-3 py-2 text-right font-semibold">{nf(r.total_amount)}</td>
                   <td className="px-3 py-2"><span className="font-semibold" style={{ color }}>{label}</span></td>
                   <td className="px-3 py-2">{r.created_by_name || '—'}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {/* Report of this run's trips — available at ANY status, so a
+                        run still under vendor verification or approval can be
+                        reviewed without opening it. */}
+                    <button className="p-1 text-gray-400 hover:text-[#005ba3]" title="Download this run's trip report (Excel)"
+                            onClick={e => { e.stopPropagation(); downloadRunReport(r.id, r); }}>
+                      <Download size={13}/>
+                    </button>
                     {canEdit && ['draft', 'rejected', 'pending_vendor'].includes(r.status) && (
                       <button className="p-1 text-gray-400 hover:text-red-600" title="Delete run"
                               onClick={e => { e.stopPropagation(); window.confirm('Delete this run?') && delMut.mutate(r.id); }}>
@@ -329,6 +345,43 @@ export default function TankerBilling() {
           ))}
         </div>
       )}
+
+      {/* What is actually under payment in this run — visible at every status,
+          so a run awaiting vendor verification or approval can be reviewed. */}
+      <div className="card p-3 flex flex-wrap gap-6 text-xs">
+        <div>
+          <div className="text-gray-500">Under payment process</div>
+          <div className="font-bold text-sm text-[#005ba3]">
+            {payableTrips.filter(t => !val(t, 'excluded')).length} trips · ₹ {nf(
+              payableTrips.reduce((s, t) => s + (val(t, 'excluded') ? 0 : (+t.amount || 0)), 0))}
+          </div>
+        </div>
+        <div>
+          <div className="text-gray-500">Billed KM</div>
+          <div className="font-bold text-sm">{nf(
+            payableTrips.reduce((s, t) => s + (val(t, 'excluded') ? 0 : (+(edits[t.id]?.billed_km ?? t.billed_km) || 0)), 0))}</div>
+        </div>
+        <div>
+          <div className="text-gray-500">Excluded by biller</div>
+          <div className="font-bold text-sm">{payableTrips.filter(t => val(t, 'excluded')).length} trips</div>
+        </div>
+        <div>
+          <div className="text-gray-500">Sale tankers (not payable)</div>
+          <div className="font-bold text-sm text-violet-700">
+            {saleTrips.length} trips · {nf(saleTrips.reduce((s, t) => s + (+t.ack_kgs || 0), 0), 0)} kgs
+          </div>
+        </div>
+        {missing > 0 && (
+          <div>
+            <div className="text-gray-500">Needs attention</div>
+            <div className="font-bold text-sm text-red-600">{missing} trips missing state / rate</div>
+          </div>
+        )}
+        <div className="flex-1" />
+        <button className="btn-secondary text-xs flex items-center gap-1.5 self-center" onClick={downloadReport}>
+          <Download size={13}/> Download trip report
+        </button>
+      </div>
 
       {/* tabs */}
       <div className="flex gap-2 items-center flex-wrap">
