@@ -264,11 +264,11 @@ export default function TankerBilling() {
         <button className="btn-secondary text-xs flex items-center gap-1.5" onClick={downloadReport}>
           <Download size={13}/> Report
         </button>
-        {editable && ['draft', 'rejected'].includes(run.status) && (
+        {editable && ['draft', 'rejected', 'pending_vendor'].includes(run.status) && (
           <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={pushVendorMut.isPending}
-                  title="Email draft tanker cards to each vendor for review before final submission"
+                  title="Email draft tanker cards to each vendor for review before final submission — safe to re-send after editing more trips"
                   onClick={() => window.confirm('Email DRAFT tanker cards to all vendors on this run for verification?') && pushVendorMut.mutate()}>
-            <Send size={13}/> {pushVendorMut.isPending ? 'Sending…' : 'Push to Vendors'}
+            <Send size={13}/> {pushVendorMut.isPending ? 'Sending…' : (run.status === 'pending_vendor' ? 'Push to Vendors Again' : 'Push to Vendors')}
           </button>
         )}
         {editable && (<>
