@@ -676,6 +676,20 @@ async function publishRunToVendors(runId, { draft = false } = {}) {
   const tollRows = (await query('SELECT tanker_number, amount FROM billing_run_tolls WHERE run_id=$1', [runId])).rows;
   const tollBy = new Map(tollRows.map(r => [r.tanker_number, parseFloat(r.amount) || 0]));
 
+  // BMCU pickup sequence per trip (code + name, in order) for the tanker card.
+  const bmcuByExec = {};
+  if (trips.length) {
+    const bm = await query(`
+      SELECT teb.execution_id, teb.seq_no, b.bmcu_code, b.bmcu_name
+      FROM trip_execution_bmcus teb JOIN bmcus b ON b.id = teb.bmcu_id
+      WHERE teb.execution_id = ANY($1) AND teb.is_deleted = FALSE
+      ORDER BY teb.execution_id, teb.seq_no`,
+      [trips.map(t => t.execution_id)]);
+    for (const r of bm.rows)
+      (bmcuByExec[r.execution_id] ||= []).push(`${r.bmcu_code} - ${r.bmcu_name}`);
+  }
+  const bmcuDetails = execId => (bmcuByExec[execId] || []).join(' → ') || '—';
+
   // Group by email (not vendor_id) so distinct vendor-master rows that
   // share one mailbox (e.g. duplicate entries for the same transporter)
   // still receive a single cumulative mail covering all their tankers.
@@ -699,21 +713,44 @@ async function publishRunToVendors(runId, { draft = false } = {}) {
     }
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Trips');
-    ws.addRow([`${v.name} — Tanker Payment ${run.from_date} → ${run.to_date} (Run #${runId}, ${draft ? 'DRAFT — for verification' : 'APPROVED'})`]).font = { bold: true, size: 13 };
+    const NCOLS = 12;
+    const titleRow = ws.addRow([`${v.name} — Tanker Payment ${run.from_date} → ${run.to_date} (Run #${runId}, ${draft ? 'DRAFT — for verification' : 'APPROVED'})`]);
+    titleRow.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
+    ws.mergeCells(titleRow.number, 1, titleRow.number, NCOLS);
+    titleRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } }; });
     ws.addRow([]);
-    const head = ws.addRow(['Date', 'Tanker', 'Capacity (KL)', 'Route', 'Delivery Point', 'State',
+    const head = ws.addRow(['Date', 'Tanker', 'Capacity (KL)', 'Route', 'Delivery Point', 'BMCU Sequence', 'State',
       'Transport Type', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Remarks']);
-    head.font = { bold: true };
+    head.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    head.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF64748B' } }; });
     ws.columns.forEach(c => { c.width = 16; });
-    v.trips.forEach(t => ws.addRow([t.plan_for_date, t.tanker_number,
-      t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.route_name, t.delivery_point,
-      t.state, t.transport_type, t.billed_km, t.rate_per_km,
-      t.excluded ? 0 : t.amount, t.excluded ? `EXCLUDED (Sale Tanker) — ${t.remarks || ''}`.trim() : t.remarks]));
-    ws.addRow(['TRIPS TOTAL', '', '', '', '', '', '',
+    ws.getColumn(5).width = 20;
+    ws.getColumn(6).width = 40;
+    ws.getColumn(12).width = 24;
+
+    // Tanker-wise, then date-wise, with a subtotal row per tanker.
+    const byTanker = new Map();
+    for (const t of v.trips) {
+      if (!byTanker.has(t.tanker_number)) byTanker.set(t.tanker_number, []);
+      byTanker.get(t.tanker_number).push(t);
+    }
+    for (const [tn, tTrips] of [...byTanker.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      tTrips.sort((a, b) => (a.plan_for_date < b.plan_for_date ? -1 : a.plan_for_date > b.plan_for_date ? 1 : 0));
+      tTrips.forEach(t => ws.addRow([t.plan_for_date, t.tanker_number,
+        t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.route_name, t.delivery_point,
+        bmcuDetails(t.execution_id), t.state, t.transport_type, t.billed_km, t.rate_per_km,
+        t.excluded ? 0 : t.amount, t.excluded ? `EXCLUDED (Sale Tanker) — ${t.remarks || ''}`.trim() : t.remarks]));
+      const tankerSubtotal = tTrips.reduce((s, t) => s + (t.excluded ? 0 : (parseFloat(t.amount) || 0)), 0);
+      const subRow = ws.addRow([`${tn} SUBTOTAL`, '', '', '', '', '', '', '',
+        rN(tTrips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '', rN(tankerSubtotal), '']);
+      subRow.font = { bold: true };
+      subRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } }; });
+    }
+    ws.addRow(['TRIPS TOTAL', '', '', '', '', '', '', '',
       rN(v.trips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '', rN(tripTotal), '']).font = { bold: true };
     vendorTolls.forEach(t =>
-      ws.addRow(['TOLL CHALLAN', t.tanker, '', '', '', '', '', '', '', rN(t.amount), '']));
-    ws.addRow(['TOTAL PAYABLE', '', '', '', '', '', '', '', '', rN(total), '']).font = { bold: true };
+      ws.addRow(['TOLL CHALLAN', t.tanker, '', '', '', '', '', '', '', '', rN(t.amount), '']));
+    ws.addRow(['TOTAL PAYABLE', '', '', '', '', '', '', '', '', '', rN(total), '']).font = { bold: true };
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
 
     try {
