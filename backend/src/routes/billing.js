@@ -676,9 +676,12 @@ async function publishRunToVendors(runId, { draft = false } = {}) {
   const tollRows = (await query('SELECT tanker_number, amount FROM billing_run_tolls WHERE run_id=$1', [runId])).rows;
   const tollBy = new Map(tollRows.map(r => [r.tanker_number, parseFloat(r.amount) || 0]));
 
+  // Group by email (not vendor_id) so distinct vendor-master rows that
+  // share one mailbox (e.g. duplicate entries for the same transporter)
+  // still receive a single cumulative mail covering all their tankers.
   const byVendor = new Map();
   for (const t of trips) {
-    const key = t.vendor_id || 'none';
+    const key = t.vendor_email ? t.vendor_email.trim().toLowerCase() : (t.vendor_id ? `id:${t.vendor_id}` : 'none');
     if (!byVendor.has(key)) byVendor.set(key, { name: t.vendor_name || '— No vendor mapped —', email: t.vendor_email, trips: [] });
     byVendor.get(key).trips.push(t);
   }
@@ -690,7 +693,7 @@ async function publishRunToVendors(runId, { draft = false } = {}) {
     const vendorTolls = vendorTankers.filter(tn => tollBy.has(tn)).map(tn => ({ tanker: tn, amount: tollBy.get(tn) }));
     const tollTotal = vendorTolls.reduce((s, t) => s + t.amount, 0);
     const total = tripTotal + tollTotal;
-    if (key === 'none' || !v.email) {
+    if (!v.email) {
       results.push(`✗ ${v.name} — NOT sent (no ${key === 'none' ? 'vendor mapped' : 'email in Vendor master'}); ${v.trips.length} trips, ₹ ${nf(total)}`);
       continue;
     }
