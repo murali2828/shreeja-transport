@@ -123,12 +123,13 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
                (SELECT SUM(ta.qty_kgs) FROM trip_acknowledgements ta WHERE ta.execution_id = te.id),
                (SELECT SUM(teb.qty_kgs) FROM trip_execution_bmcus teb WHERE teb.execution_id = te.id AND teb.is_deleted = FALSE)
              ) AS ack_kgs,
-             tp.is_sale_tanker,
-             -- Milma: milk sold directly at the BMCU, never acknowledged at a
-             -- delivery point. Still shown here (dispatch qty stands in for
-             -- ack) so the biller can check it out of vendor billing, but
-             -- excluded by default since it isn't our regular movement.
-             (dp.name ILIKE 'Milma%') AS is_milma
+             -- Sale Tanker: identified by the TANKER itself (a placeholder
+             -- vehicle named e.g. "SALE TANKER" used when milk is sold
+             -- directly at the BMCU, never acknowledged at a delivery
+             -- point) OR by the planner's manual flag on the trip plan.
+             -- Milk still counts in TS/Analytics (read from executions/
+             -- acknowledgements directly); only vendor billing excludes it.
+             (tp.is_sale_tanker OR t.tanker_number ILIKE 'SALE%') AS is_sale_tanker
       FROM trip_plans tp
       JOIN trip_executions te ON te.trip_plan_id = tp.id
       LEFT JOIN tankers t          ON t.id  = tp.tanker_id
@@ -139,7 +140,7 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
       WHERE tp.plan_for_date BETWEEN ($1::date - INTERVAL '31 days') AND $2
         AND tp.status NOT IN ('cancelled','deleted')
         AND (EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
-             OR dp.name ILIKE 'Milma%')
+             OR t.tanker_number ILIKE 'SALE%')
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
       ORDER BY tp.plan_for_date, t.tanker_number`, [from_date, to_date]);
 
@@ -160,14 +161,14 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
            vendor_id, vendor_name, route_name, start_point, delivery_point,
            bmcu_count, ack_litres, ack_kgs, transport_type,
            system_km, google_km, master_km, estimated_km, billed_km, legs,
-           is_sale_tanker, is_milma, excluded)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+           is_sale_tanker, excluded)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
         [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
          tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
          tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), transportType,
          rN(dist.total_km), sumBy('google'), sumBy('master'), sumBy('estimated'),
          rN(dist.total_km), JSON.stringify(dist.legs),
-         !!tr.is_sale_tanker, !!tr.is_milma, !!tr.is_milma]);
+         !!tr.is_sale_tanker, !!tr.is_sale_tanker]);
     }
     await client.query('COMMIT');
     res.json({ id: runId, trips: trips.rows.length, new_combinations: newCombos });
@@ -491,24 +492,33 @@ async function buildRunWorkbook(runId) {
   const head = (ws, cols) => { const r = ws.addRow(cols); r.font = { bold: true };
     ws.columns.forEach(c => { c.width = 16; }); };
 
-  const ws1 = wb.addWorksheet('Trip Wise');
-  ws1.addRow([`Tanker Payment Billing — Run #${runId} · ${run.from_date} → ${run.to_date} · Status: ${run.status}`]).font = { bold: true, size: 13 };
-  ws1.addRow([]);
-  head(ws1, ['Date', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
-    'BMCU Count', 'BMCU Details', 'Ack Kgs', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM', 'Estimated KM',
-    'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Sale Tanker', 'Milma', 'Excluded', 'Remarks']);
-  ws1.getColumn(9).width = 60;
-  trips.forEach(t => ws1.addRow([t.plan_for_date, t.tanker_number, rN(t.capacity_litres / 1000, 1),
-    t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id), t.ack_kgs,
-    t.state, t.transport_type, t.system_km, t.google_km, t.master_km, t.estimated_km,
-    t.billed_km, t.rate_per_km, t.excluded ? 0 : t.amount,
-    t.is_sale_tanker ? 'Yes' : '', t.is_milma ? 'Yes' : '', t.excluded ? 'Yes' : '', t.remarks]));
-  const totRow = ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '',
-    rN(trips.reduce((s, t) => s + (+t.system_km || 0), 0)),
-    rN(trips.reduce((s, t) => s + (+t.google_km || 0), 0)), '', '',
-    rN(trips.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
-    rN(trips.reduce((s, t) => s + (t.excluded ? 0 : (+t.amount || 0)), 0)), '', '', '', '']);
-  totRow.font = { bold: true };
+  // Trip Wise = trips actually under vendor payment (Sale Tanker trips are
+  // shown separately on their own sheet, matching the on-screen tabs).
+  const paymentTrips = trips.filter(t => !t.is_sale_tanker);
+  const saleTrips     = trips.filter(t => t.is_sale_tanker);
+
+  const tripCols = (rows, sheetName) => {
+    const ws = wb.addWorksheet(sheetName);
+    ws.addRow([`Tanker Payment Billing — Run #${runId} · ${run.from_date} → ${run.to_date} · Status: ${run.status}`]).font = { bold: true, size: 13 };
+    ws.addRow([]);
+    head(ws, ['Date', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
+      'BMCU Count', 'BMCU Details', 'Ack Kgs', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM', 'Estimated KM',
+      'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Excluded', 'Remarks']);
+    ws.getColumn(9).width = 60;
+    rows.forEach(t => ws.addRow([t.plan_for_date, t.tanker_number, rN(t.capacity_litres / 1000, 1),
+      t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id), t.ack_kgs,
+      t.state, t.transport_type, t.system_km, t.google_km, t.master_km, t.estimated_km,
+      t.billed_km, t.rate_per_km, t.excluded ? 0 : t.amount, t.excluded ? 'Yes' : '', t.remarks]));
+    const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '',
+      rN(rows.reduce((s, t) => s + (+t.system_km || 0), 0)),
+      rN(rows.reduce((s, t) => s + (+t.google_km || 0), 0)), '', '',
+      rN(rows.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
+      rN(rows.reduce((s, t) => s + (t.excluded ? 0 : (+t.amount || 0)), 0)), '', '']);
+    totRow.font = { bold: true };
+    return ws;
+  };
+  const ws1 = tripCols(paymentTrips, 'Trip Wise');
+  if (saleTrips.length) tripCols(saleTrips, 'Sale Tankers');
 
   const ws2 = wb.addWorksheet('Tanker Wise');
   head(ws2, ['Tanker', 'Vendor', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)']);
@@ -648,10 +658,15 @@ async function notifyBiller(runId, subject, bodyHtml) {
 // master are reported back to the biller instead.
 async function publishRunToVendors(runId, { draft = false } = {}) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
-  const trips = (await query(`
+  const allTrips = (await query(`
     SELECT t.*, t.plan_for_date::text AS plan_for_date, v.email AS vendor_email
     FROM billing_run_trips t LEFT JOIN vendors v ON v.id = t.vendor_id
     WHERE t.run_id=$1 ORDER BY t.plan_for_date, t.tanker_number`, [runId])).rows;
+  // Sale Tanker / excluded trips never go to vendors for verification or
+  // payment — they live on their own tab/sheet, not in vendor billing.
+  const trips = allTrips.filter(t => !t.excluded);
+  if (!trips.length)
+    return [`No billable trips in this run — all ${allTrips.length} trip(s) are Sale Tanker / excluded. Nothing to push to vendors.`];
 
   const tollRows = (await query('SELECT tanker_number, amount FROM billing_run_tolls WHERE run_id=$1', [runId])).rows;
   const tollBy = new Map(tollRows.map(r => [r.tanker_number, parseFloat(r.amount) || 0]));
@@ -701,8 +716,7 @@ async function publishRunToVendors(runId, { draft = false } = {}) {
         html: draft ? `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
           <p>Dear ${esc(v.name)},</p>
           <p>Please review your <b>DRAFT</b> tanker cards for <b>${run.from_date} → ${run.to_date}</b> in the attached sheet
-          (${v.trips.length} trips · draft payable ₹ ${nf(total)}). Rows marked EXCLUDED (Sale Tanker) are shown for your
-          reference only and are not billed.</p>
+          (${v.trips.length} trips · draft payable ₹ ${nf(total)}).</p>
           <p>Reply to this email or contact the Shreeja billing team with any corrections to distance, state or trip
           details — the biller will update the run before it goes for final approval.</p>
           <p style="color:#9ca3af;font-size:11px;">Shreeja TMS — automated mail; do not reply to book corrections by phone if preferred.</p></div>`

@@ -113,7 +113,12 @@ export default function TankerBilling() {
   const pushVendorMut = useMutation({
     mutationFn: () => api.post(`/billing/runs/${openRunId}/push-vendor`),
     onSuccess: r => {
-      toast.success('Draft tanker cards emailed to vendors for verification');
+      const results = r.data.results || [];
+      const sent = results.filter(x => x.startsWith('✓')).length;
+      const failed = results.filter(x => x.startsWith('✗'));
+      if (sent > 0) toast.success(`Draft tanker cards emailed to ${sent} vendor(s) for verification`);
+      if (!sent && !failed.length) toast('Nothing to push — no billable trips in this run.', { icon: 'ℹ️', duration: 8000 });
+      failed.forEach(msg => toast.error(msg, { duration: 12000 }));
       qc.invalidateQueries(['billing-run', openRunId]);
       qc.invalidateQueries(['billing-runs']);
     },
@@ -228,10 +233,11 @@ export default function TankerBilling() {
   // ── run detail ─────────────────────────────────────────────────────────────
   const [label, color] = STATUS_LABEL[run?.status] || ['…', '#666'];
   const trips = run?.trips || [];
-  const filteredTrips = trips.filter(t =>
+  const saleTrips = trips.filter(t => t.is_sale_tanker);
+  const filteredTrips = trips.filter(t => !t.is_sale_tanker &&
     (!searchRoute || (t.route_name || '').toLowerCase().includes(searchRoute.toLowerCase())) &&
     (!searchTanker || (t.tanker_number || '').toLowerCase().includes(searchTanker.toLowerCase())));
-  const missing = trips.filter(t => !val(t, 'state') || t.rate_per_km == null).length;
+  const missing = trips.filter(t => !t.is_sale_tanker && (!val(t, 'state') || t.rate_per_km == null)).length;
   const newComboCount = trips.reduce((s, t) => {
     const legs = Array.isArray(t.legs) ? t.legs : (t.legs ? JSON.parse(t.legs) : []);
     return s + legs.filter(l => l.is_new).length;
@@ -316,7 +322,7 @@ export default function TankerBilling() {
 
       {/* tabs */}
       <div className="flex gap-2 items-center flex-wrap">
-        {[['trips', 'Trip Wise'], ['dates', 'Date Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise'], ['tolls', 'Toll Challans']].map(([k, l]) => (
+        {[['trips', 'Trip Wise'], ['dates', 'Date Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise'], ['saleTankers', 'Sale Tankers'], ['tolls', 'Toll Challans']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold"
             style={tab === k ? { background: '#cc785c', color: '#fff' } : { background: '#fff', color: '#57534e' }}>
@@ -378,11 +384,47 @@ export default function TankerBilling() {
         </div>
       )}
 
+      {tab === 'saleTankers' && (
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto max-h-[62vh]">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
+                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                     'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
+                     .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {saleTrips.map(t => (
+                  <FragmentRow key={t.id} t={t} editable={editable} expanded={!!expanded[t.id]}
+                    carried={run?.from_date && t.plan_for_date < run.from_date}
+                    onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
+                    val={val} setEdit={setEdit}
+                    legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}
+                    ratePreview={ratePreviews[t.id]} previewRate={previewRate} />
+                ))}
+                {saleTrips.length === 0 && (
+                  <tr><td colSpan={18} className="px-3 py-4 text-center text-gray-400">No Sale Tanker trips in this run.</td></tr>
+                )}
+                <tr className="bg-blue-100 font-bold">
+                  <td className="px-2 py-2" colSpan={12}>TOTAL — {saleTrips.length} Sale Tanker trip(s), not billed to vendors</td>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
+                  <td/>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.amount || 0), 0))}</td>
+                  <td/>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {tab === 'tolls' && (
         <TollPanel runId={openRunId} tolls={run?.tolls || []} tankers={summary?.tankers || []} editable={editable}/>
       )}
 
-      {tab !== 'trips' && tab !== 'tolls' && (() => {
+      {tab !== 'trips' && tab !== 'tolls' && tab !== 'saleTankers' && (() => {
         const withToll = tab === 'tankers' || tab === 'vendors';
         const rows = (tab === 'tankers' ? summary?.tankers : tab === 'dates' ? summary?.dates : summary?.vendors) || [];
         return (
@@ -600,8 +642,7 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
       </td>
       <td className="px-2 py-1.5 font-semibold text-[#005ba3] whitespace-nowrap">
         {t.tanker_number}
-        {t.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px]" title="Sale Tanker trip — planning marked this trip for sale, not vendor purchase">Sale</span>}
-        {t.is_milma && <span className="ml-1 px-1 rounded bg-teal-600 text-white text-[10px]" title="Milma — milk sold directly at the BMCU, no delivery-point acknowledgement. Auto-excluded from vendor billing by default; milk still counts in TS/Analytics reports.">Milma</span>}
+        {t.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px]" title="Sale Tanker — milk sold directly at the BMCU, not billed to any vendor. Milk still counts in TS/Analytics reports.">Sale</span>}
       </td>
       <td className="px-2 py-1.5 text-right">{t.capacity_litres ? (t.capacity_litres / 1000).toFixed(1) : '—'}</td>
       <td className="px-2 py-1.5">{t.vendor_name || <span className="text-red-600">no vendor</span>}</td>
