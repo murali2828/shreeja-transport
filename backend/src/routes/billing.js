@@ -154,6 +154,11 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
       const dist = await computeExecutionDistance(client, tr.execution_id, req.user.id, masterCache);
       newCombos += dist.legs.filter(l => l.is_new).length;
       const sumBy = src => rN(dist.legs.filter(l => l.source === src).reduce((s, l) => s + l.km, 0));
+      // Google KM is the reference distance for the whole trip regardless of
+      // which source (master/google/estimated) the BILLED km came from — a
+      // leg on a manually-entered Master distance still carries its own
+      // google_km reference once fetched.
+      const googleRefKm = rN(dist.legs.reduce((s, l) => s + (l.google_km || 0), 0));
       const transportType = tr.bmcu_count > 1 ? 'BMCU/CC to Dairy/CC' : 'Point to Point';
       await client.query(`
         INSERT INTO billing_run_trips
@@ -166,7 +171,7 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
         [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
          tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
          tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), transportType,
-         rN(dist.total_km), sumBy('google'), sumBy('master'), sumBy('estimated'),
+         rN(dist.total_km), googleRefKm, sumBy('master'), sumBy('estimated'),
          rN(dist.total_km), JSON.stringify(dist.legs),
          !!tr.is_sale_tanker, !!tr.is_sale_tanker]);
     }

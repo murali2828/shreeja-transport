@@ -7,7 +7,7 @@
 //     recalc totals and distance — the single write path for execution data.
 
 const { haversineKm, ROAD_FACTOR } = require('../utils/geo');
-const { getMasterDistanceKm, upsertMasterDistanceKm, normalisePair } = require('./distanceLookup');
+const { getMasterDistanceKm, upsertMasterDistanceKm, upsertGoogleRefOnly, normalisePair } = require('./distanceLookup');
 const { googleLegKm } = require('./roadDistance');
 
 const KG_FACTOR = 1.0285;
@@ -66,6 +66,21 @@ async function computeExecutionDistance(client, execId, userId, masterCache) {
     if (master != null) {
       km = master.km; source = master.fromGoogle ? 'google' : 'master';
       if (master.fromGoogle) googleKm = master.km;
+      else if (master.googleKm != null) googleKm = master.googleKm;
+      // Master has a manually-entered distance but no Google reference yet —
+      // fetch one for comparison (billing's Google KM column) without
+      // touching the billed distance_km itself.
+      else if (a.lat != null && a.lng != null && z.lat != null && z.lng != null) {
+        const g = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
+        if (g != null) {
+          googleKm = g;
+          await upsertGoogleRefOnly(client, a.type, a.id, z.type, z.id, g);
+          if (masterCache) {
+            const p = normalisePair(a.type, parseInt(a.id), z.type, parseInt(z.id));
+            masterCache.set(`${p.fromType}:${p.fromId}|${p.toType}:${p.toId}`, { ...master, googleKm: g });
+          }
+        }
+      }
     } else if (a.lat != null && a.lng != null && z.lat != null && z.lng != null) {
       isNew = true; // pair was NOT in the Distance Master — new combination
       const g = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
