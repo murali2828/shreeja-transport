@@ -881,15 +881,12 @@ async function decide(token, decision, remarks) {
       return { ok: true, message: `Level ${ap.level} approved. The request has been forwarded to the Level ${ap.level + 1} approver.`, run_id: ap.run_id };
     }
     await query(`UPDATE billing_runs SET status='approved', approved_at=NOW(), updated_at=NOW() WHERE id=$1`, [ap.run_id]);
-    // Transporter publishing: each vendor gets their own trip sheet by email.
-    let pubResults = [];
-    try { pubResults = await publishRunToVendors(ap.run_id); }
-    catch (e) { pubResults = [`✗ Vendor publishing failed: ${e.message}`]; }
+    // Final approval does NOT email vendors — the Push-to-Vendors step earlier
+    // in the workflow (draft verification) already covers that; payment is
+    // made from the approved report in the portal, not by a vendor mailer.
     await notifyBiller(ap.run_id, `Billing Run #${ap.run_id} FULLY APPROVED`,
-      `<p style="font-family:sans-serif">Billing run #${ap.run_id} has received final approval. The finance team can make payments per the approved report in the portal (Billing → Run #${ap.run_id}).</p>
-       <p style="font-family:sans-serif;font-weight:700;">Transporter publishing:</p>
-       <ul style="font-family:sans-serif;font-size:13px;">${pubResults.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`);
-    return { ok: true, message: 'Final approval recorded. The billing run is fully APPROVED; vendor trip sheets have been emailed to transporters on record.', run_id: ap.run_id };
+      `<p style="font-family:sans-serif">Billing run #${ap.run_id} has received final approval. The finance team can make payments per the approved report in the portal (Billing → Run #${ap.run_id}).</p>`);
+    return { ok: true, message: 'Final approval recorded. The billing run is fully APPROVED.', run_id: ap.run_id };
   }
 
   // reject
