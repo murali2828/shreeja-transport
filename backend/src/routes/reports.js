@@ -735,8 +735,10 @@ async function buildTsWorkbookFull(reportDate, basis = 'plan') {
   }
   await addMilkShiftingSheet(wb, days);
   addConsolidatedSheet(wb, days, rowsByDay);
+  // The standalone 'BMCU breakup' sheet is no longer added here — each day's
+  // BMCU breakup is already appended directly below that day's TS block
+  // above, so a separate sheet was pure duplication.
   const breakup = breakupByDay[reportDate] || await buildBmcuBreakup(reportDate);
-  addBmcuBreakupSheet(wb, breakup);
   // Open on the report date's day sheet (e.g. '03.08' when run for 03.08.2026).
   wb.views = [{ x: 0, y: 0, width: 20000, height: 20000,
     firstSheet: 0, activeTab: days.indexOf(reportDate), visibility: 'visible' }];
