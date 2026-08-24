@@ -58,6 +58,20 @@ export default function TankerBilling() {
     queryFn: () => api.get(`/billing/runs/${openRunId}/summary`).then(r => r.data),
     enabled: !!openRunId,
   });
+  const { data: vendorList } = useQuery({
+    queryKey: ['vendors'],
+    queryFn: () => api.get('/vendors').then(r => r.data),
+  });
+
+  const assignVendorMut = useMutation({
+    mutationFn: ({ tanker_number, vendor_id }) => api.post(`/billing/runs/${openRunId}/assign-vendor`, { tanker_number, vendor_id }),
+    onSuccess: (r, vars) => {
+      toast.success(`${vars.tanker_number} → ${r.data.vendor_name} (${r.data.trips_updated} trip(s) updated)`);
+      qc.invalidateQueries(['billing-run', openRunId]);
+      qc.invalidateQueries(['billing-summary']);
+    },
+    onError: e => toast.error(e.response?.data?.error || e.message),
+  });
 
   const createMut = useMutation({
     mutationFn: () => {
@@ -238,6 +252,7 @@ export default function TankerBilling() {
     (!searchRoute || (t.route_name || '').toLowerCase().includes(searchRoute.toLowerCase())) &&
     (!searchTanker || (t.tanker_number || '').toLowerCase().includes(searchTanker.toLowerCase())));
   const missing = trips.filter(t => !t.is_sale_tanker && (!val(t, 'state') || t.rate_per_km == null)).length;
+  const unassignedTankers = [...new Set(trips.filter(t => !t.is_sale_tanker && !val(t, 'excluded') && !t.vendor_id).map(t => t.tanker_number))];
   const newComboCount = trips.reduce((s, t) => {
     const legs = Array.isArray(t.legs) ? t.legs : (t.legs ? JSON.parse(t.legs) : []);
     return s + legs.filter(l => l.is_new).length;
@@ -283,9 +298,12 @@ export default function TankerBilling() {
             {saveMut.isPending ? 'Saving…' : `Save (${Object.keys(edits).length})`}
           </button>
           <button className="btn-primary text-xs flex items-center gap-1.5" disabled={submitMut.isPending}
-                  title={missing ? `${missing} trip(s) missing state/rate` : 'Send to Level 1 approver'}
+                  title={unassignedTankers.length ? `No vendor mapped for: ${unassignedTankers.join(', ')} — assign on the Vendor Wise tab`
+                         : missing ? `${missing} trip(s) missing state/rate` : 'Send to Level 1 approver'}
                   onClick={() => {
                     if (Object.keys(edits).length) return toast.error('Save your changes first');
+                    if (unassignedTankers.length)
+                      return toast.error(`No vendor mapped for: ${unassignedTankers.join(', ')} — assign a vendor on the Vendor Wise tab first`, { duration: 8000 });
                     window.confirm(`Submit ₹ ${nf(run?.total_amount)} for approval? Email goes to Mahesh K (L1).`) && submitMut.mutate();
                   }}>
             <Send size={13}/> Submit for Approval
@@ -343,6 +361,11 @@ export default function TankerBilling() {
           )}
         </>)}
         {missing > 0 && editable && <span className="text-xs text-white/90 self-center">⚠ {missing} trip(s) missing state / rate</span>}
+        {unassignedTankers.length > 0 && editable &&
+          <span className="text-xs text-white font-semibold self-center bg-red-600/80 px-2 py-1 rounded"
+                title={unassignedTankers.join(', ')}>
+            ⚠ {unassignedTankers.length} tanker(s) with no vendor mapped — payment cannot run for {unassignedTankers.length > 3 ? `${unassignedTankers.slice(0,3).join(', ')}…` : unassignedTankers.join(', ')} (fix on Vendor Wise tab)
+          </span>}
       </div>
 
       {tab === 'trips' && (
@@ -422,6 +445,19 @@ export default function TankerBilling() {
 
       {tab === 'tolls' && (
         <TollPanel runId={openRunId} tolls={run?.tolls || []} tankers={summary?.tankers || []} editable={editable}/>
+      )}
+
+      {tab === 'vendors' && unassignedTankers.length > 0 && editable && (
+        <div className="card p-3 space-y-2" style={{ background: '#fef2f2', border: '1px solid #dc2626' }}>
+          <div className="text-xs font-bold" style={{ color: '#991b1b' }}>
+            ⚠ {unassignedTankers.length} tanker(s) have no vendor mapped — payment cannot run for these until a vendor is assigned.
+          </div>
+          {unassignedTankers.map(tn => (
+            <VendorAssignRow key={tn} tankerNumber={tn} vendorList={vendorList || []}
+              onAssign={vendor_id => assignVendorMut.mutate({ tanker_number: tn, vendor_id })}
+              pending={assignVendorMut.isPending}/>
+          ))}
+        </div>
       )}
 
       {tab !== 'trips' && tab !== 'tolls' && tab !== 'saleTankers' && (() => {
@@ -608,6 +644,38 @@ function TollPanel({ runId, tolls, tankers, editable }) {
           {!tankers.length && <tr><td colSpan={6} className="px-3 py-4 text-gray-400">No tankers in this run.</td></tr>}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Inline searchable vendor picker for a tanker with no vendor mapped —
+// shown on the Vendor Wise tab so the biller can fix it without leaving
+// the billing screen. Searches vendor name, code and email.
+function VendorAssignRow({ tankerNumber, vendorList, onAssign, pending }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const matches = q.trim()
+    ? vendorList.filter(v => [v.vendor_name, v.vendor_code, v.email].some(f => (f || '').toLowerCase().includes(q.trim().toLowerCase()))).slice(0, 8)
+    : vendorList.slice(0, 8);
+  return (
+    <div className="flex items-center gap-2 relative">
+      <span className="font-semibold text-[#005ba3] text-xs w-32">{tankerNumber}</span>
+      <input type="text" className="input text-xs py-1 px-2 w-72" placeholder="Search vendor by name, code or email…"
+             value={q} onFocus={() => setOpen(true)}
+             onChange={e => { setQ(e.target.value); setOpen(true); }} disabled={pending}/>
+      {open && (
+        <div className="absolute left-32 top-7 z-10 bg-white border border-gray-200 rounded shadow-lg w-96 max-h-48 overflow-y-auto text-xs">
+          {matches.length === 0 && <div className="px-3 py-2 text-gray-400">No matching vendor.</div>}
+          {matches.map(v => (
+            <button key={v.id} className="w-full text-left px-3 py-1.5 hover:bg-blue-50 flex flex-col"
+                    onClick={() => { onAssign(v.id); setQ(''); setOpen(false); }}>
+              <span className="font-semibold">{v.vendor_name} <span className="text-gray-400 font-normal">({v.vendor_code})</span></span>
+              <span className="text-gray-500">{v.email || 'no email in Vendor master'}</span>
+            </button>
+          ))}
+          <button className="w-full text-center px-3 py-1 text-gray-400 hover:bg-gray-50 border-t" onClick={() => setOpen(false)}>close</button>
+        </div>
+      )}
     </div>
   );
 }

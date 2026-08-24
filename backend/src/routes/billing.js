@@ -228,6 +228,30 @@ router.get('/runs/:id', authenticate, authorize(...canBill, 'viewer'), async (re
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── POST /api/billing/runs/:id/assign-vendor — fix a tanker with no vendor
+// mapped, without leaving the billing screen. Updates the Tanker master
+// (so future runs auto-map it) and every line for that tanker in THIS run.
+router.post('/runs/:id/assign-vendor', authenticate, authorize(...canBill), async (req, res) => {
+  const { tanker_number, vendor_id } = req.body;
+  if (!tanker_number || !vendor_id) return res.status(400).json({ error: 'tanker_number and vendor_id required' });
+  try {
+    const run = await query('SELECT status FROM billing_runs WHERE id=$1', [req.params.id]);
+    if (!run.rows.length) return res.status(404).json({ error: 'Run not found' });
+    if (!['draft', 'rejected', 'pending_vendor'].includes(run.rows[0].status))
+      return res.status(400).json({ error: 'Run is under approval or approved — lines cannot be edited' });
+
+    const v = (await query('SELECT id, vendor_name FROM vendors WHERE id=$1', [vendor_id])).rows[0];
+    if (!v) return res.status(404).json({ error: 'Vendor not found' });
+
+    await query('UPDATE tankers SET vendor_id=$1, updated_at=NOW() WHERE tanker_number=$2', [vendor_id, tanker_number]);
+    const r = await query(
+      `UPDATE billing_run_trips SET vendor_id=$1, vendor_name=$2, updated_at=NOW()
+       WHERE run_id=$3 AND tanker_number=$4 RETURNING id`,
+      [vendor_id, v.vendor_name, req.params.id, tanker_number]);
+    res.json({ ok: true, vendor_name: v.vendor_name, trips_updated: r.rows.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── PUT /api/billing/runs/:id/trips — bulk update lines (biller edits) ───────
 router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, res) => {
   const updates = req.body.trips || [];
@@ -822,6 +846,12 @@ router.post('/runs/:id/submit', authenticate, authorize(...canBill), async (req,
       WHERE run_id=$1 AND excluded=FALSE AND (state IS NULL OR rate_per_km IS NULL OR billed_km IS NULL)`, [runId]);
     if (missing.rows[0].n > 0)
       return res.status(400).json({ error: `${missing.rows[0].n} trip(s) missing state / rate / billed km — complete them before submitting` });
+
+    const noVendor = (await query(`
+      SELECT DISTINCT tanker_number FROM billing_run_trips
+      WHERE run_id=$1 AND excluded=FALSE AND vendor_id IS NULL`, [runId])).rows.map(r => r.tanker_number);
+    if (noVendor.length > 0)
+      return res.status(400).json({ error: `No vendor mapped for tanker(s): ${noVendor.join(', ')} — assign a vendor on the Vendor Wise tab before submitting` });
 
     // Mandatory toll: every tanker with non-excluded trips must have a toll
     // challan (amount + statement file). Tankers without one are pulled out
