@@ -124,14 +124,17 @@ export default function TankerBilling() {
     onError: e => toast.error(e.response?.data?.error || e.message, { duration: 8000 }),
   });
 
+  const [vendorFilter, setVendorFilter] = useState([]); // [{id, vendor_name}] — empty = all vendors
+
   const pushVendorMut = useMutation({
-    mutationFn: () => api.post(`/billing/runs/${openRunId}/push-vendor`),
+    mutationFn: () => api.post(`/billing/runs/${openRunId}/push-vendor`,
+      vendorFilter.length ? { vendor_ids: vendorFilter.map(v => v.id) } : {}),
     onSuccess: r => {
       const results = r.data.results || [];
       const sent = results.filter(x => x.startsWith('✓')).length;
       const failed = results.filter(x => x.startsWith('✗'));
-      if (sent > 0) toast.success(`Draft tanker cards emailed to ${sent} vendor(s) for verification`);
-      if (!sent && !failed.length) toast('Nothing to push — no billable trips in this run.', { icon: 'ℹ️', duration: 8000 });
+      if (sent > 0) toast.success(`Draft tanker cards emailed to ${sent} vendor(s)${vendorFilter.length ? ' (selected only)' : ''} for verification`);
+      if (!sent && !failed.length) toast('Nothing to push — no billable trips for the current selection.', { icon: 'ℹ️', duration: 8000 });
       failed.forEach(msg => toast.error(msg, { duration: 12000 }));
       qc.invalidateQueries(['billing-run', openRunId]);
       qc.invalidateQueries(['billing-runs']);
@@ -146,7 +149,10 @@ export default function TankerBilling() {
   });
 
   const downloadReport = () =>
-    api.get(`/billing/runs/${openRunId}/report`, { responseType: 'blob' }).then(r => {
+    api.get(`/billing/runs/${openRunId}/report`, {
+      responseType: 'blob',
+      params: vendorFilter.length ? { vendor_ids: vendorFilter.map(v => v.id).join(',') } : undefined,
+    }).then(r => {
       const url = URL.createObjectURL(r.data);
       const a = document.createElement('a');
       a.href = url; a.download = `tanker_billing_run_${openRunId}.xlsx`; a.click();
@@ -272,18 +278,24 @@ export default function TankerBilling() {
         </div>
         <span className="px-3 py-1 rounded-full text-xs font-bold text-white" style={{ background: color }}>{label}</span>
         <div className="flex-1" />
+        <VendorFilterPicker vendorList={vendorList || []} selected={vendorFilter} onChange={setVendorFilter}/>
         <div className="text-right text-white">
           <div className="text-[11px] opacity-85">Total Payable</div>
           <div className="text-xl font-bold">₹ {nf(run?.total_amount)}</div>
         </div>
         <button className="btn-secondary text-xs flex items-center gap-1.5" onClick={downloadReport}>
-          <Download size={13}/> Report
+          <Download size={13}/> Report{vendorFilter.length ? ` (${vendorFilter.length})` : ''}
         </button>
         {editable && ['draft', 'rejected', 'pending_vendor'].includes(run.status) && (
           <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={pushVendorMut.isPending}
-                  title="Email draft tanker cards to each vendor for review before final submission — safe to re-send after editing more trips"
-                  onClick={() => window.confirm('Email DRAFT tanker cards to all vendors on this run for verification?') && pushVendorMut.mutate()}>
+                  title={vendorFilter.length
+                    ? `Email draft tanker cards to only: ${vendorFilter.map(v => v.vendor_name).join(', ')}`
+                    : 'Email draft tanker cards to each vendor for review before final submission — safe to re-send after editing more trips'}
+                  onClick={() => window.confirm(vendorFilter.length
+                      ? `Email DRAFT tanker cards to ${vendorFilter.length} selected vendor(s) only?`
+                      : 'Email DRAFT tanker cards to all vendors on this run for verification?') && pushVendorMut.mutate()}>
             <Send size={13}/> {pushVendorMut.isPending ? 'Sending…' : (run.status === 'pending_vendor' ? 'Push to Vendors Again' : 'Push to Vendors')}
+            {vendorFilter.length ? ` (${vendorFilter.length})` : ''}
           </button>
         )}
         {editable && (<>
@@ -340,7 +352,7 @@ export default function TankerBilling() {
 
       {/* tabs */}
       <div className="flex gap-2 items-center flex-wrap">
-        {[['trips', 'Trip Wise'], ['dates', 'Date Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise'], ['saleTankers', 'Sale Tankers'], ['tolls', 'Toll Challans']].map(([k, l]) => (
+        {[['trips', 'Trip Wise'], ['vendors', 'Vendor Wise'], ['saleTankers', 'Sale Tankers'], ['tolls', 'Toll Challans']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold"
             style={tab === k ? { background: '#cc785c', color: '#fff' } : { background: '#fff', color: '#57534e' }}>
@@ -644,6 +656,48 @@ function TollPanel({ runId, tolls, tankers, editable }) {
           {!tankers.length && <tr><td colSpan={6} className="px-3 py-4 text-gray-400">No tankers in this run.</td></tr>}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Type-to-search, multi-select vendor filter — scopes Push to Vendors and
+// the Report download to only the selected vendor(s). Empty = all vendors.
+function VendorFilterPicker({ vendorList, selected, onChange }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const selectedIds = new Set(selected.map(v => v.id));
+  const matches = vendorList
+    .filter(v => !selectedIds.has(v.id))
+    .filter(v => !q.trim() || (v.vendor_name || '').toLowerCase().includes(q.trim().toLowerCase()))
+    .slice(0, 8);
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-1 flex-wrap max-w-md">
+        {selected.map(v => (
+          <span key={v.id} className="bg-white/20 text-white text-[11px] px-2 py-0.5 rounded-full flex items-center gap-1">
+            {v.vendor_name}
+            <button onClick={() => onChange(selected.filter(s => s.id !== v.id))} className="hover:text-red-200">×</button>
+          </span>
+        ))}
+        <input type="text" placeholder={selected.length ? 'add vendor…' : 'Filter by vendor…'}
+               className="input text-xs py-1 px-2 w-40" value={q}
+               onFocus={() => setOpen(true)} onChange={e => { setQ(e.target.value); setOpen(true); }}/>
+        {selected.length > 0 && (
+          <button className="text-[11px] text-white/80 underline" onClick={() => onChange([])}>clear</button>
+        )}
+      </div>
+      {open && (
+        <div className="absolute left-0 top-8 z-10 bg-white border border-gray-200 rounded shadow-lg w-64 max-h-48 overflow-y-auto text-xs">
+          {matches.length === 0 && <div className="px-3 py-2 text-gray-400">No matching vendor.</div>}
+          {matches.map(v => (
+            <button key={v.id} className="w-full text-left px-3 py-1.5 hover:bg-blue-50"
+                    onClick={() => { onChange([...selected, v]); setQ(''); }}>
+              {v.vendor_name}
+            </button>
+          ))}
+          <button className="w-full text-center px-3 py-1 text-gray-400 hover:bg-gray-50 border-t" onClick={() => setOpen(false)}>close</button>
+        </div>
+      )}
     </div>
   );
 }

@@ -139,10 +139,17 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
       LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
       WHERE tp.plan_for_date BETWEEN ($1::date - INTERVAL '31 days') AND $2
         AND tp.status NOT IN ('cancelled','deleted')
-        AND (EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
-             OR t.tanker_number ILIKE 'SALE%')
+        AND (
+          -- Acknowledgement entry must be fully complete by the fortnight
+          -- cutoff (23:59:59 on the 15th, or on the last day of the month
+          -- for the second fortnight) — a trip with even one ack row entered
+          -- after the cutoff carries forward whole to the next cycle.
+          (EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
+           AND NOT EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id AND ta.created_at > $3::timestamp))
+          OR t.tanker_number ILIKE 'SALE%'
+        )
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
-      ORDER BY tp.plan_for_date, t.tanker_number`, [from_date, to_date]);
+      ORDER BY tp.plan_for_date, t.tanker_number`, [from_date, to_date, `${to_date} 23:59:59`]);
 
     // Preload the whole Distance Master once — avoids ~5 SELECTs per trip
     // (an N+1 of thousands of round-trips on a full fortnight).
@@ -451,27 +458,30 @@ router.get('/runs/:id/tolls/:tollId/file', authenticate, authorize(...canBill, '
 });
 
 // ── Summaries (tanker-wise / vendor-wise) ────────────────────────────────────
-async function runSummaries(runId) {
+async function runSummaries(runId, { vendorIds } = {}) {
+  const scoped = Array.isArray(vendorIds) && vendorIds.length > 0;
+  const vScope = scoped ? 'AND vendor_id = ANY($2)' : '';
+  const params = scoped ? [runId, vendorIds] : [runId];
   const tankers = await query(`
     SELECT tanker_number, MAX(vendor_name) AS vendor_name, COUNT(*)::int AS trips,
            SUM(billed_km) AS billed_km, SUM(system_km) AS system_km,
            SUM(google_km) AS google_km, SUM(amount) AS amount
-    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE
-    GROUP BY tanker_number ORDER BY tanker_number`, [runId]);
+    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE ${vScope}
+    GROUP BY tanker_number ORDER BY tanker_number`, params);
   const vendors = await query(`
     SELECT COALESCE(vendor_name,'— No vendor mapped —') AS vendor_name,
            COUNT(DISTINCT tanker_number)::int AS tankers, COUNT(*)::int AS trips,
            SUM(billed_km) AS billed_km, SUM(system_km) AS system_km,
            SUM(google_km) AS google_km, SUM(amount) AS amount
-    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE
-    GROUP BY COALESCE(vendor_name,'— No vendor mapped —') ORDER BY 1`, [runId]);
+    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE ${vScope}
+    GROUP BY COALESCE(vendor_name,'— No vendor mapped —') ORDER BY 1`, params);
   const dates = await query(`
     SELECT plan_for_date::text AS date, COUNT(*)::int AS trips,
            COUNT(DISTINCT tanker_number)::int AS tankers,
            SUM(billed_km) AS billed_km, SUM(system_km) AS system_km,
            SUM(google_km) AS google_km, SUM(amount) AS amount
-    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE
-    GROUP BY plan_for_date ORDER BY plan_for_date`, [runId]);
+    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE ${vScope}
+    GROUP BY plan_for_date ORDER BY plan_for_date`, params);
 
   // Merge toll challans: per tanker directly; per vendor via the tanker's
   // vendor. total_payable = km-based amount + toll reimbursement.
@@ -497,13 +507,15 @@ router.get('/runs/:id/summary', authenticate, authorize(...canBill, 'viewer'), a
 });
 
 // ── Excel report (trip / tanker / vendor sheets, incl. system+google km) ─────
-async function buildRunWorkbook(runId) {
+async function buildRunWorkbook(runId, { vendorIds } = {}) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
+  const scoped = Array.isArray(vendorIds) && vendorIds.length > 0;
   const trips = (await query(`
     SELECT t.*, t.plan_for_date::text AS plan_for_date,
            (t.is_sale_tanker OR t.tanker_number ILIKE 'SALE%') AS is_sale_tanker
-    FROM billing_run_trips t WHERE t.run_id=$1 ORDER BY t.plan_for_date, t.tanker_number`, [runId])).rows;
-  const { tankers, vendors, dates } = await runSummaries(runId);
+    FROM billing_run_trips t WHERE t.run_id=$1 ${scoped ? 'AND t.vendor_id = ANY($2)' : ''}
+    ORDER BY t.plan_for_date, t.tanker_number`, scoped ? [runId, vendorIds] : [runId])).rows;
+  const { tankers, vendors, dates } = await runSummaries(runId, { vendorIds });
   const approvals = (await query('SELECT level, approver_email, status, remarks, decided_at FROM billing_run_approvals WHERE run_id=$1 ORDER BY level', [runId])).rows;
 
   // BMCU details per trip (code + name, in pickup order) for the Trip Wise
@@ -594,7 +606,9 @@ async function buildRunWorkbook(runId) {
 
 router.get('/runs/:id/report', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
   try {
-    const { wb, run } = await buildRunWorkbook(req.params.id);
+    const vendorIds = req.query.vendor_ids
+      ? String(req.query.vendor_ids).split(',').map(Number).filter(Number.isFinite) : undefined;
+    const { wb, run } = await buildRunWorkbook(req.params.id, { vendorIds });
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=tanker_billing_${run.from_date}_${run.to_date}.xlsx`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -689,18 +703,22 @@ async function notifyBiller(runId, subject, bodyHtml) {
 // ── Transporter publishing — on final approval, email each vendor an Excel of
 // THEIR trips (km, rate, amount). Vendors without an email in the Vendor
 // master are reported back to the biller instead.
-async function publishRunToVendors(runId, { draft = false } = {}) {
+async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
+  const scoped = Array.isArray(vendorIds) && vendorIds.length > 0;
   const allTrips = (await query(`
     SELECT t.*, t.plan_for_date::text AS plan_for_date, v.email AS vendor_email,
            (t.is_sale_tanker OR t.tanker_number ILIKE 'SALE%') AS is_sale_tanker
     FROM billing_run_trips t LEFT JOIN vendors v ON v.id = t.vendor_id
-    WHERE t.run_id=$1 ORDER BY t.plan_for_date, t.tanker_number`, [runId])).rows;
+    WHERE t.run_id=$1 ${scoped ? 'AND t.vendor_id = ANY($2)' : ''}
+    ORDER BY t.plan_for_date, t.tanker_number`, scoped ? [runId, vendorIds] : [runId])).rows;
   // Sale Tanker / excluded trips never go to vendors for verification or
   // payment — they live on their own tab/sheet, not in vendor billing.
   const trips = allTrips.filter(t => !t.excluded && !t.is_sale_tanker);
   if (!trips.length)
-    return [`No billable trips in this run — all ${allTrips.length} trip(s) are Sale Tanker / excluded. Nothing to push to vendors.`];
+    return [scoped
+      ? `No billable trips for the selected vendor(s) in this run.`
+      : `No billable trips in this run — all ${allTrips.length} trip(s) are Sale Tanker / excluded. Nothing to push to vendors.`];
 
   const tollRows = (await query('SELECT tanker_number, amount FROM billing_run_tolls WHERE run_id=$1', [runId])).rows;
   const tollBy = new Map(tollRows.map(r => [r.tanker_number, parseFloat(r.amount) || 0]));
@@ -823,7 +841,8 @@ router.post('/runs/:id/push-vendor', authenticate, authorize(...canBill), async 
     if (!['draft', 'rejected', 'pending_vendor'].includes(run.status))
       return res.status(400).json({ error: 'Run is already submitted or approved' });
 
-    const results = await publishRunToVendors(runId, { draft: true }); // reuses the per-vendor tanker-card mailer
+    const vendorIds = Array.isArray(req.body?.vendor_ids) ? req.body.vendor_ids.map(Number).filter(Number.isFinite) : undefined;
+    const results = await publishRunToVendors(runId, { draft: true, vendorIds }); // reuses the per-vendor tanker-card mailer
     await query(`UPDATE billing_runs SET status='pending_vendor', updated_at=NOW() WHERE id=$1`, [runId]);
     res.json({ ok: true, status: 'pending_vendor', results });
   } catch (err) {
