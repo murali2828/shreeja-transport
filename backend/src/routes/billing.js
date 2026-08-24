@@ -124,6 +124,16 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
                (SELECT SUM(ta.qty_kgs) FROM trip_acknowledgements ta WHERE ta.execution_id = te.id),
                (SELECT SUM(teb.qty_kgs) FROM trip_execution_bmcus teb WHERE teb.execution_id = te.id AND teb.is_deleted = FALSE)
              ) AS ack_kgs,
+             -- Weighted-average Fat%/SNF% (kg fat/snf ÷ kg total), same
+             -- source cascade (acknowledgement rows, else BMCU dispatch).
+             COALESCE(
+               (SELECT CASE WHEN SUM(ta.qty_kgs) > 0 THEN SUM(ta.kg_fat) / SUM(ta.qty_kgs) * 100 END FROM trip_acknowledgements ta WHERE ta.execution_id = te.id),
+               (SELECT CASE WHEN SUM(teb.qty_kgs) > 0 THEN SUM(teb.kg_fat) / SUM(teb.qty_kgs) * 100 END FROM trip_execution_bmcus teb WHERE teb.execution_id = te.id AND teb.is_deleted = FALSE)
+             ) AS ack_fat_pct,
+             COALESCE(
+               (SELECT CASE WHEN SUM(ta.qty_kgs) > 0 THEN SUM(ta.kg_snf) / SUM(ta.qty_kgs) * 100 END FROM trip_acknowledgements ta WHERE ta.execution_id = te.id),
+               (SELECT CASE WHEN SUM(teb.qty_kgs) > 0 THEN SUM(teb.kg_snf) / SUM(teb.qty_kgs) * 100 END FROM trip_execution_bmcus teb WHERE teb.execution_id = te.id AND teb.is_deleted = FALSE)
+             ) AS ack_snf_pct,
              -- Sale Tanker: identified by the TANKER itself (a placeholder
              -- vehicle named e.g. "SALE TANKER" used when milk is sold
              -- directly at the BMCU, never acknowledged at a delivery
@@ -172,13 +182,13 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
         INSERT INTO billing_run_trips
           (run_id, execution_id, plan_for_date, tanker_number, capacity_litres,
            vendor_id, vendor_name, route_name, start_point, delivery_point,
-           bmcu_count, ack_litres, ack_kgs, transport_type,
+           bmcu_count, ack_litres, ack_kgs, ack_fat_pct, ack_snf_pct, transport_type,
            system_km, google_km, master_km, estimated_km, billed_km, legs,
            is_sale_tanker, excluded)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
         [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
          tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
-         tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), transportType,
+         tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), rN(tr.ack_fat_pct, 3), rN(tr.ack_snf_pct, 3), transportType,
          rN(dist.total_km), googleRefKm, sumBy('master'), sumBy('estimated'),
          rN(dist.total_km), JSON.stringify(dist.legs),
          !!tr.is_sale_tanker, !!tr.is_sale_tanker]);
@@ -551,16 +561,17 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     ws.addRow([`Tanker Payment Billing — Run #${runId} · ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} · Status: ${run.status}`]).font = { bold: true, size: 13 };
     ws.addRow([]);
     head(ws, ['Date', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
-      'BMCU Count', 'BMCU Details', 'Ack Kgs', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM', 'Estimated KM',
+      'BMCU Count', 'BMCU Details', 'Ack Kgs', 'Ack Fat%', 'Ack SNF%', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM',
       'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Excluded', 'Remarks']);
     ws.getColumn(9).width = 60;
     rows.forEach(t => ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number, rN(t.capacity_litres / 1000, 1),
       t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id), t.ack_kgs,
-      t.state, t.transport_type, t.system_km, t.google_km, t.master_km, t.estimated_km,
+      t.ack_fat_pct, t.ack_snf_pct,
+      t.state, t.transport_type, t.system_km, t.google_km, t.master_km,
       t.billed_km, t.rate_per_km, t.excluded ? 0 : t.amount, t.excluded ? 'Yes' : '', t.remarks]));
-    const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '',
+    const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '', '', '',
       rN(rows.reduce((s, t) => s + (+t.system_km || 0), 0)),
-      rN(rows.reduce((s, t) => s + (+t.google_km || 0), 0)), '', '',
+      rN(rows.reduce((s, t) => s + (+t.google_km || 0), 0)), '',
       rN(rows.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
       rN(rows.reduce((s, t) => s + (t.excluded ? 0 : (+t.amount || 0)), 0)), '', '']);
     totRow.font = { bold: true };
