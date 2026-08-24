@@ -66,9 +66,9 @@ async function buildTsReport(reportDate, basis = 'plan') {
       COALESCE((SELECT SUM(ta.kg_snf)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_snf,
 
       -- Third Party Sale totals: milk sold directly to a buyer, off the
-      -- trip's dispatch/BMCU chain (already excluded from disp_* above,
-      -- since applyExecutionData's dispatch total is net of it — see
-      -- services/executionData.js). Shown here as its own column group.
+      -- trip's dispatch/BMCU chain. Dispatch (disp_* above) is NOT netted of
+      -- it — the sale instead reduces the RMRD total below (per-BMCU where
+      -- that granularity exists, trip-level here). Shown as its own column.
       COALESCE((SELECT SUM(s.qty_litres) FROM trip_third_party_sales s WHERE s.execution_id=te.id),0) AS tps_litres,
       COALESCE((SELECT SUM(s.qty_kgs)    FROM trip_third_party_sales s WHERE s.execution_id=te.id),0) AS tps_kgs,
       COALESCE((SELECT SUM(s.kg_fat)     FROM trip_third_party_sales s WHERE s.execution_id=te.id),0) AS tps_kg_fat,
@@ -179,13 +179,20 @@ async function buildTsReport(reportDate, basis = 'plan') {
     const rmrd = rmrdByExec[row.execution_id] || { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
     const hasAck = row.ack_count > 0;
     const hasExec = !!row.execution_id;
+    row.disp_litres = parseFloat(row.disp_litres);
+    row.disp_kgs    = parseFloat(row.disp_kgs);
+    row.disp_kg_fat = parseFloat(row.disp_kg_fat);
+    row.disp_kg_snf = parseFloat(row.disp_kg_snf);
     // Third Party Sale: milk sold directly to a buyer never reached a
-    // BMCU/plant, so it's netted OUT of the Dispatch (TS) totals here —
-    // the SQL's disp_* fields above are the gross trip_execution_bmcus sum.
-    row.disp_litres = parseFloat(row.disp_litres) - parseFloat(row.tps_litres);
-    row.disp_kgs    = parseFloat(row.disp_kgs)    - parseFloat(row.tps_kgs);
-    row.disp_kg_fat = parseFloat(row.disp_kg_fat) - parseFloat(row.tps_kg_fat);
-    row.disp_kg_snf = parseFloat(row.disp_kg_snf) - parseFloat(row.tps_kg_snf);
+    // BMCU/plant, so it's netted OUT of the RMRD total here (dispatch is
+    // untouched — the SQL's disp_* fields above are the gross dispatch sum).
+    // This report is trip-level only, so the sale (however many BMCUs it's
+    // split across) nets out of the trip's RMRD as a whole; the per-BMCU
+    // breakdown lives in the BMCU Breakup report.
+    rmrd.litres -= parseFloat(row.tps_litres);
+    rmrd.kgs    -= parseFloat(row.tps_kgs);
+    rmrd.kg_fat -= parseFloat(row.tps_kg_fat);
+    rmrd.kg_snf -= parseFloat(row.tps_kg_snf);
     // Weighted Fat% / SNF% per section = Kg.Fat / Qty Kgs × 100 (same for SNF)
     const pct = (kgPart, kgs) => (parseFloat(kgs) > 0) ? rN(parseFloat(kgPart) / parseFloat(kgs) * 100) : null;
     const rmrdFat = pct(rmrd.kg_fat, rmrd.kgs), rmrdSnf = pct(rmrd.kg_snf, rmrd.kgs);
@@ -981,17 +988,18 @@ async function buildBmcuBreakup(reportDate) {
     WHERE e.execution_id = ANY($1)
     ORDER BY e.id`, [execIds]);
 
-  // Third Party Sale totals — trip-level (not tied to one BMCU), so shown
-  // only on each trip's Grand Total row rather than a per-BMCU block.
+  // Third Party Sale totals — per-BMCU (bmcu_seq_no): the sale reduces the
+  // RMRD total of the specific BMCU block it's recorded against. Also
+  // grouped so a trip-wide subtotal can still be shown on the Grand Total row.
   const tpsRes = await query(`
-    SELECT execution_id,
+    SELECT execution_id, bmcu_seq_no,
            COALESCE(SUM(qty_litres),0) AS litres, COALESCE(SUM(qty_kgs),0) AS kgs,
            COALESCE(SUM(kg_fat),0) AS kg_fat, COALESCE(SUM(kg_snf),0) AS kg_snf
     FROM trip_third_party_sales
     WHERE execution_id = ANY($1)
-    GROUP BY execution_id`, [execIds]);
-  const tpsByExec = {};
-  for (const t of tpsRes.rows) tpsByExec[t.execution_id] = t;
+    GROUP BY execution_id, bmcu_seq_no`, [execIds]);
+  const tpsByBlock = {};
+  for (const t of tpsRes.rows) tpsByBlock[`${t.execution_id}:${t.bmcu_seq_no}`] = t;
 
   // Block index: (execId, seqNo) → block, plus bmcuId → blocks (to place source-side
   // deduction rows for internal shifting, preferring the same trip).
@@ -1075,6 +1083,18 @@ async function buildBmcuBreakup(reportDate) {
     .map(x => {
       const bmcus = (byExec[x.execution_id] || []).map(b => {
         const rm = sum6(b.rows);
+        // Third Party Sale recorded against THIS BMCU reduces its RMRD total
+        // (never the dispatch figure, which stays the gross tanker qty).
+        const tpsRow = tpsByBlock[`${x.execution_id}:${b.seq_no}`];
+        const tps = tpsRow
+          ? { litres: rN(tpsRow.litres), kgs: rN(tpsRow.kgs),
+              fat: wAvg(tpsRow.kg_fat, tpsRow.kgs), snf: wAvg(tpsRow.kg_snf, tpsRow.kgs),
+              kg_fat: rN(tpsRow.kg_fat) || 0, kg_snf: rN(tpsRow.kg_snf) || 0 }
+          : { litres: 0, kgs: 0, fat: null, snf: null, kg_fat: 0, kg_snf: 0 };
+        rm.litres -= parseFloat(tpsRow?.litres) || 0;
+        rm.kgs    -= parseFloat(tpsRow?.kgs)    || 0;
+        rm.kg_fat -= parseFloat(tpsRow?.kg_fat) || 0;
+        rm.kg_snf -= parseFloat(tpsRow?.kg_snf) || 0;
         const rmrd = {
           litres: rN(rm.litres), kgs: rN(rm.kgs),
           fat: wAvg(rm.kg_fat, rm.kgs), snf: wAvg(rm.kg_snf, rm.kgs),
@@ -1082,8 +1102,8 @@ async function buildBmcuBreakup(reportDate) {
         };
         return {
           bmcu_code: b.bmcu_code, bmcu_name: b.bmcu_name, compartment: b.compartment,
-          dispatch: b.dispatch, rows: b.rows, rmrd,
-          diff: { // Difference Dispatch Vs RMRD = Dispatch − RMRD
+          dispatch: b.dispatch, rows: b.rows, rmrd, tps,
+          diff: { // Difference Dispatch Vs RMRD = Dispatch − RMRD (RMRD already net of any sale)
             kgs:    rN(b.dispatch.kgs    - rm.kgs),
             litres: rN(b.dispatch.litres - rm.litres),
             kg_fat: rN(b.dispatch.kg_fat - rm.kg_fat),
@@ -1097,12 +1117,10 @@ async function buildBmcuBreakup(reportDate) {
       });
       const gd = sum6(bmcus.map(b => b.dispatch));
       const gr = sum6(bmcus.map(b => b.rmrd));
-      const tpsRow = tpsByExec[x.execution_id];
-      const tps = tpsRow
-        ? { litres: rN(tpsRow.litres), kgs: rN(tpsRow.kgs),
-            fat: wAvg(tpsRow.kg_fat, tpsRow.kgs), snf: wAvg(tpsRow.kg_snf, tpsRow.kgs),
-            kg_fat: rN(tpsRow.kg_fat), kg_snf: rN(tpsRow.kg_snf) }
-        : { litres: 0, kgs: 0, fat: null, snf: null, kg_fat: 0, kg_snf: 0 };
+      const gt = sum6(bmcus.map(b => b.tps)); // trip-wide subtotal of sales, for the Grand Total row
+      const tps = { litres: rN(gt.litres), kgs: rN(gt.kgs),
+        fat: wAvg(gt.kg_fat, gt.kgs), snf: wAvg(gt.kg_snf, gt.kgs),
+        kg_fat: rN(gt.kg_fat), kg_snf: rN(gt.kg_snf) };
       return {
         trip_no: x.trip_no, tanker_number: x.tanker_number, route_name: x.route_name,
         entered_by: x.entered_by,
@@ -1193,7 +1211,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     { title: 'Shift',                               fill: 'FFF3F4F6', start: 13, heads: null },
     { title: 'As Per RMRD',                         fill: 'FFE0F2FE', start: 14, heads: BK_MEASURES },
     { title: 'Difference Dispatch Vs RMRD', fill: 'FFFEF3C7', start: 20, heads: ['Qty Kgs', 'Qty Lts', 'KG Fat', 'KG SNF', 'Gain/Loss %'] },
-    { title: 'Third Party Sale (trip total)', fill: 'FFF1F5F9', start: TPS_COL, heads: TPS_HEADS },
+    { title: 'Third Party Sale', fill: 'FFF1F5F9', start: TPS_COL, heads: TPS_HEADS },
   ];
   for (const g of groups) {
     if (!g.heads) { // single Shift column spans both header rows
@@ -1274,6 +1292,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
       setTxt(row.getCell(13), '', { fill: 'FFF8FAFC' });
       M6(b.rmrd).forEach((v, k) => setNum(row.getCell(14 + k), v, { bold: true, fill: 'FFF8FAFC' }));
       D4(b.diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFFEF3C7' }));
+      T6(b.tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFF8FAFC' }));
       rIdx++;
     }
     // Grand Total per trip (cell 1 carries the entered-by user id)

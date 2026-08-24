@@ -275,8 +275,10 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
   }
 
   // Third party sale (replace-all) — milk sold directly to a buyer, off the
-  // trip's normal BMCU/plant chain. Trip-level (not tied to one BMCU), so it
-  // lives in its own table rather than trip_execution_bmcu_entries.
+  // trip's normal BMCU/plant chain. Per-BMCU (bmcu_seq_no): the sale reduces
+  // that specific BMCU's RMRD total wherever RMRD is computed/displayed
+  // (see routes/reports.js and ExecutionForm.jsx) — it does NOT touch the
+  // trip's dispatch quantity at all.
   if (third_party_sales !== undefined) {
     await client.query('DELETE FROM trip_third_party_sales WHERE execution_id=$1', [execId]);
     for (const s of (third_party_sales || [])) {
@@ -285,9 +287,9 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
       const kgSnf = calcKgSnf(kgs, s.snf_pct);
       await client.query(
         `INSERT INTO trip_third_party_sales
-           (execution_id, qty_litres, qty_kgs, fat_pct, snf_pct, kg_fat, kg_snf, customer_name, remarks, entered_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [execId, s.qty_litres||null, kgs||null, s.fat_pct||null, s.snf_pct||null,
+           (execution_id, bmcu_seq_no, qty_litres, qty_kgs, fat_pct, snf_pct, kg_fat, kg_snf, customer_name, remarks, entered_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [execId, s.bmcu_seq_no||null, s.qty_litres||null, kgs||null, s.fat_pct||null, s.snf_pct||null,
          kgFat||null, kgSnf||null, (s.customer_name||'').trim() || null,
          (s.remarks||'').trim() || null, userId || null]
       );
@@ -313,21 +315,14 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     [execId]
   );
   const t = totals.rows[0];
-
-  // Third Party Sale reduces the dispatch/TS totals — milk sold directly to a
-  // buyer never reaches a BMCU/plant, so it must not be counted as dispatched.
-  const tpsTotals = await client.query(`
-    SELECT
-      COALESCE(SUM(qty_litres),0) AS tps_litres,
-      COALESCE(SUM(qty_kgs),0)    AS tps_kgs,
-      COALESCE(SUM(kg_fat),0)     AS tps_kg_fat,
-      COALESCE(SUM(kg_snf),0)     AS tps_kg_snf
-    FROM trip_third_party_sales WHERE execution_id=$1`, [execId]);
-  const tps = tpsTotals.rows[0];
-  t.total_litres = parseFloat(t.total_litres) - parseFloat(tps.tps_litres);
-  t.total_kgs    = parseFloat(t.total_kgs)    - parseFloat(tps.tps_kgs);
-  t.total_kg_fat = parseFloat(t.total_kg_fat) - parseFloat(tps.tps_kg_fat);
-  t.total_kg_snf = parseFloat(t.total_kg_snf) - parseFloat(tps.tps_kg_snf);
+  t.total_litres = parseFloat(t.total_litres);
+  t.total_kgs    = parseFloat(t.total_kgs);
+  t.total_kg_fat = parseFloat(t.total_kg_fat);
+  t.total_kg_snf = parseFloat(t.total_kg_snf);
+  // NOTE: Third Party Sale is deliberately NOT netted out of the dispatch
+  // total here — a sale reduces the specific BMCU's RMRD figure instead
+  // (computed/displayed in routes/reports.js and ExecutionForm.jsx from
+  // trip_execution_bmcu_shifts), never this trip_executions dispatch total.
 
   const avgFat = t.total_kgs > 0 ? (t.total_kg_fat / t.total_kgs) * 100 : 0;
   const avgSnf = t.total_kgs > 0 ? (t.total_kg_snf / t.total_kgs) * 100 : 0;

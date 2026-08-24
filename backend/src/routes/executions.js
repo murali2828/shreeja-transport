@@ -56,6 +56,10 @@ const {
       )
     `);
     await query(`CREATE INDEX IF NOT EXISTS ttps_exec_idx ON trip_third_party_sales (execution_id)`);
+    // Per-BMCU (also added by migration 033) — a sale reduces the RMRD total
+    // of the specific BMCU it's recorded against, not the trip dispatch total.
+    await query(`ALTER TABLE trip_third_party_sales ADD COLUMN IF NOT EXISTS bmcu_seq_no INTEGER`);
+    await query(`CREATE INDEX IF NOT EXISTS ttps_exec_bmcu_idx ON trip_third_party_sales (execution_id, bmcu_seq_no)`);
   } catch (err) {
     console.error('Migration error (trip_third_party_sales):', err.message);
   }

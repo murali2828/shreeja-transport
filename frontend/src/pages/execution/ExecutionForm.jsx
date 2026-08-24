@@ -163,6 +163,7 @@ function SourcePlantSelect({ bmcuList, code, onSelect, disabled }) {
 function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClosed,
                    shiftRowsForBmcu, onAddShiftRow, onUpdateShiftRow, onDeleteShiftRow, execDate,
                    entriesForBmcu, onAddEntry, onUpdateEntry, onDeleteEntry,
+                   salesForBmcu, onAddSale, onUpdateSale, onDeleteSale,
                    onDragStart, onDragOver, onDrop, isDragOver }) {
   const u = (field, val) => onUpdate(idx, field, val);
   const kgs    = calc.kgs(row.qty_litres);
@@ -500,6 +501,75 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
               );
             })()}
 
+            {/* Third Party Sale entries — milk sold directly to a buyer.
+                Reduces THIS BMCU's RMRD total; dispatch qty is untouched. */}
+            {(() => {
+              const rows = salesForBmcu;
+              if (!rows.length) return null;
+              return (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6, tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col style={{ width: '110px' }}/>
+                    <col style={{ width: '90px' }}/>
+                    <col style={{ width: '90px' }}/>
+                    <col style={{ width: '140px' }}/>
+                    <col/>
+                    <col style={{ width: '32px' }}/>
+                  </colgroup>
+                  <thead>
+                    <tr style={{ color: '#be123c', borderBottom: '1px solid #fbd0da' }}>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Third Party Sale — Qty (L)</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Fat%</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>SNF%</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Customer Name</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Remarks</th>
+                      <th style={{ width: 28 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(s => (
+                      <tr key={s._key} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.01" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-20" value={s.qty_litres || ''}
+                            onChange={ev => onUpdateSale(s._key, 'qty_litres', ev.target.value)} placeholder="Qty"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.001" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-16" value={s.fat_pct || ''}
+                            onChange={ev => onUpdateSale(s._key, 'fat_pct', ev.target.value)} placeholder="Fat%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.001" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-16" value={s.snf_pct || ''}
+                            onChange={ev => onUpdateSale(s._key, 'snf_pct', ev.target.value)} placeholder="SNF%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="text" maxLength={100} disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-full" value={s.customer_name || ''}
+                            onChange={ev => onUpdateSale(s._key, 'customer_name', ev.target.value)}
+                            placeholder="Buyer / customer name"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="text" maxLength={200} disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-full" value={s.remarks || ''}
+                            onChange={ev => onUpdateSale(s._key, 'remarks', ev.target.value)}
+                            placeholder="Remarks"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          {!isClosed && (
+                            <button onClick={() => onDeleteSale(s._key)} className="btn-danger btn-sm p-0.5" title="Remove">
+                              <Trash2 size={9}/>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              );
+            })()}
+
             {!isClosed && (
               <div className="flex flex-wrap gap-1.5 mt-1.5">
                 <button onClick={() => onAddShiftRow(row.seq_no, execDate)}
@@ -517,6 +587,10 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                 <button onClick={() => onAddEntry('internal_shifting', row.seq_no, row.bmcu_id)}
                   className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-purple-700 border-purple-300">
                   <Plus size={9}/> Internal Shifting
+                </button>
+                <button onClick={() => onAddSale(row.seq_no, row.bmcu_id)}
+                  className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-rose-700 border-rose-300">
+                  <Plus size={9}/> Third Party Sale
                 </button>
               </div>
             )}
@@ -831,9 +905,12 @@ export default function ExecutionForm() {
     setEntries(prev => prev.filter(e => e._key !== key));
 
   // Third Party Sale — milk sold directly to a buyer, off the trip's normal
-  // BMCU/plant chain. Trip-level (not tied to one BMCU row).
-  const addThirdPartySale = () =>
+  // BMCU/plant chain. Per-BMCU (bmcu_seq_no): reduces that BMCU's RMRD total,
+  // never the trip's dispatch quantity.
+  const addThirdPartySale = (seqNo, bmcuId) =>
     setThirdPartySales(prev => [...prev, {
+      bmcu_seq_no: seqNo,
+      bmcu_id: bmcuId || null,
       qty_litres: '', fat_pct: '', snf_pct: '', customer_name: '', remarks: '',
       _key: 'tps' + Date.now() + Math.random()
     }]);
@@ -843,9 +920,6 @@ export default function ExecutionForm() {
 
   const deleteThirdPartySale = (key) =>
     setThirdPartySales(prev => prev.filter(s => s._key !== key));
-
-  const thirdPartySaleLitres = thirdPartySales.reduce((s, r) => s + (parseFloat(r.qty_litres) || 0), 0);
-  const thirdPartySaleKgs    = thirdPartySales.reduce((s, r) => s + (parseFloat(calc.kgs(r.qty_litres)) || 0), 0);
 
   // 110% capacity guard (mirrors the server-side check in applyExecutionData)
   const capacityViolation = () => {
@@ -912,11 +986,11 @@ export default function ExecutionForm() {
   const visibleRows = bmcuRows.filter(r => !r.is_deleted);
   // ALL rows count, including 'Balance Milk' ones — their dispatched qty is
   // real milk on the tanker (matches the server-side totals and TS reports).
-  // Third Party Sale — milk sold directly to a buyer never reached a
-  // BMCU/plant, so it's subtracted out of the dispatch (TS) totals shown
-  // here, matching the server-side net computed in applyExecutionData.
-  const totalLitres = visibleRows.reduce((s,r) => s + (parseFloat(r.qty_litres)||0), 0) - thirdPartySaleLitres;
-  const totalKgs    = visibleRows.reduce((s,r) => s + (parseFloat(r.qty_kgs) || parseFloat(r.qty_litres||0)*1.0285), 0) - thirdPartySaleKgs;
+  // Third Party Sale does NOT reduce this dispatch total — it reduces the
+  // RMRD total of the specific BMCU it's recorded against instead (shown per
+  // BMCU under "RMRD Qty" / in reports), matching applyExecutionData.
+  const totalLitres = visibleRows.reduce((s,r) => s + (parseFloat(r.qty_litres)||0), 0);
+  const totalKgs    = visibleRows.reduce((s,r) => s + (parseFloat(r.qty_kgs) || parseFloat(r.qty_litres||0)*1.0285), 0);
   const isTrulyClosed = exec.status === 'closed';
   // Staging mode: closed trip fields become editable, but changes go to a
   // change request for PP01 approval instead of saving directly.
@@ -1188,6 +1262,10 @@ export default function ExecutionForm() {
                     onAddEntry={addEntry}
                     onUpdateEntry={updateEntry}
                     onDeleteEntry={deleteEntry}
+                    salesForBmcu={thirdPartySales.filter(s => s.bmcu_seq_no === row.seq_no)}
+                    onAddSale={addThirdPartySale}
+                    onUpdateSale={updateThirdPartySale}
+                    onDeleteSale={deleteThirdPartySale}
                     execDate={exec?.execution_date?.slice(0,10) || ''}
                     onDragStart={() => setDragIdx(i)}
                     onDragOver={() => setDragOverIdx(i)}
@@ -1201,80 +1279,6 @@ export default function ExecutionForm() {
             </tbody>
           </table>
         </div>
-      </div>
-
-      {/* Third Party Sale — milk sold directly to a buyer, off the trip's
-          normal BMCU/plant chain. Reduces the Total Litres/Kgs (TS) above. */}
-      <div className="card">
-        <div className="p-3 border-b flex items-center justify-between">
-          <span className="text-sm font-medium">Third Party Sale ({thirdPartySales.length} rows)</span>
-          {!isClosed && (
-            <button onClick={addThirdPartySale} className="btn-secondary btn-sm text-xs py-1 px-2 flex items-center gap-1">
-              <Plus size={11}/> Add Sale
-            </button>
-          )}
-        </div>
-        {thirdPartySales.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="text-xs w-full">
-              <thead className="bg-gray-50 border-b">
-                <tr>
-                  {['Qty (L)','Qty (Kgs)','Fat%','SNF%','Customer Name','Remarks',''].map((h,i) => (
-                    <th key={i} className="table-th py-1.5 text-xs whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {thirdPartySales.map(s => (
-                  <tr key={s._key} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="table-td">
-                      <input type="number" min="0" step="0.01" disabled={isClosed}
-                        className="input py-0.5 px-1 text-xs w-24" value={s.qty_litres || ''}
-                        onChange={e => updateThirdPartySale(s._key, 'qty_litres', e.target.value)} placeholder="Qty L"/>
-                    </td>
-                    <td className="table-td text-gray-500">{calc.kgs(s.qty_litres) || '—'}</td>
-                    <td className="table-td">
-                      <input type="number" min="0" step="0.001" disabled={isClosed}
-                        className="input py-0.5 px-1 text-xs w-16" value={s.fat_pct || ''}
-                        onChange={e => updateThirdPartySale(s._key, 'fat_pct', e.target.value)} placeholder="Fat%"/>
-                    </td>
-                    <td className="table-td">
-                      <input type="number" min="0" step="0.001" disabled={isClosed}
-                        className="input py-0.5 px-1 text-xs w-16" value={s.snf_pct || ''}
-                        onChange={e => updateThirdPartySale(s._key, 'snf_pct', e.target.value)} placeholder="SNF%"/>
-                    </td>
-                    <td className="table-td">
-                      <input type="text" maxLength={100} disabled={isClosed}
-                        className="input py-0.5 px-1 text-xs w-32" value={s.customer_name || ''}
-                        onChange={e => updateThirdPartySale(s._key, 'customer_name', e.target.value)}
-                        placeholder="Buyer / customer name"/>
-                    </td>
-                    <td className="table-td">
-                      <input type="text" maxLength={200} disabled={isClosed}
-                        className="input py-0.5 px-1 text-xs w-full" value={s.remarks || ''}
-                        onChange={e => updateThirdPartySale(s._key, 'remarks', e.target.value)}
-                        placeholder="Remarks"/>
-                    </td>
-                    <td className="table-td">
-                      {!isClosed && (
-                        <button onClick={() => deleteThirdPartySale(s._key)} className="btn-danger btn-sm p-0.5" title="Remove">
-                          <Trash2 size={10}/>
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot className="bg-blue-50 border-t font-semibold">
-                <tr>
-                  <td className="table-td text-xs text-gray-500">Total</td>
-                  <td className="table-td text-[#003a6b]">{thirdPartySaleKgs.toFixed(2)}</td>
-                  <td colSpan={5}></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        )}
       </div>
 
       {/* Action buttons (normal editing) */}
