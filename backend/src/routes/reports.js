@@ -1291,6 +1291,45 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     rIdx += 2; // blank spacer row between trips
   }
 
+  // Overall GRAND TOTAL across every trip in this block — sums every
+  // numeric column; Fat%/SNF% (and the diff Gain/Loss %) are weighted
+  // averages re-derived from the summed Kg Fat/Kg SNF over summed Kgs,
+  // never a naive average of the per-trip percentages.
+  if (data.trips.length > 1) {
+    const wAvg = (kgPart, kgs) => kgs ? rN(kgPart / kgs * 100) : null;
+    const sum6 = key => data.trips.reduce((a, t) => ({
+      litres: a.litres + (parseFloat(t.grand[key].litres) || 0),
+      kgs:    a.kgs    + (parseFloat(t.grand[key].kgs)    || 0),
+      kg_fat: a.kg_fat + (parseFloat(t.grand[key].kg_fat) || 0),
+      kg_snf: a.kg_snf + (parseFloat(t.grand[key].kg_snf) || 0),
+    }), { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 });
+    const gd = sum6('dispatch'), gr = sum6('rmrd'), gt = sum6('tps');
+    const dispatch = { litres: rN(gd.litres), kgs: rN(gd.kgs),
+      fat: wAvg(gd.kg_fat, gd.kgs), snf: wAvg(gd.kg_snf, gd.kgs),
+      kg_fat: rN(gd.kg_fat), kg_snf: rN(gd.kg_snf) };
+    const rmrd = { litres: rN(gr.litres), kgs: rN(gr.kgs),
+      fat: wAvg(gr.kg_fat, gr.kgs), snf: wAvg(gr.kg_snf, gr.kgs),
+      kg_fat: rN(gr.kg_fat), kg_snf: rN(gr.kg_snf) };
+    const tps = { litres: rN(gt.litres), kgs: rN(gt.kgs),
+      fat: wAvg(gt.kg_fat, gt.kgs), snf: wAvg(gt.kg_snf, gt.kgs),
+      kg_fat: rN(gt.kg_fat), kg_snf: rN(gt.kg_snf) };
+    const diff = { kgs: rN(gd.kgs - gr.kgs), litres: rN(gd.litres - gr.litres),
+      kg_fat: rN(gd.kg_fat - gr.kg_fat), kg_snf: rN(gd.kg_snf - gr.kg_snf),
+      pct: (gr.kg_fat + gr.kg_snf) > 0
+        ? rN(((gd.kg_fat - gr.kg_fat) + (gd.kg_snf - gr.kg_snf)) / (gr.kg_fat + gr.kg_snf) * 100)
+        : null };
+
+    const row = ws.getRow(rIdx);
+    setTxt(row.getCell(1), `GRAND TOTAL — ${data.trips.length} trips`, { bold: true, fill: 'FFBFDBFE' });
+    for (let k = 2; k <= 6; k++) setTxt(row.getCell(k), '', { fill: 'FFBFDBFE' });
+    M6(dispatch).forEach((v, k) => setNum(row.getCell(7 + k), v, { bold: true, fill: 'FFBFDBFE' }));
+    setTxt(row.getCell(13), '', { fill: 'FFBFDBFE' });
+    M6(rmrd).forEach((v, k) => setNum(row.getCell(14 + k), v, { bold: true, fill: 'FFBFDBFE' }));
+    D4(diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFBFDBFE' }));
+    T6(tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFBFDBFE' }));
+    rIdx += 2;
+  }
+
   if (data.notes.length) {
     for (const n of data.notes) {
       ws.mergeCells(rIdx, 1, rIdx, 31);
