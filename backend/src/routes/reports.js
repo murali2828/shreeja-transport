@@ -933,8 +933,16 @@ async function buildBmcuBreakup(reportDate) {
       t.tanker_number, rm.route_name,
       te.id AS execution_id,
       COALESCE(uu2.user_id, uu1.user_id) AS entered_by,
+      dp.name AS delivery_point,
       (SELECT MIN(teb.milk_date) FROM trip_execution_bmcus teb
-        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE) AS lifting_date
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE) AS lifting_date,
+      -- Acknowledgement totals — recorded per CHAMBER for the whole trip
+      -- execution at the delivery point (not per-BMCU), so this is inherently
+      -- trip-level; shown only on the trip's Grand Total row.
+      COALESCE((SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_litres,
+      COALESCE((SELECT SUM(ta.qty_kgs)    FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kgs,
+      COALESCE((SELECT SUM(ta.kg_fat)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_fat,
+      COALESCE((SELECT SUM(ta.kg_snf)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_snf
     FROM trip_plans tp
     LEFT JOIN LATERAL (
       SELECT * FROM trip_executions x
@@ -943,6 +951,7 @@ async function buildBmcuBreakup(reportDate) {
     ) te ON TRUE
     LEFT JOIN tankers t        ON t.id=tp.tanker_id
     LEFT JOIN route_masters rm ON rm.id=tp.route_id
+    LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
     LEFT JOIN users uu1        ON uu1.id=te.executed_by
     LEFT JOIN users uu2        ON uu2.id=te.updated_by
     WHERE tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
@@ -1121,12 +1130,20 @@ async function buildBmcuBreakup(reportDate) {
       const tps = { litres: rN(gt.litres), kgs: rN(gt.kgs),
         fat: wAvg(gt.kg_fat, gt.kgs), snf: wAvg(gt.kg_snf, gt.kgs),
         kg_fat: rN(gt.kg_fat), kg_snf: rN(gt.kg_snf) };
+      const ackKgs = parseFloat(x.ack_kgs) || 0;
+      const ackKgFat = parseFloat(x.ack_kg_fat) || 0;
+      const ackKgSnf = parseFloat(x.ack_kg_snf) || 0;
+      const ack = {
+        litres: rN(x.ack_litres), kgs: rN(ackKgs),
+        fat: wAvg(ackKgFat, ackKgs), snf: wAvg(ackKgSnf, ackKgs),
+        kg_fat: rN(ackKgFat), kg_snf: rN(ackKgSnf),
+      };
       return {
         trip_no: x.trip_no, tanker_number: x.tanker_number, route_name: x.route_name,
-        entered_by: x.entered_by,
+        entered_by: x.entered_by, delivery_point: x.delivery_point,
         lifting_date: fmtDateDisplay(x.lifting_date), bmcus,
         grand: {
-          tps,
+          tps, ack,
           dispatch: { litres: rN(gd.litres), kgs: rN(gd.kgs),
             fat: wAvg(gd.kg_fat, gd.kgs), snf: wAvg(gd.kg_snf, gd.kgs),
             kg_fat: rN(gd.kg_fat), kg_snf: rN(gd.kg_snf) },
@@ -1154,17 +1171,23 @@ const D4 = d => [d.kgs, d.litres, d.kg_fat, d.kg_snf, d.pct];
 // Third Party Sale — trip-level (not per-BMCU), shown as extra columns after
 // the existing 24-column layout; only populated on each trip's Grand Total row.
 const TPS_HEADS = ['Sale Qty (Kgs)', 'Sale Qty (Ltrs)', 'Fat%', 'SNF%', 'Fat Kg', 'SNF Kg'];
-const TPS_COL = 26; // column 25 is a blank spacer after the existing 24-col layout
+// Acknowledgement — trip-level (not per-BMCU, recorded per chamber for the
+// whole trip execution at the delivery point), shown between the Diff group
+// and Third Party Sale; only populated on each trip's Grand Total row.
+const ACK_COL = 25; // columns 20-24 are the 5-col Diff group
+const TPS_COL = 32; // column 31 is a blank spacer after the Ack group (25-30)
 const T6 = t => [t.kgs, t.litres, t.fat, t.snf, t.kg_fat, t.kg_snf];
 
 function addBmcuBreakupSheet(wb, data) {
   const ws = wb.addWorksheet('BMCU breakup');
   // Cols: 1 Route, 2 Lifting Date, 3 Tanker, 4 BMCU Code, 5 BMCU Name, 6 Compartment,
-  //       7-12 dispatch, 13 Shift, 14-19 RMRD, 20-23 diff, 25-30 Third Party Sale
+  //       7-12 dispatch, 13 Shift, 14-19 RMRD, 20-24 diff, 25-30 Acknowledgement,
+  //       31 blank spacer, 32-37 Third Party Sale
   ws.columns = [
     { width: 16 }, { width: 13 }, { width: 14 }, { width: 11 }, { width: 22 }, { width: 12 },
     ...Array(6).fill({ width: 10 }), { width: 8 }, ...Array(6).fill({ width: 10 }),
-    ...Array(5).fill({ width: 10 }), { width: 3 }, ...Array(6).fill({ width: 12 }),
+    ...Array(5).fill({ width: 10 }), ...Array(6).fill({ width: 10 }),
+    { width: 3 }, ...Array(6).fill({ width: 12 }),
   ];
   appendBmcuBreakupBlock(ws, data, 1, { title: true });
   return ws;
@@ -1178,7 +1201,7 @@ function addBmcuBreakupSheet(wb, data) {
 function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
   let r0 = startRow;
   if (title) {
-    ws.mergeCells(r0, 1, r0, 31);
+    ws.mergeCells(r0, 1, r0, 37);
     const t = ws.getCell(r0, 1);
     t.value = `BMCU Break Up Report — ${data.report_date}`;
     t.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
@@ -1186,7 +1209,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     ws.getRow(r0).height = 24;
     r0++;
   } else {
-    ws.mergeCells(r0, 1, r0, 31);
+    ws.mergeCells(r0, 1, r0, 37);
     const t = ws.getCell(r0, 1);
     t.value = `BMCU Break Up — ${data.report_date}`;
     t.font = { bold: true, size: 11, color: { argb: 'FF003A6B' } };
@@ -1206,11 +1229,17 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     c.border = BORDER;
     ws.getCell(hr2, i + 1).border = BORDER;
   });
+  // Group title: use the delivery point name when every trip in this block
+  // shares the same one (as they typically do — a day's report is usually
+  // one delivery point), else fall back to a generic label.
+  const dpNames = [...new Set(data.trips.map(t => t.delivery_point).filter(Boolean))];
+  const ackGroupTitle = dpNames.length === 1 ? `As Per ${dpNames[0]}` : 'As Per Acknowledgement';
   const groups = [
     { title: 'As per the Tanker Dispatch Quantity', fill: 'FFDCFCE7', start: 7,  heads: BK_MEASURES },
     { title: 'Shift',                               fill: 'FFF3F4F6', start: 13, heads: null },
     { title: 'As Per RMRD',                         fill: 'FFE0F2FE', start: 14, heads: BK_MEASURES },
     { title: 'Difference Dispatch Vs RMRD', fill: 'FFFEF3C7', start: 20, heads: ['Qty Kgs', 'Qty Lts', 'KG Fat', 'KG SNF', 'Gain/Loss %'] },
+    { title: ackGroupTitle, fill: 'FFEDE9FE', start: ACK_COL, heads: BK_MEASURES },
     { title: 'Third Party Sale', fill: 'FFF1F5F9', start: TPS_COL, heads: TPS_HEADS },
   ];
   for (const g of groups) {
@@ -1278,6 +1307,8 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
         row.getCell(13).alignment = { horizontal: 'center' };
         M6(r).forEach((v, k) => setNum(row.getCell(14 + k), v, { fill: 'FFF0F9FF' }));
         for (let k = 0; k < 5; k++) setNum(row.getCell(20 + k), null);
+        // Acknowledgement is trip-level only — blank on individual rows.
+        for (let k = 0; k < 6; k++) setNum(row.getCell(ACK_COL + k), null);
         rIdx++;
       });
       // Gross Total per BMCU
@@ -1292,6 +1323,8 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
       setTxt(row.getCell(13), '', { fill: 'FFF8FAFC' });
       M6(b.rmrd).forEach((v, k) => setNum(row.getCell(14 + k), v, { bold: true, fill: 'FFF8FAFC' }));
       D4(b.diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFFEF3C7' }));
+      // Acknowledgement has no valid per-BMCU allocation — blank on Gross Total too.
+      for (let k = 0; k < 6; k++) setNum(row.getCell(ACK_COL + k), null, { fill: 'FFF8FAFC' });
       T6(b.tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFF8FAFC' }));
       rIdx++;
     }
@@ -1306,6 +1339,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     row.getCell(13).alignment = { horizontal: 'center' };
     M6(trip.grand.rmrd).forEach((v, k) => setNum(row.getCell(14 + k), v, { bold: true, fill: 'FFDBEAFE' }));
     D4(trip.grand.diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFDBEAFE' }));
+    M6(trip.grand.ack).forEach((v, k) => setNum(row.getCell(ACK_COL + k), v, { bold: true, fill: 'FFDBEAFE' }));
     T6(trip.grand.tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFDBEAFE' }));
     rIdx += 2; // blank spacer row between trips
   }
@@ -1322,7 +1356,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
       kg_fat: a.kg_fat + (parseFloat(t.grand[key].kg_fat) || 0),
       kg_snf: a.kg_snf + (parseFloat(t.grand[key].kg_snf) || 0),
     }), { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 });
-    const gd = sum6('dispatch'), gr = sum6('rmrd'), gt = sum6('tps');
+    const gd = sum6('dispatch'), gr = sum6('rmrd'), gt = sum6('tps'), ga = sum6('ack');
     const dispatch = { litres: rN(gd.litres), kgs: rN(gd.kgs),
       fat: wAvg(gd.kg_fat, gd.kgs), snf: wAvg(gd.kg_snf, gd.kgs),
       kg_fat: rN(gd.kg_fat), kg_snf: rN(gd.kg_snf) };
@@ -1332,6 +1366,9 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     const tps = { litres: rN(gt.litres), kgs: rN(gt.kgs),
       fat: wAvg(gt.kg_fat, gt.kgs), snf: wAvg(gt.kg_snf, gt.kgs),
       kg_fat: rN(gt.kg_fat), kg_snf: rN(gt.kg_snf) };
+    const ack = { litres: rN(ga.litres), kgs: rN(ga.kgs),
+      fat: wAvg(ga.kg_fat, ga.kgs), snf: wAvg(ga.kg_snf, ga.kgs),
+      kg_fat: rN(ga.kg_fat), kg_snf: rN(ga.kg_snf) };
     const diff = { kgs: rN(gd.kgs - gr.kgs), litres: rN(gd.litres - gr.litres),
       kg_fat: rN(gd.kg_fat - gr.kg_fat), kg_snf: rN(gd.kg_snf - gr.kg_snf),
       pct: (gr.kg_fat + gr.kg_snf) > 0
@@ -1345,13 +1382,14 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     setTxt(row.getCell(13), '', { fill: 'FFBFDBFE' });
     M6(rmrd).forEach((v, k) => setNum(row.getCell(14 + k), v, { bold: true, fill: 'FFBFDBFE' }));
     D4(diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFBFDBFE' }));
+    M6(ack).forEach((v, k) => setNum(row.getCell(ACK_COL + k), v, { bold: true, fill: 'FFBFDBFE' }));
     T6(tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFBFDBFE' }));
     rIdx += 2;
   }
 
   if (data.notes.length) {
     for (const n of data.notes) {
-      ws.mergeCells(rIdx, 1, rIdx, 31);
+      ws.mergeCells(rIdx, 1, rIdx, 37);
       const c = ws.getCell(rIdx, 1);
       c.value = `Note: ${n}`;
       c.font = { italic: true, size: 10, color: { argb: 'FF92400E' } };
