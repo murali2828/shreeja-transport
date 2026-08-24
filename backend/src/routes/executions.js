@@ -282,6 +282,21 @@ router.put('/:id', authenticate, authorize('admin','planner','executor','biller'
     );
     if (!exec.rows.length) return res.status(404).json({ error: 'Execution not found or already closed' });
 
+    // Once a trip is pulled into a billing run (any status, including
+    // draft), its data is frozen for direct edits — billing math must stay
+    // consistent with what the run was executed against. Corrections go
+    // through the Request Changes approval flow instead, or the biller
+    // deletes the billing run first.
+    const inRun = await client.query(
+      `SELECT br.id, br.status FROM billing_run_trips brt
+       JOIN billing_runs br ON br.id = brt.run_id
+       WHERE brt.execution_id = $1 LIMIT 1`, [req.params.id]);
+    if (inRun.rows.length)
+      return res.status(400).json({
+        error: `This trip is part of Billing Run #${inRun.rows[0].id} (${inRun.rows[0].status}) — it can't be edited directly. `
+          + `Use "Request Changes" for an approved correction, or ask the biller to delete/exclude it from the billing run first.`
+      });
+
     const { execution, dist } = await applyExecutionData(
       client, req.params.id, req.body, req.user.id, { setSavedStatus: true }
     );
