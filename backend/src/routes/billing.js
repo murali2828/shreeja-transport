@@ -371,6 +371,9 @@ router.post('/runs/:id/tolls', authenticate, authorize(...canBill), challanUploa
     if (!inRun.rows.length)
       return res.status(400).json({ error: `Tanker ${tanker_number} has no trips in this run` });
     const f = req.file;
+    const existing = await query('SELECT file_data IS NOT NULL AS has_file FROM billing_run_tolls WHERE run_id=$1 AND tanker_number=$2', [req.params.id, tanker_number]);
+    if (!f && !existing.rows[0]?.has_file)
+      return res.status(400).json({ error: `${tanker_number}: a toll challan attachment (PDF/JPG/PNG) is mandatory — choose a file before saving` });
     const r = await query(`
       INSERT INTO billing_run_tolls (run_id, tanker_number, amount, remarks, file_name, file_mime, file_data, created_by)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)

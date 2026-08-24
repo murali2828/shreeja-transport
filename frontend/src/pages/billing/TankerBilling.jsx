@@ -540,6 +540,8 @@ function TollPanel({ runId, tolls, tankers, editable }) {
     const amount = f.amount !== undefined ? f.amount : existing?.amount;
     if (amount === undefined || amount === '' || +amount < 0)
       return toast.error('Enter the toll challan amount');
+    if (!f.file && !existing?.has_file)
+      return toast.error(`${tn}: choose a toll challan attachment (PDF/JPG/PNG) before saving — a record can't be saved without one`, { duration: 7000 });
     const fd = new FormData();
     fd.append('tanker_number', tn);
     fd.append('amount', amount);
