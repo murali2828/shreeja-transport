@@ -255,7 +255,9 @@ export default function TankerBilling() {
   const [label, color] = STATUS_LABEL[run?.status] || ['…', '#666'];
   const trips = run?.trips || [];
   const saleTrips = trips.filter(t => t.is_sale_tanker);
+  const vendorFilterIds = new Set(vendorFilter.map(v => v.id));
   const filteredTrips = trips.filter(t => !t.is_sale_tanker &&
+    (!vendorFilterIds.size || vendorFilterIds.has(t.vendor_id)) &&
     (!searchRoute || (t.route_name || '').toLowerCase().includes(searchRoute.toLowerCase())) &&
     (!searchTanker || (t.tanker_number || '').toLowerCase().includes(searchTanker.toLowerCase())));
   const missing = trips.filter(t => !t.is_sale_tanker && (!val(t, 'state') || t.rate_per_km == null)).length;
@@ -279,7 +281,6 @@ export default function TankerBilling() {
         </div>
         <span className="px-3 py-1 rounded-full text-xs font-bold text-white" style={{ background: color }}>{label}</span>
         <div className="flex-1" />
-        <VendorFilterPicker vendorList={vendorList || []} selected={vendorFilter} onChange={setVendorFilter}/>
         <div className="text-right text-white">
           <div className="text-[11px] opacity-85">Total Payable</div>
           <div className="text-xl font-bold">₹ {nf(run?.total_amount)}</div>
@@ -360,6 +361,7 @@ export default function TankerBilling() {
             {l}
           </button>
         ))}
+        <VendorFilterPicker vendorList={vendorList || []} selected={vendorFilter} onChange={setVendorFilter}/>
         {tab === 'trips' && (<>
           <input type="text" placeholder="Search route…" value={searchRoute}
                  onChange={e => setSearchRoute(e.target.value)}
@@ -684,7 +686,8 @@ function VendorFilterPicker({ vendorList, selected, onChange }) {
         ))}
         <input type="text" placeholder={selected.length ? 'add vendor…' : 'Filter by vendor…'}
                className="input text-xs py-1 px-2 w-40" value={q}
-               onFocus={() => setOpen(true)} onChange={e => { setQ(e.target.value); setOpen(true); }}/>
+               onFocus={() => setOpen(true)} onChange={e => { setQ(e.target.value); setOpen(true); }}
+               onBlur={() => setTimeout(() => setOpen(false), 150)}/>
         {selected.length > 0 && (
           <button className="text-[11px] text-white/80 underline" onClick={() => onChange([])}>clear</button>
         )}
@@ -694,11 +697,10 @@ function VendorFilterPicker({ vendorList, selected, onChange }) {
           {matches.length === 0 && <div className="px-3 py-2 text-gray-400">No matching vendor.</div>}
           {matches.map(v => (
             <button key={v.id} className="w-full text-left px-3 py-1.5 hover:bg-blue-50"
-                    onClick={() => { onChange([...selected, v]); setQ(''); }}>
+                    onClick={() => { onChange([...selected, v]); setQ(''); setOpen(false); }}>
               {v.vendor_name}
             </button>
           ))}
-          <button className="w-full text-center px-3 py-1 text-gray-400 hover:bg-gray-50 border-t" onClick={() => setOpen(false)}>close</button>
         </div>
       )}
     </div>
