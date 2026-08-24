@@ -456,7 +456,9 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
 
   // Grand totals row
   writeTotalRow(ri, `TOTAL — ${rows.length} trips`, rows, 'FFDBEAFE', true);
+  ri++;
 
+  ws._nextFreeRow = ri; // next free row below this day's block, for appending the BMCU breakup
   return ws;
 }
 
@@ -690,10 +692,22 @@ async function buildTsWorkbookFull(reportDate, basis = 'plan') {
   const days = monthToDate(reportDate);
   const rowsByDay = {};
   for (const day of days) rowsByDay[day] = await buildTsReport(day, basis);
-  for (const day of days) addTsSheet(wb, rowsByDay[day], ddmm(day), day, basis);
+  const breakupByDay = {};
+  for (const day of days) {
+    const ws = addTsSheet(wb, rowsByDay[day], ddmm(day), day, basis);
+    // Item #7: append that same day's BMCU breakup directly below its
+    // day-wise TS block, in the same sheet (in addition to the standalone
+    // 'BMCU breakup' sheet below, which some downstream users still rely on).
+    const dayBreakup = await buildBmcuBreakup(day);
+    breakupByDay[day] = dayBreakup;
+    if (dayBreakup.trips.length) {
+      ws.getCell(ws._nextFreeRow + 1, 1).value = null; // spacer row
+      appendBmcuBreakupBlock(ws, dayBreakup, ws._nextFreeRow + 2, { title: true });
+    }
+  }
   await addMilkShiftingSheet(wb, days);
   addConsolidatedSheet(wb, days, rowsByDay);
-  const breakup = await buildBmcuBreakup(reportDate);
+  const breakup = breakupByDay[reportDate] || await buildBmcuBreakup(reportDate);
   addBmcuBreakupSheet(wb, breakup);
   // Open on the report date's day sheet (e.g. '03.08' when run for 03.08.2026).
   wb.views = [{ x: 0, y: 0, width: 20000, height: 20000,
@@ -1080,25 +1094,45 @@ function addBmcuBreakupSheet(wb, data) {
     ...Array(6).fill({ width: 10 }), { width: 8 }, ...Array(6).fill({ width: 10 }),
     ...Array(5).fill({ width: 10 }),
   ];
+  appendBmcuBreakupBlock(ws, data, 1, { title: true });
+  return ws;
+}
 
-  ws.mergeCells(1, 1, 1, 24);
-  const title = ws.getCell(1, 1);
-  title.value = `BMCU Break Up Report — ${data.report_date}`;
-  title.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
-  title.alignment = { vertical: 'middle', horizontal: 'left' };
-  ws.getRow(1).height = 24;
+// Writes a BMCU breakup block (title/header/rows/notes, same layout as the
+// standalone 'BMCU breakup' sheet) into an existing worksheet starting at
+// `startRow`, returning the next free row index below the block. Used both
+// by the standalone sheet (startRow=1) and to append a day's BMCU breakup
+// directly underneath that day's TS day-wise block in the same sheet.
+function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
+  let r0 = startRow;
+  if (title) {
+    ws.mergeCells(r0, 1, r0, 24);
+    const t = ws.getCell(r0, 1);
+    t.value = `BMCU Break Up Report — ${data.report_date}`;
+    t.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
+    t.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws.getRow(r0).height = 24;
+    r0++;
+  } else {
+    ws.mergeCells(r0, 1, r0, 24);
+    const t = ws.getCell(r0, 1);
+    t.value = `BMCU Break Up — ${data.report_date}`;
+    t.font = { bold: true, size: 11, color: { argb: 'FF003A6B' } };
+    r0++;
+  }
 
-  // Header rows 2-3
+  // Header rows (2 rows, grouped)
+  const hr1 = r0, hr2 = r0 + 1;
   const infoHeaders = ['Route Name', 'Milk Lifting Date', 'Tanker NO', 'BMCU Code', 'BMCUs Name', 'Compartment'];
   infoHeaders.forEach((h, i) => {
-    ws.mergeCells(2, i + 1, 3, i + 1);
-    const c = ws.getCell(2, i + 1);
+    ws.mergeCells(hr1, i + 1, hr2, i + 1);
+    const c = ws.getCell(hr1, i + 1);
     c.value = h;
     c.font = { bold: true, color: { argb: HEADER_TEXT } };
     c.fill = fillOf('FFF3F4F6');
     c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     c.border = BORDER;
-    ws.getCell(3, i + 1).border = BORDER;
+    ws.getCell(hr2, i + 1).border = BORDER;
   });
   const groups = [
     { title: 'As per the Tanker Dispatch Quantity', fill: 'FFDCFCE7', start: 7,  heads: BK_MEASURES },
@@ -1108,32 +1142,32 @@ function addBmcuBreakupSheet(wb, data) {
   ];
   for (const g of groups) {
     if (!g.heads) { // single Shift column spans both header rows
-      ws.mergeCells(2, g.start, 3, g.start);
-      const c = ws.getCell(2, g.start);
+      ws.mergeCells(hr1, g.start, hr2, g.start);
+      const c = ws.getCell(hr1, g.start);
       c.value = g.title;
       c.font = { bold: true, color: { argb: HEADER_TEXT } };
       c.fill = fillOf(g.fill);
       c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-      c.border = BORDER; ws.getCell(3, g.start).border = BORDER;
+      c.border = BORDER; ws.getCell(hr2, g.start).border = BORDER;
       continue;
     }
-    ws.mergeCells(2, g.start, 2, g.start + g.heads.length - 1);
-    const gc = ws.getCell(2, g.start);
+    ws.mergeCells(hr1, g.start, hr1, g.start + g.heads.length - 1);
+    const gc = ws.getCell(hr1, g.start);
     gc.value = g.title;
     gc.font = { bold: true, color: { argb: HEADER_TEXT } };
     gc.fill = fillOf(g.fill);
     gc.alignment = { vertical: 'middle', horizontal: 'center' };
     g.heads.forEach((h, i) => {
-      const c = ws.getCell(3, g.start + i);
+      const c = ws.getCell(hr2, g.start + i);
       c.value = h;
       c.font = { bold: true, size: 10, color: { argb: HEADER_TEXT } };
       c.fill = fillOf(g.fill);
       c.alignment = { vertical: 'middle', horizontal: 'center' };
       c.border = BORDER;
     });
-    for (let i = 0; i < g.heads.length; i++) ws.getCell(2, g.start + i).border = BORDER;
+    for (let i = 0; i < g.heads.length; i++) ws.getCell(hr1, g.start + i).border = BORDER;
   }
-  ws.getRow(2).height = 22;
+  ws.getRow(hr1).height = 22;
 
   const setNum = (cell, v, { diff = false, bold = false, fill = null } = {}) => {
     cell.value = v == null ? null : parseFloat(v);
@@ -1152,7 +1186,7 @@ function addBmcuBreakupSheet(wb, data) {
     if (bold || color) cell.font = { bold, color: { argb: color || HEADER_TEXT } };
   };
 
-  let rIdx = 4;
+  let rIdx = hr2 + 1;
   for (const trip of data.trips) {
     for (const b of trip.bmcus) {
       const blockRows = b.rows.length ? b.rows : [{ type: 'shift', label: b.bmcu_name, shift: '',
@@ -1210,7 +1244,7 @@ function addBmcuBreakupSheet(wb, data) {
       rIdx++;
     }
   }
-  return ws;
+  return rIdx;
 }
 
 function buildBmcuBreakupWorkbook(data) {
