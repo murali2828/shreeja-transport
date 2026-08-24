@@ -269,6 +269,18 @@ async function decideRequest(crId, decision, decider, note) {
     const cr = crRes.rows[0];
 
     if (decision === 'approve') {
+      // Defense-in-depth: the trip may have been pulled into a billing run
+      // after the request was created (race between requester and biller).
+      // Re-check right before applying so we never silently stale a billing run.
+      const inRun = await client.query(
+        `SELECT br.id, br.status FROM billing_run_trips brt
+         JOIN billing_runs br ON br.id = brt.run_id
+         WHERE brt.execution_id = $1 LIMIT 1`, [cr.execution_id]);
+      if (inRun.rows.length)
+        throw Object.assign(new Error(
+          `This trip is now part of Billing Run #${inRun.rows[0].id} (${inRun.rows[0].status}) — it can't be approved. Ask the biller to remove/delete it from the billing run first, then re-submit the change request.`
+        ), { code: 400 });
+
       // Apply via the shared write path; closed status stays closed.
       // Snapshot before/after inside the transaction for the field-level change log.
       let beforeSnap = null;
@@ -325,6 +337,13 @@ router.post('/executions/:id', authenticate, async (req, res) => {
     const execInfo = execRes.rows[0];
     if (execInfo.status !== 'closed')
       return res.status(400).json({ error: 'Change requests are only for CLOSED trips — open trips can be edited directly' });
+
+    const inRun = await query(
+      `SELECT br.id, br.status FROM billing_run_trips brt
+       JOIN billing_runs br ON br.id = brt.run_id
+       WHERE brt.execution_id = $1 LIMIT 1`, [req.params.id]);
+    if (inRun.rows.length)
+      return res.status(400).json({ error: `This trip is part of Billing Run #${inRun.rows[0].id} (${inRun.rows[0].status}) — remove/delete it from the billing run before requesting changes.` });
 
     const pending = await query(
       "SELECT id FROM execution_change_requests WHERE execution_id=$1 AND status='pending'", [req.params.id]);
