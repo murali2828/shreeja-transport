@@ -935,14 +935,7 @@ async function buildBmcuBreakup(reportDate) {
       COALESCE(uu2.user_id, uu1.user_id) AS entered_by,
       dp.name AS delivery_point,
       (SELECT MIN(teb.milk_date) FROM trip_execution_bmcus teb
-        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE) AS lifting_date,
-      -- Acknowledgement totals — recorded per CHAMBER for the whole trip
-      -- execution at the delivery point (not per-BMCU), so this is inherently
-      -- trip-level; shown only on the trip's Grand Total row.
-      COALESCE((SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_litres,
-      COALESCE((SELECT SUM(ta.qty_kgs)    FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kgs,
-      COALESCE((SELECT SUM(ta.kg_fat)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_fat,
-      COALESCE((SELECT SUM(ta.kg_snf)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_snf
+        WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE) AS lifting_date
     FROM trip_plans tp
     LEFT JOIN LATERAL (
       SELECT * FROM trip_executions x
@@ -1009,6 +1002,22 @@ async function buildBmcuBreakup(reportDate) {
     GROUP BY execution_id, bmcu_seq_no`, [execIds]);
   const tpsByBlock = {};
   for (const t of tpsRes.rows) tpsByBlock[`${t.execution_id}:${t.bmcu_seq_no}`] = t;
+
+  // Acknowledgement totals — recorded per CHAMBER for the whole trip execution
+  // at the delivery point (not per-BMCU), so this is inherently trip-level.
+  // Summed per chamber (a chamber can have more than one ack row, e.g.
+  // multiple entries/dates) so each chamber renders as a single break-up row.
+  const ackRes = await query(`
+    SELECT execution_id, chamber,
+           COALESCE(SUM(qty_litres),0) AS litres, COALESCE(SUM(qty_kgs),0) AS kgs,
+           COALESCE(SUM(kg_fat),0) AS kg_fat, COALESCE(SUM(kg_snf),0) AS kg_snf
+    FROM trip_acknowledgements
+    WHERE execution_id = ANY($1)
+    GROUP BY execution_id, chamber
+    ORDER BY execution_id,
+      CASE chamber WHEN 'FC' THEN 1 WHEN 'MC' THEN 2 WHEN 'BC' THEN 3 ELSE 4 END`, [execIds]);
+  const ackByExec = {};
+  for (const a of ackRes.rows) (ackByExec[a.execution_id] ||= []).push(a);
 
   // Block index: (execId, seqNo) → block, plus bmcuId → blocks (to place source-side
   // deduction rows for internal shifting, preferring the same trip).
@@ -1130,18 +1139,29 @@ async function buildBmcuBreakup(reportDate) {
       const tps = { litres: rN(gt.litres), kgs: rN(gt.kgs),
         fat: wAvg(gt.kg_fat, gt.kgs), snf: wAvg(gt.kg_snf, gt.kgs),
         kg_fat: rN(gt.kg_fat), kg_snf: rN(gt.kg_snf) };
-      const ackKgs = parseFloat(x.ack_kgs) || 0;
-      const ackKgFat = parseFloat(x.ack_kg_fat) || 0;
-      const ackKgSnf = parseFloat(x.ack_kg_snf) || 0;
+      // Acknowledgement — one row per chamber (FC/MC/BC) that has data, plus
+      // the Grand Total row's Acknowledgement cells = the sum across chambers.
+      const ackChambers = (ackByExec[x.execution_id] || []).map(a => {
+        const kgs = parseFloat(a.kgs) || 0;
+        const kgFat = parseFloat(a.kg_fat) || 0;
+        const kgSnf = parseFloat(a.kg_snf) || 0;
+        return {
+          chamber: a.chamber,
+          litres: rN(a.litres), kgs: rN(kgs),
+          fat: wAvg(kgFat, kgs), snf: wAvg(kgSnf, kgs),
+          kg_fat: rN(kgFat), kg_snf: rN(kgSnf),
+        };
+      });
+      const ga2 = sum6(ackChambers);
       const ack = {
-        litres: rN(x.ack_litres), kgs: rN(ackKgs),
-        fat: wAvg(ackKgFat, ackKgs), snf: wAvg(ackKgSnf, ackKgs),
-        kg_fat: rN(ackKgFat), kg_snf: rN(ackKgSnf),
+        litres: rN(ga2.litres), kgs: rN(ga2.kgs),
+        fat: wAvg(ga2.kg_fat, ga2.kgs), snf: wAvg(ga2.kg_snf, ga2.kgs),
+        kg_fat: rN(ga2.kg_fat), kg_snf: rN(ga2.kg_snf),
       };
       return {
         trip_no: x.trip_no, tanker_number: x.tanker_number, route_name: x.route_name,
         entered_by: x.entered_by, delivery_point: x.delivery_point,
-        lifting_date: fmtDateDisplay(x.lifting_date), bmcus,
+        lifting_date: fmtDateDisplay(x.lifting_date), bmcus, ack_chambers: ackChambers,
         grand: {
           tps, ack,
           dispatch: { litres: rN(gd.litres), kgs: rN(gd.kgs),
@@ -1328,12 +1348,32 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
       T6(b.tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFF8FAFC' }));
       rIdx++;
     }
+    // Acknowledgement break-up — one row per chamber (FC/MC/BC) that actually
+    // has ack data for this trip, positioned after the last BMCU's Gross
+    // Total and before the trip's Grand Total (which then sums these rows).
+    // Trip-level, not per-BMCU, so every other column group stays blank here.
+    for (const a of trip.ack_chambers) {
+      const row = ws.getRow(rIdx);
+      setTxt(row.getCell(1), trip.route_name);
+      setTxt(row.getCell(2), trip.lifting_date);
+      setTxt(row.getCell(3), trip.tanker_number, { color: 'FF005BA3', bold: true });
+      setTxt(row.getCell(4), '');
+      setTxt(row.getCell(5), 'Acknowledgement', { color: 'FF6D28D9' });
+      setTxt(row.getCell(6), a.chamber);
+      for (let k = 0; k < 6; k++) setNum(row.getCell(7 + k), null);
+      setTxt(row.getCell(13), '');
+      for (let k = 0; k < 6; k++) setNum(row.getCell(14 + k), null);
+      for (let k = 0; k < 5; k++) setNum(row.getCell(20 + k), null);
+      M6(a).forEach((v, k) => setNum(row.getCell(ACK_COL + k), v, { fill: 'FFF5F3FF' }));
+      for (let k = 0; k < 6; k++) setNum(row.getCell(TPS_COL + k), null);
+      rIdx++;
+    }
     // Grand Total per trip (cell 1 carries the entered-by user id)
     const row = ws.getRow(rIdx);
     setTxt(row.getCell(1), trip.entered_by ? `Entered by: ${trip.entered_by}` : '', { fill: 'FFDBEAFE' });
     for (let k = 2; k <= 4; k++) setTxt(row.getCell(k), '', { fill: 'FFDBEAFE' });
     setTxt(row.getCell(5), 'Grand Total', { bold: true, fill: 'FFDBEAFE' });
-    setTxt(row.getCell(6), '', { fill: 'FFDBEAFE' });
+    setTxt(row.getCell(6), trip.ack_chambers.length ? trip.ack_chambers.map(a => a.chamber).join('&') : '', { fill: 'FFDBEAFE' });
     M6(trip.grand.dispatch).forEach((v, k) => setNum(row.getCell(7 + k), v, { bold: true, fill: 'FFDBEAFE' }));
     setTxt(row.getCell(13), 'E & M', { bold: true, fill: 'FFDBEAFE' });
     row.getCell(13).alignment = { horizontal: 'center' };
