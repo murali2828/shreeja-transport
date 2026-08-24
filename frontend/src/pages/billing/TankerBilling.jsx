@@ -10,6 +10,7 @@ import toast from 'react-hot-toast';
 import { ChevronDown, ChevronRight, Download, Send, Trash2, Play, ArrowLeft } from 'lucide-react';
 import api from '../../api';
 import { useAuth } from '../../hooks/useAuth';
+import { fmtDate } from '../../utils/date';
 
 const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -228,7 +229,7 @@ export default function TankerBilling() {
               return (
                 <tr key={r.id} className="border-t border-gray-100 hover:bg-blue-50/50 cursor-pointer" onClick={() => setOpenRunId(r.id)}>
                   <td className="px-3 py-2 font-bold text-[#005ba3]">#{r.id}</td>
-                  <td className="px-3 py-2">{r.from_date} → {r.to_date}</td>
+                  <td className="px-3 py-2">{fmtDate(r.from_date)} → {fmtDate(r.to_date)}</td>
                   <td className="px-3 py-2">{r.trip_count}</td>
                   <td className="px-3 py-2 text-right font-semibold">{nf(r.total_amount)}</td>
                   <td className="px-3 py-2"><span className="font-semibold" style={{ color }}>{label}</span></td>
@@ -273,7 +274,7 @@ export default function TankerBilling() {
         <div>
           <h2 className="page-title">Billing Run #{openRunId}</h2>
           <p className="text-xs" style={{ color: 'rgba(255,255,255,0.92)' }}>
-            {run?.from_date} → {run?.to_date} · {trips.length} acknowledged trips {isFetching && '· loading…'}
+            {fmtDate(run?.from_date)} → {fmtDate(run?.to_date)} · {trips.length} acknowledged trips {isFetching && '· loading…'}
           </p>
         </div>
         <span className="px-3 py-1 rounded-full text-xs font-bold text-white" style={{ background: color }}>{label}</span>
@@ -759,7 +760,7 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
                onChange={e => setEdit(t.id, 'excluded', e.target.checked)}/>
       </td>
       <td className="px-2 py-1.5 whitespace-nowrap">
-        {t.plan_for_date}
+        {fmtDate(t.plan_for_date)}
         {carried && <span className="ml-1 px-1 rounded bg-amber-500 text-white text-[10px]" title="Late acknowledgement — carried forward from the previous fortnight">carry-fwd</span>}
       </td>
       <td className="px-2 py-1.5 font-semibold text-[#005ba3] whitespace-nowrap">
@@ -996,7 +997,7 @@ function PaymentReport() {
                   <tbody>
                     {data.trips.map((t, i) => (
                       <tr key={i} className="border-t border-gray-100">
-                        <td className="px-2 py-1.5 whitespace-nowrap">{t.plan_for_date}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{fmtDate(t.plan_for_date)}</td>
                         <td className="px-2 py-1.5">#{t.run_id}</td>
                         <td className="px-2 py-1.5">{t.run_status}</td>
                         <td className="px-2 py-1.5 font-semibold text-[#005ba3]">{t.tanker_number}</td>

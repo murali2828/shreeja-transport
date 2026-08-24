@@ -7,9 +7,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Download, Mail, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getDailyTSReport, downloadTSExcel, sendDailyReport } from '../../api/index';
+import { fmtDate } from '../../utils/date';
 
 const today = () => new Date().toISOString().slice(0, 10);
-const fmtD  = d => d ? String(d).slice(0, 10) : '—';
+const fmtD  = d => d ? fmtDate(d) : '—';
 const n2 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const n4 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 

@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Check, X, ChevronDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getChangeRequests, getChangeRequest, decideChangeRequest } from '../../api/index';
+import { fmtDate } from '../../utils/date';
 
 const STATUS_STYLE = {
   pending:  'bg-amber-100 text-amber-700',
@@ -88,7 +89,7 @@ function RequestCard({ cr, isApprover, onDecided }) {
       <div className="flex flex-wrap items-center gap-2 cursor-pointer" onClick={() => setOpen(o => !o)}>
         <span className="font-semibold text-gray-800">#{cr.id}</span>
         <span className="text-sm text-gray-700">
-          Trip #{cr.trip_no} — {cr.tanker_number} · {String(cr.execution_date).slice(0, 10)}
+          Trip #{cr.trip_no} — {cr.tanker_number} · {fmtDate(cr.execution_date)}
         </span>
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[cr.status]}`}>{cr.status}</span>
         <span className="text-xs text-gray-500 ml-auto">

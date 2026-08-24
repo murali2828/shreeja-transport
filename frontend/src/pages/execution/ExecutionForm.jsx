@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, getStartingPoints, cancelExecution, getExecutionDistance, getChangeRequests, createChangeRequest, getTripDocPlan, printTripDoc } from '../../api/index';
 import { printGatePass, printCoa } from '../../utils/printDocs';
 import { useAuth } from '../../hooks/useAuth';
+import { fmtDate } from '../../utils/date';
 
 const KG = 1.0285;
 const calc = {
@@ -935,7 +936,7 @@ export default function ExecutionForm() {
             Trip #{exec.trip_no} — {exec.tanker_number}
           </h2>
           <p className="text-xs font-medium" style={{ color: 'rgba(255,255,255,0.85)' }}>
-            {exec.execution_date?.slice(0,10)}
+            {fmtDate(exec.execution_date)}
             {exec.shifts_milk && <> · <span style={{ color: 'white' }}>{exec.shifts_milk}</span></>}
             {exec.route_name  && <> · <span style={{ color: 'white' }}>{exec.route_name}</span></>}
             {exec.delivery_point_name && <> · {exec.delivery_point_name}</>}
@@ -1331,7 +1332,7 @@ export default function ExecutionForm() {
             Acknowledgement {staging && <span className="text-sky-600 font-normal text-xs">(editing — staged for approval)</span>}
           </h3>
           <div className="text-xs text-gray-500 mb-1">
-            Date: <strong className="text-gray-700">{exec.acknowledgements[0]?.ack_date?.slice(0,10)}</strong>
+            Date: <strong className="text-gray-700">{fmtDate(exec.acknowledgements[0]?.ack_date)}</strong>
             {exec.acknowledgements[0]?.entered_by_user_id && (
               <> · Entered by: <strong className="text-gray-700 font-mono">{exec.acknowledgements[0].entered_by_user_id}</strong></>
             )}
