@@ -50,10 +50,13 @@ async function snapshotExecution(db, execId) {
     'SELECT * FROM trip_execution_bmcu_entries WHERE execution_id=$1 ORDER BY bmcu_seq_no, id', [execId]);
   const acks = await db.query(
     'SELECT * FROM trip_acknowledgements WHERE execution_id=$1 ORDER BY chamber', [execId]);
+  const thirdPartySales = await db.query(
+    'SELECT * FROM trip_third_party_sales WHERE execution_id=$1 ORDER BY id', [execId]);
   return {
     actual_km: exec.rows[0]?.actual_km,
     bmcus: bmcus.rows, shift_rows: shifts.rows,
     entries: entries.rows, acknowledgements: acks.rows,
+    third_party_sales: thirdPartySales.rows,
   };
 }
 
@@ -115,6 +118,11 @@ function buildDiffHtml(snapshot, changes) {
     { key: 'snf_pct', label: 'SNF%' }, { key: 'temperature', label: 'Temp' },
     { key: 'description', label: 'Description' },
   ];
+  const tpsFields = [
+    { key: 'qty_litres', label: 'Sale Qty L' }, { key: 'fat_pct', label: 'Fat%' },
+    { key: 'snf_pct', label: 'SNF%' }, { key: 'customer_name', label: 'Customer Name' },
+    { key: 'remarks', label: 'Remarks' },
+  ];
 
   const kmDiff = (parseFloat(snapshot.actual_km) || 0) !== (parseFloat(changes.actual_km) || 0)
     ? `<p style="font-family:sans-serif;font-size:13px;">Actual KM: <s>${cell(snapshot.actual_km)}</s> → <b style="background:#fef3c7;">${cell(changes.actual_km)}</b></p>` : '';
@@ -128,6 +136,8 @@ function buildDiffHtml(snapshot, changes) {
         (r, i) => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`, r => `BMCU #${r?.bmcu_seq_no} ${r?.kind || ''}`, entryFields)
     + diffRowsHtml('Acknowledgement', snapshot.acknowledgements, changes.acknowledgements,
         r => r.chamber, r => `Chamber ${r?.chamber}`, ackFields)
+    + diffRowsHtml('Third Party Sale', snapshot.third_party_sales, changes.third_party_sales,
+        (r, i) => `${r.id ?? i}`, r => `${r?.customer_name || 'Sale'}`, tpsFields)
     || '<p style="font-family:sans-serif;font-size:13px;color:#6b7280;">(No field-level differences detected — review in the portal.)</p>';
 }
 
@@ -182,6 +192,9 @@ function compactDiffHtml(snapshot, changes) {
     ['Acknowledgement', snapshot.acknowledgements, changes.acknowledgements, r => r.chamber,
       r => `Chamber ${r?.chamber}`,
       [['qty_litres','Qty Litres'],['fat_pct','Fat%'],['snf_pct','SNF%'],['temperature','Temp']]],
+    ['Third Party Sale', snapshot.third_party_sales, changes.third_party_sales, (r, i) => `${r.id ?? i}`,
+      r => `${r?.customer_name || 'Sale'}`,
+      [['qty_litres','Sale Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%'],['customer_name','Customer Name']]],
   ];
   const td = (v, extra = '') => `<td style="padding:4px 8px;border:1px solid #e5e7eb;${extra}">${v}</td>`;
   let rows = '';

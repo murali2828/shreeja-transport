@@ -36,6 +36,31 @@ const {
   }
 })();
 
+// Ensure the Third Party Sale table exists (also created by migration 032).
+(async () => {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS trip_third_party_sales (
+        id             SERIAL PRIMARY KEY,
+        execution_id   INTEGER NOT NULL REFERENCES trip_executions(id) ON DELETE CASCADE,
+        qty_litres     NUMERIC(10,2),
+        qty_kgs        NUMERIC(12,4),
+        fat_pct        NUMERIC(6,3),
+        snf_pct        NUMERIC(6,3),
+        kg_fat         NUMERIC(12,4),
+        kg_snf         NUMERIC(12,4),
+        customer_name  VARCHAR(100),
+        remarks        TEXT,
+        entered_by     INTEGER REFERENCES users(id),
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS ttps_exec_idx ON trip_third_party_sales (execution_id)`);
+  } catch (err) {
+    console.error('Migration error (trip_third_party_sales):', err.message);
+  }
+})();
+
 // GET /api/executions
 router.get('/', authenticate, async (req, res) => {
   try {
@@ -205,7 +230,12 @@ router.get('/:id', authenticate, async (req, res) => {
       [req.params.id]
     );
 
-    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entries.rows });
+    const thirdPartySales = await query(
+      'SELECT * FROM trip_third_party_sales WHERE execution_id=$1 ORDER BY id',
+      [req.params.id]
+    );
+
+    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entries.rows, third_party_sales: thirdPartySales.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

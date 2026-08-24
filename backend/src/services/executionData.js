@@ -160,7 +160,8 @@ async function assertWithinCapacity(client, execId) {
 async function applyExecutionData(client, execId, data, userId, opts = {}) {
   const { setSavedStatus = false } = opts;
   const { actual_km, delivery_point_id, start_point_id,
-          bmcus, shift_rows, entries, ack_date, acknowledgements } = data || {};
+          bmcus, shift_rows, entries, ack_date, acknowledgements,
+          third_party_sales } = data || {};
 
   const exec = await client.query('SELECT * FROM trip_executions WHERE id=$1', [execId]);
   if (!exec.rows.length) throw new Error('Execution not found');
@@ -273,6 +274,26 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     }
   }
 
+  // Third party sale (replace-all) — milk sold directly to a buyer, off the
+  // trip's normal BMCU/plant chain. Trip-level (not tied to one BMCU), so it
+  // lives in its own table rather than trip_execution_bmcu_entries.
+  if (third_party_sales !== undefined) {
+    await client.query('DELETE FROM trip_third_party_sales WHERE execution_id=$1', [execId]);
+    for (const s of (third_party_sales || [])) {
+      const kgs   = calcKgs(s.qty_litres);
+      const kgFat = calcKgFat(kgs, s.fat_pct);
+      const kgSnf = calcKgSnf(kgs, s.snf_pct);
+      await client.query(
+        `INSERT INTO trip_third_party_sales
+           (execution_id, qty_litres, qty_kgs, fat_pct, snf_pct, kg_fat, kg_snf, customer_name, remarks, entered_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [execId, s.qty_litres||null, kgs||null, s.fat_pct||null, s.snf_pct||null,
+         kgFat||null, kgSnf||null, (s.customer_name||'').trim() || null,
+         (s.remarks||'').trim() || null, userId || null]
+      );
+    }
+  }
+
   // Capacity guard: no volume area may exceed 110% of the tanker's registered
   // capacity. Throws (code 400) → the caller's transaction rolls back. Covers
   // the PUT save AND change-request approval, since both route through here.
@@ -292,6 +313,22 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     [execId]
   );
   const t = totals.rows[0];
+
+  // Third Party Sale reduces the dispatch/TS totals — milk sold directly to a
+  // buyer never reaches a BMCU/plant, so it must not be counted as dispatched.
+  const tpsTotals = await client.query(`
+    SELECT
+      COALESCE(SUM(qty_litres),0) AS tps_litres,
+      COALESCE(SUM(qty_kgs),0)    AS tps_kgs,
+      COALESCE(SUM(kg_fat),0)     AS tps_kg_fat,
+      COALESCE(SUM(kg_snf),0)     AS tps_kg_snf
+    FROM trip_third_party_sales WHERE execution_id=$1`, [execId]);
+  const tps = tpsTotals.rows[0];
+  t.total_litres = parseFloat(t.total_litres) - parseFloat(tps.tps_litres);
+  t.total_kgs    = parseFloat(t.total_kgs)    - parseFloat(tps.tps_kgs);
+  t.total_kg_fat = parseFloat(t.total_kg_fat) - parseFloat(tps.tps_kg_fat);
+  t.total_kg_snf = parseFloat(t.total_kg_snf) - parseFloat(tps.tps_kg_snf);
+
   const avgFat = t.total_kgs > 0 ? (t.total_kg_fat / t.total_kgs) * 100 : 0;
   const avgSnf = t.total_kgs > 0 ? (t.total_kg_snf / t.total_kgs) * 100 : 0;
 

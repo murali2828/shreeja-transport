@@ -62,7 +62,16 @@ async function buildTsReport(reportDate, basis = 'plan') {
       COALESCE((SELECT SUM(ta.qty_litres) FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_litres,
       COALESCE((SELECT SUM(ta.qty_kgs)    FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kgs,
       COALESCE((SELECT SUM(ta.kg_fat)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_fat,
-      COALESCE((SELECT SUM(ta.kg_snf)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_snf
+      COALESCE((SELECT SUM(ta.kg_snf)     FROM trip_acknowledgements ta WHERE ta.execution_id=te.id),0) AS ack_kg_snf,
+
+      -- Third Party Sale totals: milk sold directly to a buyer, off the
+      -- trip's dispatch/BMCU chain (already excluded from disp_* above,
+      -- since applyExecutionData's dispatch total is net of it — see
+      -- services/executionData.js). Shown here as its own column group.
+      COALESCE((SELECT SUM(s.qty_litres) FROM trip_third_party_sales s WHERE s.execution_id=te.id),0) AS tps_litres,
+      COALESCE((SELECT SUM(s.qty_kgs)    FROM trip_third_party_sales s WHERE s.execution_id=te.id),0) AS tps_kgs,
+      COALESCE((SELECT SUM(s.kg_fat)     FROM trip_third_party_sales s WHERE s.execution_id=te.id),0) AS tps_kg_fat,
+      COALESCE((SELECT SUM(s.kg_snf)     FROM trip_third_party_sales s WHERE s.execution_id=te.id),0) AS tps_kg_snf
     FROM trip_plans tp
     LEFT JOIN LATERAL (
       SELECT * FROM trip_executions x
@@ -169,6 +178,13 @@ async function buildTsReport(reportDate, basis = 'plan') {
     const rmrd = rmrdByExec[row.execution_id] || { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
     const hasAck = row.ack_count > 0;
     const hasExec = !!row.execution_id;
+    // Third Party Sale: milk sold directly to a buyer never reached a
+    // BMCU/plant, so it's netted OUT of the Dispatch (TS) totals here —
+    // the SQL's disp_* fields above are the gross trip_execution_bmcus sum.
+    row.disp_litres = parseFloat(row.disp_litres) - parseFloat(row.tps_litres);
+    row.disp_kgs    = parseFloat(row.disp_kgs)    - parseFloat(row.tps_kgs);
+    row.disp_kg_fat = parseFloat(row.disp_kg_fat) - parseFloat(row.tps_kg_fat);
+    row.disp_kg_snf = parseFloat(row.disp_kg_snf) - parseFloat(row.tps_kg_snf);
     // Weighted Fat% / SNF% per section = Kg.Fat / Qty Kgs × 100 (same for SNF)
     const pct = (kgPart, kgs) => (parseFloat(kgs) > 0) ? rN(parseFloat(kgPart) / parseFloat(kgs) * 100) : null;
     const rmrdFat = pct(rmrd.kg_fat, rmrd.kgs), rmrdSnf = pct(rmrd.kg_snf, rmrd.kgs);
@@ -230,6 +246,14 @@ async function buildTsReport(reportDate, basis = 'plan') {
       dr_kg_fat: hasAck ? d(row.ack_kg_fat, rmrd.kg_fat) : null,
       dr_kg_snf: hasAck ? d(row.ack_kg_snf, rmrd.kg_snf) : null,
       dr_pct:    hasAck ? gain(d(row.ack_kg_fat, rmrd.kg_fat), d(row.ack_kg_snf, rmrd.kg_snf), rmrd.kg_fat, rmrd.kg_snf) : null,
+      // Third Party Sale — milk sold directly to a buyer (already deducted
+      // from disp_* above); shown as its own informational column group.
+      tps_kgs:    rN(row.tps_kgs, 2),
+      tps_litres: rN(row.tps_litres),
+      tps_fat:    pct(row.tps_kg_fat, row.tps_kgs),
+      tps_snf:    pct(row.tps_kg_snf, row.tps_kgs),
+      tps_kg_fat: rN(row.tps_kg_fat, 2),
+      tps_kg_snf: rN(row.tps_kg_snf, 2),
     };
   });
   // TS = Kg.Fat + Kg.SNF, per section and per difference group
@@ -264,6 +288,7 @@ const TS_GROUPS = [
   { title: 'Difference Dispatch Vs RMRD',  fill: 'FFFEF3C7', heads: DIFF6, keys: ['dd_litres','dd_kgs','dd_kg_fat','dd_kg_snf','dd_ts','dd_pct'], diff: true },
   { title: 'Difference Ack Vs Dispatch',   fill: 'FFFFE4E6', heads: DIFF8, keys: ['da_litres','da_kgs','da_fat','da_snf','da_kg_fat','da_kg_snf','da_ts','da_pct'], diff: true },
   { title: 'Difference Ackn Vs RMRD',      fill: 'FFFDE68A', heads: DIFF8, keys: ['dr_litres','dr_kgs','dr_fat','dr_snf','dr_kg_fat','dr_kg_snf','dr_ts','dr_pct'], diff: true },
+  { title: 'Third Party Sale',             fill: 'FFF1F5F9', heads: ['Qty Kgs','Qty Ltrs','Fat%','SNF%','Fat Kg','SNF Kg'], keys: ['tps_kgs','tps_litres','tps_fat','tps_snf','tps_kg_fat','tps_kg_snf'] },
 ];
 // Cumulative start offset of each group within the numeric columns
 let _off = 0;
@@ -291,6 +316,8 @@ function tsTotal(key, sum) {
     case 'disp_snf': return w('disp_kg_snf', 'disp_kgs');
     case 'ack_fat':  return w('ack_kg_fat', 'ack_kgs');
     case 'ack_snf':  return w('ack_kg_snf', 'ack_kgs');
+    case 'tps_fat':  return w('tps_kg_fat', 'tps_kgs');
+    case 'tps_snf':  return w('tps_kg_snf', 'tps_kgs');
     case 'da_fat':   return dw('ack_kg_fat', 'ack_kgs', 'disp_kg_fat', 'disp_kgs');
     case 'da_snf':   return dw('ack_kg_snf', 'ack_kgs', 'disp_kg_snf', 'disp_kgs');
     case 'dr_fat':   return dw('ack_kg_fat', 'ack_kgs', 'rmrd_kg_fat', 'rmrd_kgs');
@@ -951,6 +978,18 @@ async function buildBmcuBreakup(reportDate) {
     WHERE e.execution_id = ANY($1)
     ORDER BY e.id`, [execIds]);
 
+  // Third Party Sale totals — trip-level (not tied to one BMCU), so shown
+  // only on each trip's Grand Total row rather than a per-BMCU block.
+  const tpsRes = await query(`
+    SELECT execution_id,
+           COALESCE(SUM(qty_litres),0) AS litres, COALESCE(SUM(qty_kgs),0) AS kgs,
+           COALESCE(SUM(kg_fat),0) AS kg_fat, COALESCE(SUM(kg_snf),0) AS kg_snf
+    FROM trip_third_party_sales
+    WHERE execution_id = ANY($1)
+    GROUP BY execution_id`, [execIds]);
+  const tpsByExec = {};
+  for (const t of tpsRes.rows) tpsByExec[t.execution_id] = t;
+
   // Block index: (execId, seqNo) → block, plus bmcuId → blocks (to place source-side
   // deduction rows for internal shifting, preferring the same trip).
   const blocks = {}; const byExec = {}; const byBmcu = {};
@@ -1055,11 +1094,18 @@ async function buildBmcuBreakup(reportDate) {
       });
       const gd = sum6(bmcus.map(b => b.dispatch));
       const gr = sum6(bmcus.map(b => b.rmrd));
+      const tpsRow = tpsByExec[x.execution_id];
+      const tps = tpsRow
+        ? { litres: rN(tpsRow.litres), kgs: rN(tpsRow.kgs),
+            fat: wAvg(tpsRow.kg_fat, tpsRow.kgs), snf: wAvg(tpsRow.kg_snf, tpsRow.kgs),
+            kg_fat: rN(tpsRow.kg_fat), kg_snf: rN(tpsRow.kg_snf) }
+        : { litres: 0, kgs: 0, fat: null, snf: null, kg_fat: 0, kg_snf: 0 };
       return {
         trip_no: x.trip_no, tanker_number: x.tanker_number, route_name: x.route_name,
         entered_by: x.entered_by,
         lifting_date: fmtDate(x.lifting_date), bmcus,
         grand: {
+          tps,
           dispatch: { litres: rN(gd.litres), kgs: rN(gd.kgs),
             fat: wAvg(gd.kg_fat, gd.kgs), snf: wAvg(gd.kg_snf, gd.kgs),
             kg_fat: rN(gd.kg_fat), kg_snf: rN(gd.kg_snf) },
@@ -1084,15 +1130,20 @@ async function buildBmcuBreakup(reportDate) {
 const BK_MEASURES = ['Qty Lts', 'Qty Kgs', 'Fat', 'SNF', 'KG Fat', 'KG SNF'];
 const M6 = m => [m.litres, m.kgs, m.fat, m.snf, m.kg_fat, m.kg_snf];
 const D4 = d => [d.kgs, d.litres, d.kg_fat, d.kg_snf, d.pct];
+// Third Party Sale — trip-level (not per-BMCU), shown as extra columns after
+// the existing 24-column layout; only populated on each trip's Grand Total row.
+const TPS_HEADS = ['Sale Qty (Kgs)', 'Sale Qty (Ltrs)', 'Fat%', 'SNF%', 'Fat Kg', 'SNF Kg'];
+const TPS_COL = 26; // column 25 is a blank spacer after the existing 24-col layout
+const T6 = t => [t.kgs, t.litres, t.fat, t.snf, t.kg_fat, t.kg_snf];
 
 function addBmcuBreakupSheet(wb, data) {
   const ws = wb.addWorksheet('BMCU breakup');
   // Cols: 1 Route, 2 Lifting Date, 3 Tanker, 4 BMCU Code, 5 BMCU Name, 6 Compartment,
-  //       7-12 dispatch, 13 Shift, 14-19 RMRD, 20-23 diff
+  //       7-12 dispatch, 13 Shift, 14-19 RMRD, 20-23 diff, 25-30 Third Party Sale
   ws.columns = [
     { width: 16 }, { width: 13 }, { width: 14 }, { width: 11 }, { width: 22 }, { width: 12 },
     ...Array(6).fill({ width: 10 }), { width: 8 }, ...Array(6).fill({ width: 10 }),
-    ...Array(5).fill({ width: 10 }),
+    ...Array(5).fill({ width: 10 }), { width: 3 }, ...Array(6).fill({ width: 12 }),
   ];
   appendBmcuBreakupBlock(ws, data, 1, { title: true });
   return ws;
@@ -1106,7 +1157,7 @@ function addBmcuBreakupSheet(wb, data) {
 function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
   let r0 = startRow;
   if (title) {
-    ws.mergeCells(r0, 1, r0, 24);
+    ws.mergeCells(r0, 1, r0, 31);
     const t = ws.getCell(r0, 1);
     t.value = `BMCU Break Up Report — ${data.report_date}`;
     t.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
@@ -1114,7 +1165,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     ws.getRow(r0).height = 24;
     r0++;
   } else {
-    ws.mergeCells(r0, 1, r0, 24);
+    ws.mergeCells(r0, 1, r0, 31);
     const t = ws.getCell(r0, 1);
     t.value = `BMCU Break Up — ${data.report_date}`;
     t.font = { bold: true, size: 11, color: { argb: 'FF003A6B' } };
@@ -1139,6 +1190,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     { title: 'Shift',                               fill: 'FFF3F4F6', start: 13, heads: null },
     { title: 'As Per RMRD',                         fill: 'FFE0F2FE', start: 14, heads: BK_MEASURES },
     { title: 'Difference Dispatch Vs RMRD', fill: 'FFFEF3C7', start: 20, heads: ['Qty Kgs', 'Qty Lts', 'KG Fat', 'KG SNF', 'Gain/Loss %'] },
+    { title: 'Third Party Sale (trip total)', fill: 'FFF1F5F9', start: TPS_COL, heads: TPS_HEADS },
   ];
   for (const g of groups) {
     if (!g.heads) { // single Shift column spans both header rows
@@ -1232,12 +1284,13 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     row.getCell(13).alignment = { horizontal: 'center' };
     M6(trip.grand.rmrd).forEach((v, k) => setNum(row.getCell(14 + k), v, { bold: true, fill: 'FFDBEAFE' }));
     D4(trip.grand.diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFDBEAFE' }));
+    T6(trip.grand.tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFDBEAFE' }));
     rIdx += 2; // blank spacer row between trips
   }
 
   if (data.notes.length) {
     for (const n of data.notes) {
-      ws.mergeCells(rIdx, 1, rIdx, 24);
+      ws.mergeCells(rIdx, 1, rIdx, 31);
       const c = ws.getCell(rIdx, 1);
       c.value = `Note: ${n}`;
       c.font = { italic: true, size: 10, color: { argb: 'FF92400E' } };
