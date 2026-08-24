@@ -556,6 +556,7 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
     { title: 'As per RMRD',            fill: 'FFE0F2FE', heads: ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Kg.Fat','Kg.SNF','TS'] },
     { title: 'As per Acknowledgement', fill: 'FFEDE9FE', heads: ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Kg.Fat','Kg.SNF'] },
     { title: 'Variation As per Dispatch to Ack', fill: 'FFFDE68A', heads: ['Qty Ltrs','Kg.Fat','Kg.SNF','TS','TS Gain/TS Loss %'], diff: true },
+    { title: 'Variation As per RMRD to Ack', fill: 'FFFECACA', heads: ['Qty Ltrs','Kg.Fat','Kg.SNF','TS','TS Gain/TS Loss %'], diff: true },
   ];
   const NCOLS = 2 + GROUPS.reduce((s, g) => s + g.heads.length, 0);
 
@@ -601,11 +602,14 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
     const w = (part, kgs) => sum(kgs) > 0 ? sum(part) / sum(kgs) * 100 : null;
     const daKgFat = sum('da_kg_fat'), daKgSnf = sum('da_kg_snf');
     const dispTs = sum('disp_kg_fat') + sum('disp_kg_snf');
+    const drKgFat = sum('dr_kg_fat'), drKgSnf = sum('dr_kg_snf');
+    const rmrdTs = sum('rmrd_kg_fat') + sum('rmrd_kg_snf');
     return {
       disp: [sum('disp_litres'), sum('disp_kgs'), w('disp_kg_fat','disp_kgs'), w('disp_kg_snf','disp_kgs'), sum('disp_kg_fat'), sum('disp_kg_snf')],
       rmrd: [sum('rmrd_litres'), sum('rmrd_kgs'), w('rmrd_kg_fat','rmrd_kgs'), w('rmrd_kg_snf','rmrd_kgs'), sum('rmrd_kg_fat'), sum('rmrd_kg_snf'), sum('rmrd_kg_fat') + sum('rmrd_kg_snf')],
       ack:  [sum('ack_litres'), sum('ack_kgs'), w('ack_kg_fat','ack_kgs'), w('ack_kg_snf','ack_kgs'), sum('ack_kg_fat'), sum('ack_kg_snf')],
       vari: [sum('da_litres'), daKgFat, daKgSnf, daKgFat + daKgSnf, dispTs > 0 ? (daKgFat + daKgSnf) / dispTs * 100 : null],
+      variRmrd: [sum('dr_litres'), drKgFat, drKgSnf, drKgFat + drKgSnf, rmrdTs > 0 ? (drKgFat + drKgSnf) / rmrdTs * 100 : null],
     };
   };
 
@@ -620,7 +624,8 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
     GROUPS.forEach(g => {
       const vals = g.title.startsWith('As per Dispatch') ? tot.disp
         : g.title.startsWith('As per RMRD') ? tot.rmrd
-        : g.title.startsWith('As per Ack') ? tot.ack : tot.vari;
+        : g.title.startsWith('As per Ack') ? tot.ack
+        : g.title.includes('RMRD to Ack') ? tot.variRmrd : tot.vari;
       vals.forEach((v, i) => {
         const c = row.getCell(g.start + i);
         c.value = v == null ? null : rN(v, 2);
@@ -653,11 +658,17 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
       const dispTs = sumIdx('disp',4) + sumIdx('disp',5);
       return [sumIdx('vari',0), f, s2, f + s2, dispTs > 0 ? (f + s2) / dispTs * 100 : null];
     })(),
+    variRmrd: (() => {
+      const f = sumIdx('variRmrd',1), s2 = sumIdx('variRmrd',2);
+      const rmrdTs = sumIdx('rmrd',4) + sumIdx('rmrd',5);
+      return [sumIdx('variRmrd',0), f, s2, f + s2, rmrdTs > 0 ? (f + s2) / rmrdTs * 100 : null];
+    })(),
   };
   GROUPS.forEach(g => {
     const vals = g.title.startsWith('As per Dispatch') ? grand.disp
       : g.title.startsWith('As per RMRD') ? grand.rmrd
-      : g.title.startsWith('As per Ack') ? grand.ack : grand.vari;
+      : g.title.startsWith('As per Ack') ? grand.ack
+      : g.title.includes('RMRD to Ack') ? grand.variRmrd : grand.vari;
     vals.forEach((v, i) => {
       const c = ws.getCell(tri, g.start + i);
       c.value = v == null ? null : rN(v, 2);
