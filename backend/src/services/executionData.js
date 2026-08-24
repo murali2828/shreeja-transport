@@ -183,13 +183,20 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
       const dpsKgs = calcKgs(bm.dps_qty_litres);
 
       if (bm.id) {
+        // seq_no/bmcu_id MUST be updated here — a biller re-sorting BMCU
+        // pickup order on an already-saved execution sends the same row
+        // ids back with new seq_no values; dropping them from the SET
+        // clause silently kept every trip billed against its original
+        // (pre-reorder) sequence, so distance calc never reflected the
+        // corrected pickup order.
         await client.query(
           `UPDATE trip_execution_bmcus SET
-             milk_date=$1,shift=$2,qty_litres=$3,qty_kgs=$4,fat_pct=$5,snf_pct=$6,
-             kg_fat=$7,kg_snf=$8,description=$9,source_bmcu_id=$10,chamber=$11,
-             dps_qty_litres=$12,dps_qty_kgs=$13,is_deleted=FALSE
-           WHERE id=$14 AND execution_id=$15`,
-          [bm.milk_date||null, bm.shift||null,
+             seq_no=$1,bmcu_id=$2,milk_date=$3,shift=$4,qty_litres=$5,qty_kgs=$6,fat_pct=$7,snf_pct=$8,
+             kg_fat=$9,kg_snf=$10,description=$11,source_bmcu_id=$12,chamber=$13,
+             dps_qty_litres=$14,dps_qty_kgs=$15,is_deleted=FALSE
+           WHERE id=$16 AND execution_id=$17`,
+          [bm.seq_no, bm.bmcu_id,
+           bm.milk_date||null, bm.shift||null,
            bm.qty_litres||null, kgs||null, bm.fat_pct||null, bm.snf_pct||null,
            kgFat||null, kgSnf||null, bm.description||'RMRD',
            bm.source_bmcu_id||null, bm.chamber||null,
