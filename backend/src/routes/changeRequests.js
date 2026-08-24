@@ -24,6 +24,7 @@ const APPROVER_CC = () => (process.env.CHANGE_APPROVER_CC
   .split(',').map(s => s.trim()).filter(Boolean);
 
 const { createTransport } = require('../config/mailer');
+const { fmtDateDisplay } = require('../utils/date');
 
 async function getApprover() {
   const r = await query(
@@ -151,7 +152,7 @@ async function sendApprovalEmail(cr, execInfo, approver) {
     <p style="font-family:sans-serif;font-size:13px;">
       <b>${esc(cr.requested_by_name)}</b> has requested changes to the CLOSED trip
       <b>Trip #${esc(execInfo.trip_no)} — ${esc(execInfo.tanker_number || '')}</b>
-      (${esc(String(execInfo.execution_date).slice(0, 10))}).<br/>
+      (${esc(fmtDateDisplay(execInfo.execution_date))}).<br/>
       Reason: <i>${esc(cr.reason || '—')}</i>
     </p>
     ${buildDiffHtml(cr.snapshot, cr.changes)}
@@ -171,7 +172,7 @@ async function sendApprovalEmail(cr, execInfo, approver) {
   await transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: approver.email,
-    subject: `Approval needed — changes to closed Trip #${execInfo.trip_no} (${String(execInfo.execution_date).slice(0, 10)})`,
+    subject: `Approval needed — changes to closed Trip #${execInfo.trip_no} (${fmtDateDisplay(execInfo.execution_date)})`,
     html,
   });
 }
@@ -252,7 +253,7 @@ async function sendAppliedInfoEmail(cr, deciderName) {
         <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Tanker Number</td>
             <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(x.tanker_number || '—')}</td></tr>
         <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Date</td>
-            <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(String(x.execution_date || '').slice(0, 10))}</td></tr>
+            <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(fmtDateDisplay(x.execution_date))}</td></tr>
         <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Shift</td>
             <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(x.shifts_milk || '—')}</td></tr>
         <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Approved by</td>
@@ -265,7 +266,7 @@ async function sendAppliedInfoEmail(cr, deciderName) {
     await transporter.sendMail({
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
       to: recipients.join(', '),
-      subject: `FYI — approved changes applied to closed Trip #${x.trip_no ?? ''} (${String(x.execution_date || '').slice(0, 10)})`,
+      subject: `FYI — approved changes applied to closed Trip #${x.trip_no ?? ''} (${fmtDateDisplay(x.execution_date)})`,
       html,
     });
   } catch (e) { console.error('Change-applied info email failed:', e.message); }

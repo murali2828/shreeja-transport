@@ -18,6 +18,7 @@ const ExcelJS    = require('exceljs');
 const { query, pool } = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { computeExecutionDistance } = require('../services/executionData');
+const { fmtDateDisplay } = require('../utils/date');
 const { loadMasterDistanceCache } = require('../services/distanceLookup');
 
 const APPROVERS = [
@@ -544,13 +545,13 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
 
   const tripCols = (rows, sheetName) => {
     const ws = wb.addWorksheet(sheetName);
-    ws.addRow([`Tanker Payment Billing — Run #${runId} · ${run.from_date} → ${run.to_date} · Status: ${run.status}`]).font = { bold: true, size: 13 };
+    ws.addRow([`Tanker Payment Billing — Run #${runId} · ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} · Status: ${run.status}`]).font = { bold: true, size: 13 };
     ws.addRow([]);
     head(ws, ['Date', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
       'BMCU Count', 'BMCU Details', 'Ack Kgs', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM', 'Estimated KM',
       'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Excluded', 'Remarks']);
     ws.getColumn(9).width = 60;
-    rows.forEach(t => ws.addRow([t.plan_for_date, t.tanker_number, rN(t.capacity_litres / 1000, 1),
+    rows.forEach(t => ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number, rN(t.capacity_litres / 1000, 1),
       t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id), t.ack_kgs,
       t.state, t.transport_type, t.system_km, t.google_km, t.master_km, t.estimated_km,
       t.billed_km, t.rate_per_km, t.excluded ? 0 : t.amount, t.excluded ? 'Yes' : '', t.remarks]));
@@ -592,7 +593,7 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
 
   const wsD = wb.addWorksheet('Date Wise');
   head(wsD, ['Date', 'Trips', 'Tankers', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']);
-  dates.forEach(d => wsD.addRow([d.date, d.trips, d.tankers, rN(d.billed_km), rN(d.system_km), rN(d.google_km), rN(d.amount)]));
+  dates.forEach(d => wsD.addRow([fmtDateDisplay(d.date), d.trips, d.tankers, rN(d.billed_km), rN(d.system_km), rN(d.google_km), rN(d.amount)]));
   wsD.addRow(['TOTAL', dates.reduce((s, d) => s + d.trips, 0), '',
     rN(dates.reduce((s, d) => s + (+d.billed_km || 0), 0)), '', '',
     rN(dates.reduce((s, d) => s + (+d.amount || 0), 0))]).font = { bold: true };
@@ -645,11 +646,11 @@ function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = [
   <div style="font-family:Segoe UI,Arial,sans-serif;max-width:760px;">
     <div style="background:#005ba3;color:#fff;padding:14px 20px;border-radius:10px 10px 0 0;">
       <div style="font-size:17px;font-weight:700;">Tanker Payment Approval — Level ${approver.level}</div>
-      <div style="font-size:12px;opacity:.85;">Billing Run #${run.id} · ${run.from_date} → ${run.to_date}</div>
+      <div style="font-size:12px;opacity:.85;">Billing Run #${run.id} · ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}</div>
     </div>
     <div style="border:1px solid #e2e8f0;border-top:none;padding:16px 20px;border-radius:0 0 10px 10px;">
       <p style="font-size:13px;">Dear ${esc(approver.name)},<br/>
-        The fortnightly tanker payment for <b>${run.from_date} → ${run.to_date}</b> is awaiting your approval.
+        The fortnightly tanker payment for <b>${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}</b> is awaiting your approval.
         Total payable: <b style="font-size:15px;">₹ ${nf(run.total_amount)}</b>. The detailed report (trip / tanker / vendor wise,
         with system + Google distances) is attached.</p>
       <p style="font-size:13px;font-weight:700;margin:14px 0 6px;">Vendor Wise Summary</p>
@@ -662,7 +663,7 @@ function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = [
         ⚠ New Route Combinations — ${newCombos.length} leg(s) not in the KM Master (your approval of this run approves these)</p>
       <table style="border-collapse:collapse;width:100%;">
         ${row(['Date', 'Tanker', 'From', 'To', 'KM', 'Google KM (ref)', 'Source'], true)}
-        ${newCombos.slice(0, 30).map(c => row([c.date, esc(c.tanker), esc(c.from), esc(c.to), nf(c.km),
+        ${newCombos.slice(0, 30).map(c => row([fmtDateDisplay(c.date), esc(c.tanker), esc(c.from), esc(c.to), nf(c.km),
           c.google_km != null ? nf(c.google_km) : '—', esc(c.source)])).join('')}
         ${newCombos.length > 30 ? row([`… and ${newCombos.length - 30} more — see the attached report`, '', '', '', '', '', '']) : ''}
       </table>` : ''}
@@ -685,7 +686,7 @@ async function sendApprovalEmail(runId, level) {
   await createTransport().sendMail({
     from: process.env.SMTP_FROM,
     to: approver.email,
-    subject: `Tanker Payment Approval L${level} — Run #${runId} (${run.from_date} → ${run.to_date}) · ₹ ${nf(run.total_amount)}`,
+    subject: `Tanker Payment Approval L${level} — Run #${runId} (${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}) · ₹ ${nf(run.total_amount)}`,
     html: approvalEmailHtml(run, tankers, vendors, approver, ap.rows[0].token, collectNewCombos(trips)),
     attachments: [{ filename: `tanker_billing_${run.from_date}_${run.to_date}.xlsx`, content: buf }],
   });
@@ -761,7 +762,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Trips');
     const NCOLS = 12;
-    const titleRow = ws.addRow([`${v.name} — Tanker Payment ${run.from_date} → ${run.to_date} (Run #${runId}, ${draft ? 'DRAFT — for verification' : 'APPROVED'})`]);
+    const titleRow = ws.addRow([`${v.name} — Tanker Payment ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} (Run #${runId}, ${draft ? 'DRAFT — for verification' : 'APPROVED'})`]);
     titleRow.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
     ws.mergeCells(titleRow.number, 1, titleRow.number, NCOLS);
     titleRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } }; });
@@ -783,7 +784,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
     }
     for (const [tn, tTrips] of [...byTanker.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
       tTrips.sort((a, b) => (a.plan_for_date < b.plan_for_date ? -1 : a.plan_for_date > b.plan_for_date ? 1 : 0));
-      tTrips.forEach(t => ws.addRow([t.plan_for_date, t.tanker_number,
+      tTrips.forEach(t => ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number,
         t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.route_name, t.delivery_point,
         bmcuDetails(t.execution_id), t.state, t.transport_type, t.billed_km, t.rate_per_km,
         t.excluded ? 0 : t.amount, t.excluded ? `EXCLUDED (Sale Tanker) — ${t.remarks || ''}`.trim() : t.remarks]));
@@ -804,17 +805,17 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
       await createTransport().sendMail({
         from: process.env.SMTP_FROM,
         to: v.email,
-        subject: `${draft ? '[DRAFT for verification] ' : ''}Shreeja Tanker Payment ${run.from_date} → ${run.to_date} — ${v.name} · ₹ ${nf(total)}`,
+        subject: `${draft ? '[DRAFT for verification] ' : ''}Shreeja Tanker Payment ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} — ${v.name} · ₹ ${nf(total)}`,
         html: draft ? `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
           <p>Dear ${esc(v.name)},</p>
-          <p>Please review your <b>DRAFT</b> tanker cards for <b>${run.from_date} → ${run.to_date}</b> in the attached sheet
+          <p>Please review your <b>DRAFT</b> tanker cards for <b>${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}</b> in the attached sheet
           (${v.trips.length} trips · draft payable ₹ ${nf(total)}).</p>
           <p>Reply to this email or contact the Shreeja billing team with any corrections to distance, state or trip
           details — the biller will update the run before it goes for final approval.</p>
           <p style="color:#9ca3af;font-size:11px;">Shreeja TMS — automated mail; do not reply to book corrections by phone if preferred.</p></div>`
           : `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
           <p>Dear ${esc(v.name)},</p>
-          <p>The tanker payment for <b>${run.from_date} → ${run.to_date}</b> has been approved.
+          <p>The tanker payment for <b>${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}</b> has been approved.
           Your trip sheet is attached: <b>${v.trips.length} trips · ₹ ${nf(tripTotal)}</b>${tollTotal > 0
             ? ` plus toll challan reimbursement <b>₹ ${nf(tollTotal)}</b> — total payable <b>₹ ${nf(total)}</b>` : ''}.</p>
           <p>For any discrepancy in distances, contact the Shreeja billing team with the trip
@@ -1089,11 +1090,11 @@ router.get('/report-excel', authenticate, authorize(...canBill, 'viewer'), async
     const head = (ws, cols) => { ws.addRow(cols).font = { bold: true }; ws.columns.forEach(c => { c.width = 16; }); };
 
     const ws1 = wb.addWorksheet('Trip Wise');
-    ws1.addRow([`Tanker Payment Report ${from} → ${to} · ${statusLabel}`]).font = { bold: true, size: 13 };
+    ws1.addRow([`Tanker Payment Report ${fmtDateDisplay(from)} → ${fmtDateDisplay(to)} · ${statusLabel}`]).font = { bold: true, size: 13 };
     ws1.addRow([]);
     head(ws1, ['Date', 'Run #', 'Run Status', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Delivery Point',
       'State', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Remarks']);
-    d.trips.forEach(t => ws1.addRow([t.plan_for_date, t.run_id, t.run_status, t.tanker_number,
+    d.trips.forEach(t => ws1.addRow([fmtDateDisplay(t.plan_for_date), t.run_id, t.run_status, t.tanker_number,
       t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.vendor_name, t.route_name, t.delivery_point,
       t.state, t.transport_type, t.system_km, t.google_km, t.billed_km, t.rate_per_km, t.amount, t.remarks]));
     ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '',
@@ -1107,7 +1108,7 @@ router.get('/report-excel', authenticate, authorize(...canBill, 'viewer'), async
       head(ws, [firstHead, secondKey === 'vendor_name' ? 'Vendor' : 'Tankers', 'Trips',
         'Billed KM', 'System KM', 'Google KM', 'Amount (₹)',
         ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : [])]);
-      rows.forEach(r => ws.addRow([r[firstKey], r[secondKey], r.trips,
+      rows.forEach(r => ws.addRow([firstKey === 'date' ? fmtDateDisplay(r[firstKey]) : r[firstKey], r[secondKey], r.trips,
         rN(r.billed_km), rN(r.system_km), rN(r.google_km), rN(r.amount),
         ...(withToll ? [rN(r.toll_amount), rN(r.total_payable)] : [])]));
       ws.addRow(['TOTAL', '', rows.reduce((s, r) => s + (+r.trips || 0), 0),

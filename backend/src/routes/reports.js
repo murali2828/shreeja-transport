@@ -17,6 +17,7 @@ const { createTransport } = require('../config/mailer');
 // each with Qty Ltrs / Qty Kgs / Kg.Fat / Kg.SNF.
 // ═════════════════════════════════════════════════════════════════════════════
 const { calcKgs, calcKgFat, calcKgSnf } = require('../services/executionData');
+const { fmtDateDisplay } = require('../utils/date');
 
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 
@@ -440,7 +441,7 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
   let grp = [];
   rows.forEach((x, xi) => {
     const row = ws.getRow(ri);
-    const info = [fmtDate(x.lifting_date), fmtDate(x.ack_date), fmtDate(x.posting_date),
+    const info = [fmtDateDisplay(x.lifting_date), fmtDateDisplay(x.ack_date), fmtDateDisplay(x.posting_date),
       x.tanker_number, x.route_name, x.starting_point, x.unloading_point, x.entered_by || ''];
     info.forEach((v, i) => {
       const c = row.getCell(i + 1);
@@ -550,7 +551,7 @@ async function addMilkShiftingSheet(wb, days) {
     // Guard: entries without fat/snf must write blank, not NaN — a literal
     // NaN in the XML makes the workbook unreadable by strict parsers.
     const numOrNull = v => { const n = parseFloat(v); return Number.isFinite(n) ? rN(n, 2) : null; };
-    const vals = [fmtDate(e.date), e.source_name || '', e.dest_name || '',
+    const vals = [fmtDateDisplay(e.date), e.source_name || '', e.dest_name || '',
       e.milk_date && e.shift ? shiftLabel(e.milk_date, e.shift) : '',
       rN(litres, 2), rN(kgs, 2), numOrNull(e.fat_pct), numOrNull(e.snf_pct),
       numOrNull(kgFat), numOrNull(kgSnf)];
@@ -1103,7 +1104,7 @@ async function buildBmcuBreakup(reportDate) {
       return {
         trip_no: x.trip_no, tanker_number: x.tanker_number, route_name: x.route_name,
         entered_by: x.entered_by,
-        lifting_date: fmtDate(x.lifting_date), bmcus,
+        lifting_date: fmtDateDisplay(x.lifting_date), bmcus,
         grand: {
           tps,
           dispatch: { litres: rN(gd.litres), kgs: rN(gd.kgs),
@@ -1378,7 +1379,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
     return {
       s_no: i + 1,
       starting_point: x.starting_point, delivery_point: x.delivery_point,
-      ack_date: fmtDate(x.ack_date),
+      ack_date: fmtDateDisplay(x.ack_date),
       tanker_number: x.tanker_number, route_name: x.route_name, trip_no: x.trip_no,
       ack_litres: rN(litres), ack_kgs: rN(kgs),
       fat: kgs ? rN(parseFloat(x.ack_kg_fat) / kgs * 100) : null,
@@ -1529,7 +1530,7 @@ async function buildTripDurations(fromDate, toDate) {
     const mins = started && arrived
       ? (new Date(x.coa_at) - new Date(x.gate_pass_at)) / 60000 : null;
     return {
-      trip_no: x.trip_no, plan_for_date: fmtDate(x.plan_for_date),
+      trip_no: x.trip_no, plan_for_date: fmtDateDisplay(x.plan_for_date),
       tanker_number: x.tanker_number, route_name: x.route_name,
       starting_point: x.starting_point, delivery_point: x.delivery_point,
       trip_start_at: x.gate_pass_at, arrived_at: x.coa_at,
@@ -1565,7 +1566,7 @@ async function buildTripDurations(fromDate, toDate) {
       ? (new Date(next.first_at) - new Date(x.unloaded_at)) / 60000 : null;
     turnarounds.push({
       tanker_number: x.tanker_number,
-      arrived_trip_no: x.trip_no, plan_for_date: fmtDate(x.plan_for_date),
+      arrived_trip_no: x.trip_no, plan_for_date: fmtDateDisplay(x.plan_for_date),
       delivery_point: x.delivery_point,
       arrived_at: x.coa_at,
       unloading_done_at: x.unloaded_at,
