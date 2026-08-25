@@ -149,6 +149,16 @@ async function buildTsReport(reportDate, basis = 'plan') {
     // (shown as the "RMRD Adjustments" column). One phrase per adjustment.
     const note = (execId, text) => (adjNotes[execId] ||= []).push(text);
     const qL = v => `${rN(parseFloat(v), 1)} L`;
+    // Third Party Sale remarks/customer share the same trailing remarks
+    // column as the RMRD adjustment notes, rather than a separate field.
+    const tpsNotes = await query(`
+      SELECT execution_id, qty_litres, customer_name, remarks
+      FROM trip_third_party_sales WHERE execution_id = ANY($1)`, [execIds]);
+    for (const s of tpsNotes.rows) {
+      const who = s.customer_name ? ` to ${s.customer_name}` : '';
+      const rmk = s.remarks ? ` (${s.remarks})` : '';
+      note(s.execution_id, `Sale of ${qL(s.qty_litres || 0)}${who}${rmk}`);
+    }
     for (const e of er.rows) {
       if (!e.qty_litres) continue;
       if (e.kind === 'balance_milk' && e.category === 'Left Over milk') {
@@ -355,7 +365,7 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
   ws.columns = [
     { width: 14 }, { width: 12 }, { width: 12 }, { width: 16 }, { width: 20 }, { width: 18 }, { width: 18 }, { width: 14 },
     ...Array(TS_NMEAS).fill({ width: 11 }),
-    { width: 44 },  // RMRD Adjustments remarks
+    { width: 44 },  // Remarks (RMRD adjustment notes + Third Party Sale notes)
   ];
 
   // Row 1 — title
@@ -400,7 +410,7 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
     const col = NINFO + TS_NMEAS + 1;
     ws.mergeCells(2, col, 3, col);
     const c = ws.getCell(2, col);
-    c.value = 'RMRD Adjustments';
+    c.value = 'Remarks';
     c.font = { bold: true, color: { argb: HEADER_TEXT } };
     c.fill = fillOf('FFE0F2FE');
     c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
