@@ -1006,7 +1006,8 @@ async function buildBmcuBreakup(reportDate) {
   const tpsRes = await query(`
     SELECT execution_id, bmcu_seq_no,
            COALESCE(SUM(qty_litres),0) AS litres, COALESCE(SUM(qty_kgs),0) AS kgs,
-           COALESCE(SUM(kg_fat),0) AS kg_fat, COALESCE(SUM(kg_snf),0) AS kg_snf
+           COALESCE(SUM(kg_fat),0) AS kg_fat, COALESCE(SUM(kg_snf),0) AS kg_snf,
+           STRING_AGG(remarks, '; ') FILTER (WHERE remarks IS NOT NULL AND remarks != '') AS remarks
     FROM trip_third_party_sales
     WHERE execution_id = ANY($1)
     GROUP BY execution_id, bmcu_seq_no`, [execIds]);
@@ -1117,8 +1118,9 @@ async function buildBmcuBreakup(reportDate) {
         const tps = tpsRow
           ? { litres: rN(tpsRow.litres), kgs: rN(tpsRow.kgs),
               fat: wAvg(tpsRow.kg_fat, tpsRow.kgs), snf: wAvg(tpsRow.kg_snf, tpsRow.kgs),
-              kg_fat: rN(tpsRow.kg_fat) || 0, kg_snf: rN(tpsRow.kg_snf) || 0 }
-          : { litres: 0, kgs: 0, fat: null, snf: null, kg_fat: 0, kg_snf: 0 };
+              kg_fat: rN(tpsRow.kg_fat) || 0, kg_snf: rN(tpsRow.kg_snf) || 0,
+              remarks: tpsRow.remarks || null }
+          : { litres: 0, kgs: 0, fat: null, snf: null, kg_fat: 0, kg_snf: 0, remarks: null };
         rm.litres -= parseFloat(tpsRow?.litres) || 0;
         rm.kgs    -= parseFloat(tpsRow?.kgs)    || 0;
         rm.kg_fat -= parseFloat(tpsRow?.kg_fat) || 0;
@@ -1148,7 +1150,8 @@ async function buildBmcuBreakup(reportDate) {
       const gt = sum6(bmcus.map(b => b.tps)); // trip-wide subtotal of sales, for the Grand Total row
       const tps = { litres: rN(gt.litres), kgs: rN(gt.kgs),
         fat: wAvg(gt.kg_fat, gt.kgs), snf: wAvg(gt.kg_snf, gt.kgs),
-        kg_fat: rN(gt.kg_fat), kg_snf: rN(gt.kg_snf) };
+        kg_fat: rN(gt.kg_fat), kg_snf: rN(gt.kg_snf),
+        remarks: bmcus.map(b => b.tps.remarks).filter(Boolean).join('; ') || null };
       // Acknowledgement — one row per chamber (FC/MC/BC) that has data, plus
       // the Grand Total row's Acknowledgement cells = the sum across chambers.
       const ackChambers = (ackByExec[x.execution_id] || []).map(a => {
@@ -1206,18 +1209,20 @@ const TPS_HEADS = ['Sale Qty (Kgs)', 'Sale Qty (Ltrs)', 'Fat%', 'SNF%', 'Fat Kg'
 // and Third Party Sale; only populated on each trip's Grand Total row.
 const ACK_COL = 25; // columns 20-24 are the 5-col Diff group
 const TPS_COL = 32; // column 31 is a blank spacer after the Ack group (25-30)
+const REMARKS_COL = TPS_COL + 6; // 38: single Remarks column right after the 6-col TPS group (32-37)
 const T6 = t => [t.kgs, t.litres, t.fat, t.snf, t.kg_fat, t.kg_snf];
 
 function addBmcuBreakupSheet(wb, data) {
   const ws = wb.addWorksheet('BMCU breakup');
   // Cols: 1 Route, 2 Lifting Date, 3 Tanker, 4 BMCU Code, 5 BMCU Name, 6 Compartment,
   //       7-12 dispatch, 13 Shift, 14-19 RMRD, 20-24 diff, 25-30 Acknowledgement,
-  //       31 blank spacer, 32-37 Third Party Sale
+  //       31 blank spacer, 32-37 Third Party Sale, 38 Remarks
   ws.columns = [
     { width: 16 }, { width: 13 }, { width: 14 }, { width: 11 }, { width: 22 }, { width: 12 },
     ...Array(6).fill({ width: 10 }), { width: 8 }, ...Array(6).fill({ width: 10 }),
     ...Array(5).fill({ width: 10 }), ...Array(6).fill({ width: 10 }),
     { width: 3 }, ...Array(6).fill({ width: 12 }),
+    { width: 36 }, // Remarks — Third Party Sale notes
   ];
   appendBmcuBreakupBlock(ws, data, 1, { title: true });
   return ws;
@@ -1231,7 +1236,7 @@ function addBmcuBreakupSheet(wb, data) {
 function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
   let r0 = startRow;
   if (title) {
-    ws.mergeCells(r0, 1, r0, 37);
+    ws.mergeCells(r0, 1, r0, 38);
     const t = ws.getCell(r0, 1);
     t.value = `BMCU Break Up Report — ${data.report_date}`;
     t.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
@@ -1239,7 +1244,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     ws.getRow(r0).height = 24;
     r0++;
   } else {
-    ws.mergeCells(r0, 1, r0, 37);
+    ws.mergeCells(r0, 1, r0, 38);
     const t = ws.getCell(r0, 1);
     t.value = `BMCU Break Up — ${data.report_date}`;
     t.font = { bold: true, size: 11, color: { argb: 'FF003A6B' } };
@@ -1271,6 +1276,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     { title: 'Difference Dispatch Vs RMRD', fill: 'FFFEF3C7', start: 20, heads: ['Qty Kgs', 'Qty Lts', 'KG Fat', 'KG SNF', 'Gain/Loss %'] },
     { title: ackGroupTitle, fill: 'FFEDE9FE', start: ACK_COL, heads: BK_MEASURES },
     { title: 'Third Party Sale', fill: 'FFF1F5F9', start: TPS_COL, heads: TPS_HEADS },
+    { title: 'Remarks', fill: 'FFF1F5F9', start: REMARKS_COL, heads: null },
   ];
   for (const g of groups) {
     if (!g.heads) { // single Shift column spans both header rows
@@ -1317,6 +1323,15 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     if (fill) cell.fill = fillOf(fill);
     if (bold || color) cell.font = { bold, color: { argb: color || HEADER_TEXT } };
   };
+  // Third Party Sale remarks — plain text, matching the styling of the TS
+  // report's own trailing Remarks column (small, muted, wrapped).
+  const setRemark = (cell, v, { fill = null } = {}) => {
+    cell.value = v || '';
+    cell.border = BORDER;
+    cell.font = { size: 9, color: { argb: 'FF57534E' } };
+    cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+    if (fill) cell.fill = fillOf(fill);
+  };
 
   let rIdx = hr2 + 1;
   for (const trip of data.trips) {
@@ -1339,6 +1354,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
         for (let k = 0; k < 5; k++) setNum(row.getCell(20 + k), null);
         // Acknowledgement is trip-level only — blank on individual rows.
         for (let k = 0; k < 6; k++) setNum(row.getCell(ACK_COL + k), null);
+        setRemark(row.getCell(REMARKS_COL), '');
         rIdx++;
       });
       // Gross Total per BMCU
@@ -1356,6 +1372,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
       // Acknowledgement has no valid per-BMCU allocation — blank on Gross Total too.
       for (let k = 0; k < 6; k++) setNum(row.getCell(ACK_COL + k), null, { fill: 'FFF8FAFC' });
       T6(b.tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFF8FAFC' }));
+      setRemark(row.getCell(REMARKS_COL), b.tps.remarks, { fill: 'FFF8FAFC' });
       rIdx++;
     }
     // Acknowledgement break-up — one row per chamber (FC/MC/BC) that actually
@@ -1376,6 +1393,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
       for (let k = 0; k < 5; k++) setNum(row.getCell(20 + k), null);
       M6(a).forEach((v, k) => setNum(row.getCell(ACK_COL + k), v, { fill: 'FFF5F3FF' }));
       for (let k = 0; k < 6; k++) setNum(row.getCell(TPS_COL + k), null);
+      setRemark(row.getCell(REMARKS_COL), '');
       rIdx++;
     }
     // Grand Total per trip (cell 1 carries the entered-by user id)
@@ -1391,6 +1409,7 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     D4(trip.grand.diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFDBEAFE' }));
     M6(trip.grand.ack).forEach((v, k) => setNum(row.getCell(ACK_COL + k), v, { bold: true, fill: 'FFDBEAFE' }));
     T6(trip.grand.tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFDBEAFE' }));
+    setRemark(row.getCell(REMARKS_COL), trip.grand.tps.remarks, { fill: 'FFDBEAFE' });
     rIdx += 2; // blank spacer row between trips
   }
 
@@ -1434,12 +1453,14 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     D4(diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFBFDBFE' }));
     M6(ack).forEach((v, k) => setNum(row.getCell(ACK_COL + k), v, { bold: true, fill: 'FFBFDBFE' }));
     T6(tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFBFDBFE' }));
+    const allRemarks = data.trips.map(t => t.grand.tps.remarks).filter(Boolean).join('; ') || '';
+    setRemark(row.getCell(REMARKS_COL), allRemarks, { fill: 'FFBFDBFE' });
     rIdx += 2;
   }
 
   if (data.notes.length) {
     for (const n of data.notes) {
-      ws.mergeCells(rIdx, 1, rIdx, 37);
+      ws.mergeCells(rIdx, 1, rIdx, 38);
       const c = ws.getCell(rIdx, 1);
       c.value = `Note: ${n}`;
       c.font = { italic: true, size: 10, color: { argb: 'FF92400E' } };
