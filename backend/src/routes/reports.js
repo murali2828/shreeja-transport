@@ -1409,7 +1409,10 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     D4(trip.grand.diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFDBEAFE' }));
     M6(trip.grand.ack).forEach((v, k) => setNum(row.getCell(ACK_COL + k), v, { bold: true, fill: 'FFDBEAFE' }));
     T6(trip.grand.tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFDBEAFE' }));
-    setRemark(row.getCell(REMARKS_COL), trip.grand.tps.remarks, { fill: 'FFDBEAFE' });
+    // Sale remarks are shown once, against the specific BMCU they were
+    // recorded on (the per-BMCU Gross Total row) — not repeated on this
+    // trip-level Grand Total row.
+    setRemark(row.getCell(REMARKS_COL), '', { fill: 'FFDBEAFE' });
     rIdx += 2; // blank spacer row between trips
   }
 
@@ -1453,8 +1456,9 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     D4(diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFBFDBFE' }));
     M6(ack).forEach((v, k) => setNum(row.getCell(ACK_COL + k), v, { bold: true, fill: 'FFBFDBFE' }));
     T6(tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFBFDBFE' }));
-    const allRemarks = data.trips.map(t => t.grand.tps.remarks).filter(Boolean).join('; ') || '';
-    setRemark(row.getCell(REMARKS_COL), allRemarks, { fill: 'FFBFDBFE' });
+    // Sale remarks stay on each BMCU's own Gross Total row — not repeated
+    // on this day-wide overall total.
+    setRemark(row.getCell(REMARKS_COL), '', { fill: 'FFBFDBFE' });
     rIdx += 2;
   }
 
