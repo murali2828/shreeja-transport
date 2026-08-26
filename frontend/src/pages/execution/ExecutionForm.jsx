@@ -695,6 +695,20 @@ export default function ExecutionForm() {
     onError: (e) => toast.error(e.response?.data?.error || 'Print failed'),
   });
 
+  // Record-only variant used by Save: writes the same trip_document_prints
+  // row as the dedicated Gate Pass / COA buttons (so print-status badges and
+  // the Trip Duration Report reflect it identically) but never opens the
+  // print dialog. IN is recorded as 'coa' — same doc_type the COA button
+  // would have recorded — never 'unloading'.
+  const recordDocMut = useMutation({
+    mutationFn: ({ docType, ts }) => printTripDoc(exec.trip_plan_id, docType, ts, true),
+    onSuccess: (res, { docType }) => {
+      qc.invalidateQueries(['trip-doc-plan']);
+      if (docType === 'gate_pass') { setOutDate(''); setOutTime(''); }
+      else { setInDate(''); setInTime(''); }
+    },
+  });
+
   const startStaging = () => {
     setAckRows((exec.acknowledgements || []).map(a => ({ ...a })));
     setStagingReason('');
@@ -946,9 +960,20 @@ export default function ExecutionForm() {
   }, [bmcuRows, shiftRows]);
 
   const saveMut = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const violation = capacityViolation();
       if (violation) { window.alert(`⚠ Cannot save\n\n${violation}`); return Promise.reject(new Error(violation)); }
+
+      // OUT/IN typed but the Save button clicked (instead of Gate Pass/COA):
+      // record the same timestamp, just without printing.
+      let outTs, inTs;
+      try {
+        outTs = parseTypedTs(outDate, outTime, 'Tanker OUT');
+        inTs  = parseTypedTs(inDate, inTime, 'Tanker IN');
+      } catch (e) { toast.error(e.message); return Promise.reject(e); }
+      if (outTs) await recordDocMut.mutateAsync({ docType: 'gate_pass', ts: outTs });
+      if (inTs)  await recordDocMut.mutateAsync({ docType: 'coa', ts: inTs });
+
       return updateExecution(id, {
       actual_km: actualKm, delivery_point_id: deliveryPointId || null,
       start_point_id: startPointId || null,

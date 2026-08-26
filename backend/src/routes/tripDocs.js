@@ -47,12 +47,16 @@ router.get('/:planId(\\d+)', authenticate, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/trip-docs/:planId/print  { doc_type: 'gate_pass' | 'coa' }
-// Logs the print and returns document data + duplicate info.
+// POST /api/trip-docs/:planId/print  { doc_type: 'gate_pass' | 'coa', no_print?: true }
+// Logs the print and returns document data + duplicate info. Pass
+// no_print:true to record the OUT/IN timestamp only (e.g. from the general
+// Save button) without generating the print-ready payload — the row in
+// trip_document_prints is written identically either way, so the Trip
+// Duration Report and print-status badges see no difference between the two.
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/:planId(\\d+)/print', authenticate, authorize('admin','planner','executor','biller'), async (req, res) => {
   const planId = req.params.planId;
-  const { doc_type, printed_at } = req.body;
+  const { doc_type, printed_at, no_print } = req.body;
   if (!['gate_pass', 'coa', 'unloading'].includes(doc_type))
     return res.status(400).json({ error: 'doc_type must be gate_pass, coa or unloading' });
   let manualPrinted;
@@ -109,14 +113,16 @@ router.post('/:planId(\\d+)/print', authenticate, authorize('admin','planner','e
       printed_at: ins.rows[0].printed_at,
       first_printed_at: fp.rows[0].first,
       is_duplicate: ins.rows[0].print_no > 1,
-      data: {
-        trip_no: plan.trip_no,
-        plan_for_date: String(plan.plan_for_date).slice(0, 10),
-        tanker_number: plan.tanker_number,
-        route_name: plan.route_name,
-        starting_point: plan.starting_point,
-        delivery_point: plan.delivery_point,
-      },
+      ...(no_print ? {} : {
+        data: {
+          trip_no: plan.trip_no,
+          plan_for_date: String(plan.plan_for_date).slice(0, 10),
+          tanker_number: plan.tanker_number,
+          route_name: plan.route_name,
+          starting_point: plan.starting_point,
+          delivery_point: plan.delivery_point,
+        },
+      }),
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
