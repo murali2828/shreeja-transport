@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 import {
   Truck, LayoutDashboard, MapPin, Route, Users, Settings,
   ClipboardList, Play, CheckSquare, BarChart2, Mail, IndianRupee,
-  ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText
+  ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText, ShieldCheck
 } from 'lucide-react';
 
 function NavItem({ to, icon, label, end = false, collapsed = false }) {
@@ -44,6 +44,18 @@ export default function Sidebar({ collapsed = false }) {
   const isBiller  = user?.role === 'biller' || isAdmin;
   const isExecutor = user?.role === 'executor';
 
+  // Module-level visibility now comes from the user's DB-backed role
+  // permissions (falls back to legacy booleans above for the narrow special
+  // cases below that stay hardcoded). Admin always sees everything, whether
+  // or not the 'admin' roles row is present — belt-and-suspenders with the
+  // backend's identical hardcoded admin allow.
+  const perms = user?.permissions || {};
+  const canMasters  = isAdmin || perms.masters === true;
+  const canPlanning = isAdmin || perms.planning === true;
+  const canExecution = isAdmin || perms.execution === true;
+  const canBilling  = isAdmin || perms.billing === true;
+  const canReports  = isAdmin || perms.reports === true;
+
   const ni = (to, icon, label, end) =>
     <NavItem to={to} end={end} icon={icon} label={label} collapsed={collapsed}/>;
 
@@ -54,7 +66,7 @@ export default function Sidebar({ collapsed = false }) {
         {ni('/', <LayoutDashboard size={15}/>, 'Dashboard', true)}
       </div>
 
-      {isAdmin && (
+      {canMasters && (
         <NavSection label={collapsed ? '' : 'Masters'}>
           {ni('/masters/tankers',    <Truck size={15}/>,       'Tankers')}
           {ni('/masters/vendors',    <Building2 size={15}/>,   'Vendors')}
@@ -67,6 +79,7 @@ export default function Sidebar({ collapsed = false }) {
           {isAdmin && (
             <>
               {ni('/masters/users',        <Users size={15}/>, 'Users')}
+              {ni('/masters/roles',        <ShieldCheck size={15}/>, 'Roles')}
               {ni('/masters/email-config', <Mail size={15}/>,  'Email Config')}
               {ni('/masters/plan-emails',  <Mail size={15}/>,  'Plan Email List')}
             </>
@@ -74,7 +87,7 @@ export default function Sidebar({ collapsed = false }) {
         </NavSection>
       )}
 
-      {isPlanner && (
+      {canPlanning && (
         <NavSection label={collapsed ? '' : 'Planning'}>
           {ni('/planning',          <ClipboardList size={15}/>, 'Trip Plans')}
           {ni('/planning/optimize', <Zap size={15}/>,           'Route Optimizer')}
@@ -82,31 +95,33 @@ export default function Sidebar({ collapsed = false }) {
         </NavSection>
       )}
 
-      {/* Execution team: document upload access */}
+      {/* Execution team: document upload access — narrow special case, not
+          part of the general Masters module toggle. */}
       {isExecutor && (
         <NavSection label={collapsed ? '' : 'Masters'}>
           {ni('/masters/documents', <FileText size={15}/>, 'Tanker Documents')}
         </NavSection>
       )}
 
-      {(isPlanner || isViewer || isBiller) && (
+      {canExecution && (
         <NavSection label={collapsed ? '' : 'Execution'}>
           {ni('/execution',        <Play size={15}/>,        'Active Trips')}
           {ni('/execution/closed', <CheckSquare size={15}/>, 'Closed Trips')}
           {ni('/execution/gate-pass', <Play size={15}/>, 'Other Gate Pass')}
+          {/* Tanker Position: hardcoded admin-or-whitelist special case, left untouched */}
           {(isAdmin || ['pp01','mahesh.k@shreejamilk.com','dceo','krithiga.a@shreejamilk.com'].includes(String(user?.user_id || '').toLowerCase()))
             && ni('/tanker-position', <Truck size={15}/>, 'Tanker Position')}
           {ni('/approvals', <CheckSquare size={15}/>, 'Approvals')}
         </NavSection>
       )}
 
-      {(isBiller || isViewer) && user?.billing_enabled !== false && (
+      {canBilling && user?.billing_enabled !== false && (
         <NavSection label={collapsed ? '' : 'Billing'}>
           {ni('/billing', <IndianRupee size={15}/>, 'Tanker Payments')}
         </NavSection>
       )}
 
-      {(isPlanner || isViewer || isBiller) && (
+      {canReports && (
         <NavSection label={collapsed ? '' : 'Reports'}>
           {ni('/reports', <BarChart2 size={15}/>, 'Daily TS Report')}
           {ni('/reports/bmcu-breakup', <BarChart2 size={15}/>, 'BMCU Break Up')}

@@ -29,6 +29,11 @@ export const getMe          = ()           => api.get('/auth/me');
 export const getUsers       = ()           => api.get('/auth/users');
 export const createUser     = (d)          => api.post('/auth/users', d);
 export const updateUser     = (id, d)      => api.put(`/auth/users/${id}`, d);
+
+export const getRoles       = ()           => api.get('/roles');
+export const createRole     = (d)          => api.post('/roles', d);
+export const updateRole     = (id, d)      => api.put(`/roles/${id}`, d);
+export const deleteRole     = (id)         => api.delete(`/roles/${id}`);
 export const forgotPassword  = (email)               => api.post('/auth/forgot-password', { email });
 export const resetPassword   = (token, new_password) => api.post('/auth/reset-password', { token, new_password });
 export const changePassword  = (current_password, new_password) => api.post('/auth/change-password', { current_password, new_password });

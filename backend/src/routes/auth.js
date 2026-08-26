@@ -71,7 +71,16 @@ router.post('/login', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
-    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: user.role, must_change_password: mustChange, billing_enabled: process.env.BILLING_ENABLED === 'true' } });
+    // Attach this user's role's per-module permissions (independent of the
+    // billing_enabled env kill-switch below, which stays untouched).
+    let permissions = null;
+    try {
+      const rr = await query('SELECT permissions FROM roles WHERE name = $1', [user.role]);
+      permissions = rr.rows[0]?.permissions || null;
+    } catch (err) {
+      console.error('[auth] role permissions lookup failed:', err.message);
+    }
+    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: user.role, permissions, must_change_password: mustChange, billing_enabled: process.env.BILLING_ENABLED === 'true' } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -96,7 +105,12 @@ router.get('/users', authenticate, authorize('admin'), async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-const VALID_ROLES = ['admin', 'planner', 'executor', 'viewer', 'biller'];
+// Roles are now DB-backed (see routes/roles.js) — validate against the
+// `roles` table so admin-created custom roles are assignable immediately.
+async function isValidRole(role) {
+  const r = await query('SELECT 1 FROM roles WHERE name = $1', [role]);
+  return r.rows.length > 0;
+}
 
 // POST /api/auth/users
 router.post('/users', authenticate, authorize('admin'), async (req, res) => {
@@ -107,8 +121,8 @@ router.post('/users', authenticate, authorize('admin'), async (req, res) => {
     return res.status(400).json({ error: 'User ID, password, full_name, role required' });
   if (!USER_ID_RE.test(userId))
     return res.status(400).json({ error: 'User ID may contain only letters, numbers, and . _ @ + - (no spaces)' });
-  if (!VALID_ROLES.includes(role))
-    return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
+  if (!(await isValidRole(role)))
+    return res.status(400).json({ error: `Unknown role: ${role}` });
   try {
     const hash = await bcrypt.hash(password, 10);
     // username column mirrors user_id so legacy code paths keep working.
@@ -127,8 +141,8 @@ router.post('/users', authenticate, authorize('admin'), async (req, res) => {
 router.put('/users/:id', authenticate, authorize('admin'), async (req, res) => {
   const { full_name, role, email, is_active, password } = req.body;
   const userId = req.body.user_id != null ? String(req.body.user_id).trim() : undefined;
-  if (role && !VALID_ROLES.includes(role))
-    return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
+  if (role !== undefined && !(await isValidRole(role)))
+    return res.status(400).json({ error: `Unknown role: ${role}` });
   if (userId !== undefined && !USER_ID_RE.test(userId))
     return res.status(400).json({ error: 'User ID may contain only letters, numbers, and . _ @ + - (no spaces)' });
   try {

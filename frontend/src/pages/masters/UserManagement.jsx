@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Shield, User, Settings, KeyRound, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getUsers, createUser, updateUser } from '../../api/index';
+import { getUsers, createUser, updateUser, getRoles } from '../../api/index';
 import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
 import { useAuth } from '../../hooks/useAuth';
 
@@ -35,6 +35,20 @@ export default function UserManagement() {
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['users'],
     queryFn:  () => getUsers().then(r => r.data),
+  });
+
+  // Role options are DB-backed and admin-manageable (see Roles screen). Fall
+  // back to the original 5 while loading so the dropdown is never empty.
+  const FALLBACK_ROLES = [
+    { name: 'executor', label: 'Executor' },
+    { name: 'planner',  label: 'Planner' },
+    { name: 'admin',    label: 'Admin' },
+    { name: 'biller',   label: 'Biller' },
+    { name: 'viewer',   label: 'Viewer' },
+  ];
+  const { data: roles = FALLBACK_ROLES } = useQuery({
+    queryKey: ['roles'],
+    queryFn:  () => getRoles().then(r => r.data),
   });
 
   const openAdd  = () => { setForm(EMPTY); setShowPw(true); setModal('add'); };
@@ -167,11 +181,9 @@ export default function UserManagement() {
               <Field label="Role" required>
                 <select className="input w-full" value={form.role}
                   onChange={e => set('role', e.target.value)}>
-                  <option value="executor">Executor</option>
-                  <option value="planner">Planner</option>
-                  <option value="admin">Admin</option>
-                  <option value="biller">Biller</option>
-                <option value="viewer">Viewer</option>
+                  {roles.map(r => (
+                    <option key={r.name} value={r.name}>{r.label}</option>
+                  ))}
                 </select>
               </Field>
               <Field label="User ID" required>

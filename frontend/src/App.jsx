@@ -17,6 +17,7 @@ import BmcuMaster      from './pages/masters/BmcuMaster';
 import RouteMaster     from './pages/masters/RouteMaster';
 import LocationMasters from './pages/masters/LocationMasters';
 import UserManagement  from './pages/masters/UserManagement';
+import RoleManagement  from './pages/masters/RoleManagement';
 import EmailConfig     from './pages/masters/EmailConfig';
 import PlanEmailConfig from './pages/masters/PlanEmailConfig';
 import DistanceMaster  from './pages/masters/DistanceMaster';
@@ -105,6 +106,9 @@ function AppRoutes() {
         }/>
         <Route path="masters/documents" element={
           <ProtectedRoute roles={['admin','executor']}><TankerDocuments/></ProtectedRoute>
+        }/>
+        <Route path="masters/roles" element={
+          <ProtectedRoute roles={['admin']}><RoleManagement/></ProtectedRoute>
         }/>
         <Route path="masters/users" element={
           <ProtectedRoute roles={['admin']}><UserManagement/></ProtectedRoute>

@@ -84,6 +84,7 @@ app.use('/api/documents',  require('./routes/documents'));
 app.use('/api/audit',      require('./routes/audit'));
 app.use('/api/change-requests', require('./routes/changeRequests'));
 app.use('/api/trip-docs', require('./routes/tripDocs'));
+app.use('/api/roles',      require('./routes/roles'));
 
 // ─── 404 for unmatched API routes ─────────────────────────────────────────────
 app.use('/api/*', (_req, res) => res.status(404).json({ error: 'API route not found' }));

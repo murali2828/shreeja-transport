@@ -50,4 +50,27 @@ function authorize(...roles) {
   };
 }
 
-module.exports = { authenticate, authorize };
+const MODULES = ['masters', 'planning', 'execution', 'billing', 'reports'];
+
+// authorizeModule(moduleKey): module-level access gate backed by the `roles`
+// table's `permissions` JSON. Admin is always allowed via a hardcoded check —
+// this must never depend solely on the DB row, so a missing/corrupted
+// 'admin' roles row can never lock the admin account out.
+function authorizeModule(moduleKey) {
+  return async (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    if (req.user.role === 'admin') return next();
+    try {
+      const r = await query('SELECT permissions FROM roles WHERE name = $1', [req.user.role]);
+      const perms = r.rows[0]?.permissions;
+      if (!perms || perms[moduleKey] !== true) {
+        return res.status(403).json({ error: 'Insufficient permissions' });
+      }
+      next();
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  };
+}
+
+module.exports = { authenticate, authorize, authorizeModule, MODULES };
