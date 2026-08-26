@@ -36,6 +36,35 @@ const {
   }
 })();
 
+// Ensure the Third Party Sale table exists (also created by migration 032).
+(async () => {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS trip_third_party_sales (
+        id             SERIAL PRIMARY KEY,
+        execution_id   INTEGER NOT NULL REFERENCES trip_executions(id) ON DELETE CASCADE,
+        qty_litres     NUMERIC(10,2),
+        qty_kgs        NUMERIC(12,4),
+        fat_pct        NUMERIC(6,3),
+        snf_pct        NUMERIC(6,3),
+        kg_fat         NUMERIC(12,4),
+        kg_snf         NUMERIC(12,4),
+        customer_name  VARCHAR(100),
+        remarks        TEXT,
+        entered_by     INTEGER REFERENCES users(id),
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS ttps_exec_idx ON trip_third_party_sales (execution_id)`);
+    // Per-BMCU (also added by migration 033) — a sale reduces the RMRD total
+    // of the specific BMCU it's recorded against, not the trip dispatch total.
+    await query(`ALTER TABLE trip_third_party_sales ADD COLUMN IF NOT EXISTS bmcu_seq_no INTEGER`);
+    await query(`CREATE INDEX IF NOT EXISTS ttps_exec_bmcu_idx ON trip_third_party_sales (execution_id, bmcu_seq_no)`);
+  } catch (err) {
+    console.error('Migration error (trip_third_party_sales):', err.message);
+  }
+})();
+
 // GET /api/executions
 router.get('/', authenticate, async (req, res) => {
   try {
@@ -205,7 +234,12 @@ router.get('/:id', authenticate, async (req, res) => {
       [req.params.id]
     );
 
-    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entries.rows });
+    const thirdPartySales = await query(
+      'SELECT * FROM trip_third_party_sales WHERE execution_id=$1 ORDER BY id',
+      [req.params.id]
+    );
+
+    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entries.rows, third_party_sales: thirdPartySales.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -281,6 +315,21 @@ router.put('/:id', authenticate, authorize('admin','planner','executor','biller'
       "SELECT id FROM trip_executions WHERE id=$1 AND status NOT IN ('closed')", [req.params.id]
     );
     if (!exec.rows.length) return res.status(404).json({ error: 'Execution not found or already closed' });
+
+    // Once a trip is pulled into a billing run (any status, including
+    // draft), its data is frozen for direct edits — billing math must stay
+    // consistent with what the run was executed against. Corrections go
+    // through the Request Changes approval flow instead, or the biller
+    // deletes the billing run first.
+    const inRun = await client.query(
+      `SELECT br.id, br.status FROM billing_run_trips brt
+       JOIN billing_runs br ON br.id = brt.run_id
+       WHERE brt.execution_id = $1 LIMIT 1`, [req.params.id]);
+    if (inRun.rows.length)
+      return res.status(400).json({
+        error: `This trip is part of Billing Run #${inRun.rows[0].id} (${inRun.rows[0].status}) — it can't be edited directly. `
+          + `Use "Request Changes" for an approved correction, or ask the biller to delete/exclude it from the billing run first.`
+      });
 
     const { execution, dist } = await applyExecutionData(
       client, req.params.id, req.body, req.user.id, { setSavedStatus: true }

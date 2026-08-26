@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoints, getStartingPoints, cancelExecution, getExecutionDistance, getChangeRequests, createChangeRequest, getTripDocPlan, printTripDoc } from '../../api/index';
 import { printGatePass, printCoa } from '../../utils/printDocs';
 import { useAuth } from '../../hooks/useAuth';
+import { fmtDate } from '../../utils/date';
 
 const KG = 1.0285;
 const calc = {
@@ -162,6 +163,7 @@ function SourcePlantSelect({ bmcuList, code, onSelect, disabled }) {
 function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClosed,
                    shiftRowsForBmcu, onAddShiftRow, onUpdateShiftRow, onDeleteShiftRow, execDate,
                    entriesForBmcu, onAddEntry, onUpdateEntry, onDeleteEntry,
+                   salesForBmcu, onAddSale, onUpdateSale, onDeleteSale,
                    onDragStart, onDragOver, onDrop, isDragOver }) {
   const u = (field, val) => onUpdate(idx, field, val);
   const kgs    = calc.kgs(row.qty_litres);
@@ -499,6 +501,75 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
               );
             })()}
 
+            {/* Third Party Sale entries — milk sold directly to a buyer.
+                Reduces THIS BMCU's RMRD total; dispatch qty is untouched. */}
+            {(() => {
+              const rows = salesForBmcu;
+              if (!rows.length) return null;
+              return (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6, tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col style={{ width: '110px' }}/>
+                    <col style={{ width: '90px' }}/>
+                    <col style={{ width: '90px' }}/>
+                    <col style={{ width: '140px' }}/>
+                    <col/>
+                    <col style={{ width: '32px' }}/>
+                  </colgroup>
+                  <thead>
+                    <tr style={{ color: '#be123c', borderBottom: '1px solid #fbd0da' }}>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Third Party Sale — Qty (L)</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Fat%</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>SNF%</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Customer Name</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Remarks</th>
+                      <th style={{ width: 28 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(s => (
+                      <tr key={s._key} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.01" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-20" value={s.qty_litres || ''}
+                            onChange={ev => onUpdateSale(s._key, 'qty_litres', ev.target.value)} placeholder="Qty"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.001" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-16" value={s.fat_pct || ''}
+                            onChange={ev => onUpdateSale(s._key, 'fat_pct', ev.target.value)} placeholder="Fat%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="number" min="0" step="0.001" disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-16" value={s.snf_pct || ''}
+                            onChange={ev => onUpdateSale(s._key, 'snf_pct', ev.target.value)} placeholder="SNF%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="text" maxLength={100} disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-full" value={s.customer_name || ''}
+                            onChange={ev => onUpdateSale(s._key, 'customer_name', ev.target.value)}
+                            placeholder="Buyer / customer name"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="text" maxLength={200} disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-full" value={s.remarks || ''}
+                            onChange={ev => onUpdateSale(s._key, 'remarks', ev.target.value)}
+                            placeholder="Remarks"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          {!isClosed && (
+                            <button onClick={() => onDeleteSale(s._key)} className="btn-danger btn-sm p-0.5" title="Remove">
+                              <Trash2 size={9}/>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              );
+            })()}
+
             {!isClosed && (
               <div className="flex flex-wrap gap-1.5 mt-1.5">
                 <button onClick={() => onAddShiftRow(row.seq_no, execDate)}
@@ -516,6 +587,10 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                 <button onClick={() => onAddEntry('internal_shifting', row.seq_no, row.bmcu_id)}
                   className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-purple-700 border-purple-300">
                   <Plus size={9}/> Internal Shifting
+                </button>
+                <button onClick={() => onAddSale(row.seq_no, row.bmcu_id)}
+                  className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-rose-700 border-rose-300">
+                  <Plus size={9}/> Third Party Sale
                 </button>
               </div>
             )}
@@ -541,6 +616,7 @@ export default function ExecutionForm() {
   const [bmcuRows,         setBmcuRows]         = useState([]);
   const [shiftRows,        setShiftRows]        = useState([]);
   const [entries,          setEntries]          = useState([]);
+  const [thirdPartySales,  setThirdPartySales]  = useState([]);
   const [dragIdx,          setDragIdx]          = useState(null);
   const [dragOverIdx,      setDragOverIdx]      = useState(null);
 
@@ -619,6 +695,20 @@ export default function ExecutionForm() {
     onError: (e) => toast.error(e.response?.data?.error || 'Print failed'),
   });
 
+  // Record-only variant used by Save: writes the same trip_document_prints
+  // row as the dedicated Gate Pass / COA buttons (so print-status badges and
+  // the Trip Duration Report reflect it identically) but never opens the
+  // print dialog. IN is recorded as 'coa' — same doc_type the COA button
+  // would have recorded — never 'unloading'.
+  const recordDocMut = useMutation({
+    mutationFn: ({ docType, ts }) => printTripDoc(exec.trip_plan_id, docType, ts, true),
+    onSuccess: (res, { docType }) => {
+      qc.invalidateQueries(['trip-doc-plan']);
+      if (docType === 'gate_pass') { setOutDate(''); setOutTime(''); }
+      else { setInDate(''); setInTime(''); }
+    },
+  });
+
   const startStaging = () => {
     setAckRows((exec.acknowledgements || []).map(a => ({ ...a })));
     setStagingReason('');
@@ -648,6 +738,7 @@ export default function ExecutionForm() {
           bmcus: bmcuRows.filter(r => r.bmcu_id),
           shift_rows: shiftRows.map(({ _key, ...r }) => r),
           entries: entries.map(({ _key, source_bmcu_code, source_bmcu_name, bmcu_code, bmcu_name, ...r }) => r),
+          third_party_sales: thirdPartySales.map(({ _key, ...r }) => r),
           acknowledgements: ackRows.map(a => ({
             chamber: a.chamber, qty_kgs: a.qty_kgs, qty_litres: a.qty_litres, fat_pct: a.fat_pct,
             snf_pct: a.snf_pct, temperature: a.temperature, description: a.description,
@@ -692,6 +783,10 @@ export default function ExecutionForm() {
       setEntries((exec.entries || []).map((e, i) => ({
         ...e,
         _key: 'e' + Date.now() + i
+      })));
+      setThirdPartySales((exec.third_party_sales || []).map((s, i) => ({
+        ...s,
+        _key: 'tps' + Date.now() + i
       })));
     }
   }, [exec]);
@@ -823,6 +918,23 @@ export default function ExecutionForm() {
   const deleteEntry = (key) =>
     setEntries(prev => prev.filter(e => e._key !== key));
 
+  // Third Party Sale — milk sold directly to a buyer, off the trip's normal
+  // BMCU/plant chain. Per-BMCU (bmcu_seq_no): reduces that BMCU's RMRD total,
+  // never the trip's dispatch quantity.
+  const addThirdPartySale = (seqNo, bmcuId) =>
+    setThirdPartySales(prev => [...prev, {
+      bmcu_seq_no: seqNo,
+      bmcu_id: bmcuId || null,
+      qty_litres: '', fat_pct: '', snf_pct: '', customer_name: '', remarks: '',
+      _key: 'tps' + Date.now() + Math.random()
+    }]);
+
+  const updateThirdPartySale = (key, field, val) =>
+    setThirdPartySales(prev => prev.map(s => s._key === key ? { ...s, [field]: val } : s));
+
+  const deleteThirdPartySale = (key) =>
+    setThirdPartySales(prev => prev.filter(s => s._key !== key));
+
   // 110% capacity guard (mirrors the server-side check in applyExecutionData)
   const capacityViolation = () => {
     const capacity = parseFloat(exec?.capacity_litres) || 0;
@@ -848,15 +960,27 @@ export default function ExecutionForm() {
   }, [bmcuRows, shiftRows]);
 
   const saveMut = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const violation = capacityViolation();
       if (violation) { window.alert(`⚠ Cannot save\n\n${violation}`); return Promise.reject(new Error(violation)); }
+
+      // OUT/IN typed but the Save button clicked (instead of Gate Pass/COA):
+      // record the same timestamp, just without printing.
+      let outTs, inTs;
+      try {
+        outTs = parseTypedTs(outDate, outTime, 'Tanker OUT');
+        inTs  = parseTypedTs(inDate, inTime, 'Tanker IN');
+      } catch (e) { toast.error(e.message); return Promise.reject(e); }
+      if (outTs) await recordDocMut.mutateAsync({ docType: 'gate_pass', ts: outTs });
+      if (inTs)  await recordDocMut.mutateAsync({ docType: 'coa', ts: inTs });
+
       return updateExecution(id, {
       actual_km: actualKm, delivery_point_id: deliveryPointId || null,
       start_point_id: startPointId || null,
       bmcus: bmcuRows.filter(r => r.bmcu_id), // skip rows where BMCU not yet selected
       shift_rows: shiftRows.map(({ _key, ...r }) => r),
-      entries: entries.map(({ _key, source_bmcu_code, source_bmcu_name, bmcu_code, bmcu_name, ...r }) => r)
+      entries: entries.map(({ _key, source_bmcu_code, source_bmcu_name, bmcu_code, bmcu_name, ...r }) => r),
+      third_party_sales: thirdPartySales.map(({ _key, ...r }) => r),
       });
     },
     onSuccess: () => { toast.success('Saved'); qc.invalidateQueries(['execution', id]); refetchDist(); },
@@ -887,6 +1011,9 @@ export default function ExecutionForm() {
   const visibleRows = bmcuRows.filter(r => !r.is_deleted);
   // ALL rows count, including 'Balance Milk' ones — their dispatched qty is
   // real milk on the tanker (matches the server-side totals and TS reports).
+  // Third Party Sale does NOT reduce this dispatch total — it reduces the
+  // RMRD total of the specific BMCU it's recorded against instead (shown per
+  // BMCU under "RMRD Qty" / in reports), matching applyExecutionData.
   const totalLitres = visibleRows.reduce((s,r) => s + (parseFloat(r.qty_litres)||0), 0);
   const totalKgs    = visibleRows.reduce((s,r) => s + (parseFloat(r.qty_kgs) || parseFloat(r.qty_litres||0)*1.0285), 0);
   const isTrulyClosed = exec.status === 'closed';
@@ -908,7 +1035,7 @@ export default function ExecutionForm() {
             Trip #{exec.trip_no} — {exec.tanker_number}
           </h2>
           <p className="text-xs font-medium" style={{ color: 'rgba(255,255,255,0.85)' }}>
-            {exec.execution_date?.slice(0,10)}
+            {fmtDate(exec.execution_date)}
             {exec.shifts_milk && <> · <span style={{ color: 'white' }}>{exec.shifts_milk}</span></>}
             {exec.route_name  && <> · <span style={{ color: 'white' }}>{exec.route_name}</span></>}
             {exec.delivery_point_name && <> · {exec.delivery_point_name}</>}
@@ -1160,6 +1287,10 @@ export default function ExecutionForm() {
                     onAddEntry={addEntry}
                     onUpdateEntry={updateEntry}
                     onDeleteEntry={deleteEntry}
+                    salesForBmcu={thirdPartySales.filter(s => s.bmcu_seq_no === row.seq_no)}
+                    onAddSale={addThirdPartySale}
+                    onUpdateSale={updateThirdPartySale}
+                    onDeleteSale={deleteThirdPartySale}
                     execDate={exec?.execution_date?.slice(0,10) || ''}
                     onDragStart={() => setDragIdx(i)}
                     onDragOver={() => setDragOverIdx(i)}
@@ -1230,7 +1361,7 @@ export default function ExecutionForm() {
             Acknowledgement {staging && <span className="text-sky-600 font-normal text-xs">(editing — staged for approval)</span>}
           </h3>
           <div className="text-xs text-gray-500 mb-1">
-            Date: <strong className="text-gray-700">{exec.acknowledgements[0]?.ack_date?.slice(0,10)}</strong>
+            Date: <strong className="text-gray-700">{fmtDate(exec.acknowledgements[0]?.ack_date)}</strong>
             {exec.acknowledgements[0]?.entered_by_user_id && (
               <> · Entered by: <strong className="text-gray-700 font-mono">{exec.acknowledgements[0].entered_by_user_id}</strong></>
             )}

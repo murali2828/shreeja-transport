@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
 import { getDayUtilisation, downloadDayUtilisationExcel } from '../../api/index';
+import { fmtDate } from '../../utils/date';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const n2 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -83,7 +84,7 @@ export default function DayUtilisation() {
                   <td className="table-td">{r.s_no}</td>
                   <td className="table-td whitespace-nowrap">{r.starting_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.delivery_point || '—'}</td>
-                  <td className="table-td whitespace-nowrap">{r.ack_date}</td>
+                  <td className="table-td whitespace-nowrap">{fmtDate(r.ack_date)}</td>
                   <td className="table-td font-mono font-semibold text-[#005ba3] whitespace-nowrap">{r.tanker_number || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.route_name || '—'}</td>
                   <td className="table-td text-right">{n2(r.ack_litres)}</td>

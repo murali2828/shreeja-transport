@@ -24,6 +24,7 @@ const APPROVER_CC = () => (process.env.CHANGE_APPROVER_CC
   .split(',').map(s => s.trim()).filter(Boolean);
 
 const { createTransport } = require('../config/mailer');
+const { fmtDateDisplay } = require('../utils/date');
 
 async function getApprover() {
   const r = await query(
@@ -50,10 +51,13 @@ async function snapshotExecution(db, execId) {
     'SELECT * FROM trip_execution_bmcu_entries WHERE execution_id=$1 ORDER BY bmcu_seq_no, id', [execId]);
   const acks = await db.query(
     'SELECT * FROM trip_acknowledgements WHERE execution_id=$1 ORDER BY chamber', [execId]);
+  const thirdPartySales = await db.query(
+    'SELECT * FROM trip_third_party_sales WHERE execution_id=$1 ORDER BY id', [execId]);
   return {
     actual_km: exec.rows[0]?.actual_km,
     bmcus: bmcus.rows, shift_rows: shifts.rows,
     entries: entries.rows, acknowledgements: acks.rows,
+    third_party_sales: thirdPartySales.rows,
   };
 }
 
@@ -115,6 +119,11 @@ function buildDiffHtml(snapshot, changes) {
     { key: 'snf_pct', label: 'SNF%' }, { key: 'temperature', label: 'Temp' },
     { key: 'description', label: 'Description' },
   ];
+  const tpsFields = [
+    { key: 'qty_litres', label: 'Sale Qty L' }, { key: 'fat_pct', label: 'Fat%' },
+    { key: 'snf_pct', label: 'SNF%' }, { key: 'customer_name', label: 'Customer Name' },
+    { key: 'remarks', label: 'Remarks' },
+  ];
 
   const kmDiff = (parseFloat(snapshot.actual_km) || 0) !== (parseFloat(changes.actual_km) || 0)
     ? `<p style="font-family:sans-serif;font-size:13px;">Actual KM: <s>${cell(snapshot.actual_km)}</s> → <b style="background:#fef3c7;">${cell(changes.actual_km)}</b></p>` : '';
@@ -128,6 +137,8 @@ function buildDiffHtml(snapshot, changes) {
         (r, i) => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`, r => `BMCU #${r?.bmcu_seq_no} ${r?.kind || ''}`, entryFields)
     + diffRowsHtml('Acknowledgement', snapshot.acknowledgements, changes.acknowledgements,
         r => r.chamber, r => `Chamber ${r?.chamber}`, ackFields)
+    + diffRowsHtml('Third Party Sale', snapshot.third_party_sales, changes.third_party_sales,
+        (r, i) => `${r.id ?? i}`, r => `${r?.customer_name || 'Sale'}`, tpsFields)
     || '<p style="font-family:sans-serif;font-size:13px;color:#6b7280;">(No field-level differences detected — review in the portal.)</p>';
 }
 
@@ -141,7 +152,7 @@ async function sendApprovalEmail(cr, execInfo, approver) {
     <p style="font-family:sans-serif;font-size:13px;">
       <b>${esc(cr.requested_by_name)}</b> has requested changes to the CLOSED trip
       <b>Trip #${esc(execInfo.trip_no)} — ${esc(execInfo.tanker_number || '')}</b>
-      (${esc(String(execInfo.execution_date).slice(0, 10))}).<br/>
+      (${esc(fmtDateDisplay(execInfo.execution_date))}).<br/>
       Reason: <i>${esc(cr.reason || '—')}</i>
     </p>
     ${buildDiffHtml(cr.snapshot, cr.changes)}
@@ -161,7 +172,7 @@ async function sendApprovalEmail(cr, execInfo, approver) {
   await transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: approver.email,
-    subject: `Approval needed — changes to closed Trip #${execInfo.trip_no} (${String(execInfo.execution_date).slice(0, 10)})`,
+    subject: `Approval needed — changes to closed Trip #${execInfo.trip_no} (${fmtDateDisplay(execInfo.execution_date)})`,
     html,
   });
 }
@@ -182,6 +193,9 @@ function compactDiffHtml(snapshot, changes) {
     ['Acknowledgement', snapshot.acknowledgements, changes.acknowledgements, r => r.chamber,
       r => `Chamber ${r?.chamber}`,
       [['qty_litres','Qty Litres'],['fat_pct','Fat%'],['snf_pct','SNF%'],['temperature','Temp']]],
+    ['Third Party Sale', snapshot.third_party_sales, changes.third_party_sales, (r, i) => `${r.id ?? i}`,
+      r => `${r?.customer_name || 'Sale'}`,
+      [['qty_litres','Sale Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%'],['customer_name','Customer Name']]],
   ];
   const td = (v, extra = '') => `<td style="padding:4px 8px;border:1px solid #e5e7eb;${extra}">${v}</td>`;
   let rows = '';
@@ -239,7 +253,7 @@ async function sendAppliedInfoEmail(cr, deciderName) {
         <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Tanker Number</td>
             <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(x.tanker_number || '—')}</td></tr>
         <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Date</td>
-            <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(String(x.execution_date || '').slice(0, 10))}</td></tr>
+            <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(fmtDateDisplay(x.execution_date))}</td></tr>
         <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Shift</td>
             <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(x.shifts_milk || '—')}</td></tr>
         <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Approved by</td>
@@ -252,7 +266,7 @@ async function sendAppliedInfoEmail(cr, deciderName) {
     await transporter.sendMail({
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
       to: recipients.join(', '),
-      subject: `FYI — approved changes applied to closed Trip #${x.trip_no ?? ''} (${String(x.execution_date || '').slice(0, 10)})`,
+      subject: `FYI — approved changes applied to closed Trip #${x.trip_no ?? ''} (${fmtDateDisplay(x.execution_date)})`,
       html,
     });
   } catch (e) { console.error('Change-applied info email failed:', e.message); }
@@ -269,6 +283,18 @@ async function decideRequest(crId, decision, decider, note) {
     const cr = crRes.rows[0];
 
     if (decision === 'approve') {
+      // Defense-in-depth: the trip may have been pulled into a billing run
+      // after the request was created (race between requester and biller).
+      // Re-check right before applying so we never silently stale a billing run.
+      const inRun = await client.query(
+        `SELECT br.id, br.status FROM billing_run_trips brt
+         JOIN billing_runs br ON br.id = brt.run_id
+         WHERE brt.execution_id = $1 LIMIT 1`, [cr.execution_id]);
+      if (inRun.rows.length)
+        throw Object.assign(new Error(
+          `This trip is now part of Billing Run #${inRun.rows[0].id} (${inRun.rows[0].status}) — it can't be approved. Ask the biller to remove/delete it from the billing run first, then re-submit the change request.`
+        ), { code: 400 });
+
       // Apply via the shared write path; closed status stays closed.
       // Snapshot before/after inside the transaction for the field-level change log.
       let beforeSnap = null;
@@ -325,6 +351,13 @@ router.post('/executions/:id', authenticate, async (req, res) => {
     const execInfo = execRes.rows[0];
     if (execInfo.status !== 'closed')
       return res.status(400).json({ error: 'Change requests are only for CLOSED trips — open trips can be edited directly' });
+
+    const inRun = await query(
+      `SELECT br.id, br.status FROM billing_run_trips brt
+       JOIN billing_runs br ON br.id = brt.run_id
+       WHERE brt.execution_id = $1 LIMIT 1`, [req.params.id]);
+    if (inRun.rows.length)
+      return res.status(400).json({ error: `This trip is part of Billing Run #${inRun.rows[0].id} (${inRun.rows[0].status}) — remove/delete it from the billing run before requesting changes.` });
 
     const pending = await query(
       "SELECT id FROM execution_change_requests WHERE execution_id=$1 AND status='pending'", [req.params.id]);

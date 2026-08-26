@@ -23,7 +23,7 @@ export default function TripPlanForm() {
     plan_date: today, plan_for_date: today, trip_no: '',
     route_id: '', tanker_id: '', start_point_id: '', testing_point_id: '', delivery_point_id: '',
     shifts_milk: '', expected_km: '', expected_total_qty: '',
-    driver_name: '', loader_name: '', remarks: '', bmcus: []
+    driver_name: '', loader_name: '', remarks: '', bmcus: [], is_sale_tanker: false
   });
 
   // Load masters
@@ -57,6 +57,7 @@ export default function TripPlanForm() {
         driver_name: existing.driver_name || '',
         loader_name: existing.loader_name || '',
         remarks: existing.remarks || '',
+        is_sale_tanker: !!existing.is_sale_tanker,
         bmcus: (existing.bmcus || []).map(b => ({
           seq_no: b.seq_no, bmcu_id: b.bmcu_id, bmcu_code: b.bmcu_code,
           bmcu_name: b.bmcu_name, shift_code: b.shift_code || '', expected_qty: b.expected_qty || '',
@@ -293,6 +294,13 @@ export default function TripPlanForm() {
             onChange={e => set('remarks', e.target.value)}
             placeholder="Special instructions for executors…"/>
         </div>
+
+        {/* Sale tanker flag — excluded from vendor billing by default */}
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={form.is_sale_tanker}
+            onChange={e => set('is_sale_tanker', e.target.checked)}/>
+          Sale Tanker Trip <span className="text-gray-400 text-xs">(shown but excludable in Tanker Payment billing)</span>
+        </label>
 
         {/* BMCU sequence */}
         <div>

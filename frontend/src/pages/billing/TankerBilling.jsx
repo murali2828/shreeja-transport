@@ -10,11 +10,13 @@ import toast from 'react-hot-toast';
 import { ChevronDown, ChevronRight, Download, Send, Trash2, Play, ArrowLeft } from 'lucide-react';
 import api from '../../api';
 import { useAuth } from '../../hooks/useAuth';
+import { fmtDate } from '../../utils/date';
 
 const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 const STATUS_LABEL = {
-  draft: ['Draft', '#c98500'], pending_l1: ['Awaiting L1 (Mahesh K)', '#2a78d6'],
+  draft: ['Draft', '#c98500'], pending_vendor: ['Awaiting Vendor Verification', '#4a3aa7'],
+  pending_l1: ['Awaiting L1 (Mahesh K)', '#2a78d6'],
   pending_l2: ['Awaiting L2 (Krithiga A)', '#2a78d6'], pending_l3: ['Awaiting L3 (Thimmappa)', '#2a78d6'],
   approved: ['APPROVED', '#008300'], rejected: ['REJECTED — correct & resubmit', '#e34948'],
 };
@@ -40,6 +42,8 @@ export default function TankerBilling() {
   const [ratePreviews, setRatePreviews] = useState({}); // tripId -> rate_per_km | null (unsaved)
   const [expanded, setExpanded] = useState({}); // tripId -> bool
   const [tab, setTab] = useState('trips');     // trips | tankers | vendors
+  const [searchRoute, setSearchRoute] = useState('');
+  const [searchTanker, setSearchTanker] = useState('');
 
   const { data: runs } = useQuery({
     queryKey: ['billing-runs'],
@@ -54,6 +58,20 @@ export default function TankerBilling() {
     queryKey: ['billing-summary', openRunId, run?.updated_at],
     queryFn: () => api.get(`/billing/runs/${openRunId}/summary`).then(r => r.data),
     enabled: !!openRunId,
+  });
+  const { data: vendorList } = useQuery({
+    queryKey: ['vendors'],
+    queryFn: () => api.get('/vendors').then(r => r.data),
+  });
+
+  const assignVendorMut = useMutation({
+    mutationFn: ({ tanker_number, vendor_id }) => api.post(`/billing/runs/${openRunId}/assign-vendor`, { tanker_number, vendor_id }),
+    onSuccess: (r, vars) => {
+      toast.success(`${vars.tanker_number} → ${r.data.vendor_name} (${r.data.trips_updated} trip(s) updated)`);
+      qc.invalidateQueries(['billing-run', openRunId]);
+      qc.invalidateQueries(['billing-summary']);
+    },
+    onError: e => toast.error(e.response?.data?.error || e.message),
   });
 
   const createMut = useMutation({
@@ -93,8 +111,32 @@ export default function TankerBilling() {
 
   const submitMut = useMutation({
     mutationFn: () => api.post(`/billing/runs/${openRunId}/submit`),
-    onSuccess: () => {
-      toast.success('Submitted — approval email sent to Mahesh K (Level 1)');
+    onSuccess: r => {
+      if (r.data.carried_forward?.length)
+        toast(`⚠ ${r.data.carried_forward.length} tanker(s) had no toll challan — ${r.data.carried_trips} trip(s) removed from this run and will be carried forward: ${r.data.carried_forward.join(', ')}`,
+              { duration: 12000, icon: '⚠️' });
+      if (r.data.status === 'draft')
+        toast.error('No tankers had a valid toll challan — nothing was submitted. Add toll challans and submit again.', { duration: 10000 });
+      else
+        toast.success('Submitted — approval email sent to Mahesh K (Level 1)');
+      qc.invalidateQueries(['billing-run', openRunId]);
+      qc.invalidateQueries(['billing-runs']);
+    },
+    onError: e => toast.error(e.response?.data?.error || e.message, { duration: 8000 }),
+  });
+
+  const [vendorFilter, setVendorFilter] = useState([]); // [{id, vendor_name}] — empty = all vendors
+
+  const pushVendorMut = useMutation({
+    mutationFn: () => api.post(`/billing/runs/${openRunId}/push-vendor`,
+      vendorFilter.length ? { vendor_ids: vendorFilter.map(v => v.id) } : {}),
+    onSuccess: r => {
+      const results = r.data.results || [];
+      const sent = results.filter(x => x.startsWith('✓')).length;
+      const failed = results.filter(x => x.startsWith('✗'));
+      if (sent > 0) toast.success(`Draft tanker cards emailed to ${sent} vendor(s)${vendorFilter.length ? ' (selected only)' : ''} for verification`);
+      if (!sent && !failed.length) toast('Nothing to push — no billable trips for the current selection.', { icon: 'ℹ️', duration: 8000 });
+      failed.forEach(msg => toast.error(msg, { duration: 12000 }));
       qc.invalidateQueries(['billing-run', openRunId]);
       qc.invalidateQueries(['billing-runs']);
     },
@@ -108,7 +150,10 @@ export default function TankerBilling() {
   });
 
   const downloadReport = () =>
-    api.get(`/billing/runs/${openRunId}/report`, { responseType: 'blob' }).then(r => {
+    api.get(`/billing/runs/${openRunId}/report`, {
+      responseType: 'blob',
+      params: vendorFilter.length ? { vendor_ids: vendorFilter.map(v => v.id).join(',') } : undefined,
+    }).then(r => {
       const url = URL.createObjectURL(r.data);
       const a = document.createElement('a');
       a.href = url; a.download = `tanker_billing_run_${openRunId}.xlsx`; a.click();
@@ -132,7 +177,7 @@ export default function TankerBilling() {
       ...prev[tripId], legs: { ...(prev[tripId]?.legs || {}), [index]: km },
     } }));
   const val = (t, field) => edits[t.id]?.[field] !== undefined ? edits[t.id][field] : (t[field] ?? '');
-  const editable = canEdit && run && ['draft', 'rejected'].includes(run.status);
+  const editable = canEdit && run && ['draft', 'rejected', 'pending_vendor'].includes(run.status);
 
   // ── runs list / payment report ─────────────────────────────────────────────
   if (!openRunId) return (
@@ -184,13 +229,13 @@ export default function TankerBilling() {
               return (
                 <tr key={r.id} className="border-t border-gray-100 hover:bg-blue-50/50 cursor-pointer" onClick={() => setOpenRunId(r.id)}>
                   <td className="px-3 py-2 font-bold text-[#005ba3]">#{r.id}</td>
-                  <td className="px-3 py-2">{r.from_date} → {r.to_date}</td>
+                  <td className="px-3 py-2">{fmtDate(r.from_date)} → {fmtDate(r.to_date)}</td>
                   <td className="px-3 py-2">{r.trip_count}</td>
                   <td className="px-3 py-2 text-right font-semibold">{nf(r.total_amount)}</td>
                   <td className="px-3 py-2"><span className="font-semibold" style={{ color }}>{label}</span></td>
                   <td className="px-3 py-2">{r.created_by_name || '—'}</td>
                   <td className="px-3 py-2">
-                    {canEdit && ['draft', 'rejected'].includes(r.status) && (
+                    {canEdit && ['draft', 'rejected', 'pending_vendor'].includes(r.status) && (
                       <button className="p-1 text-gray-400 hover:text-red-600" title="Delete run"
                               onClick={e => { e.stopPropagation(); window.confirm('Delete this run?') && delMut.mutate(r.id); }}>
                         <Trash2 size={13}/>
@@ -209,7 +254,14 @@ export default function TankerBilling() {
   // ── run detail ─────────────────────────────────────────────────────────────
   const [label, color] = STATUS_LABEL[run?.status] || ['…', '#666'];
   const trips = run?.trips || [];
-  const missing = trips.filter(t => !val(t, 'state') || t.rate_per_km == null).length;
+  const saleTrips = trips.filter(t => t.is_sale_tanker);
+  const vendorFilterIds = new Set(vendorFilter.map(v => v.id));
+  const filteredTrips = trips.filter(t => !t.is_sale_tanker &&
+    (!vendorFilterIds.size || vendorFilterIds.has(t.vendor_id)) &&
+    (!searchRoute || (t.route_name || '').toLowerCase().includes(searchRoute.toLowerCase())) &&
+    (!searchTanker || (t.tanker_number || '').toLowerCase().includes(searchTanker.toLowerCase())));
+  const missing = trips.filter(t => !t.is_sale_tanker && (!val(t, 'state') || t.rate_per_km == null)).length;
+  const unassignedTankers = [...new Set(trips.filter(t => !t.is_sale_tanker && !val(t, 'excluded') && !t.vendor_id).map(t => t.tanker_number))];
   const newComboCount = trips.reduce((s, t) => {
     const legs = Array.isArray(t.legs) ? t.legs : (t.legs ? JSON.parse(t.legs) : []);
     return s + legs.filter(l => l.is_new).length;
@@ -224,7 +276,7 @@ export default function TankerBilling() {
         <div>
           <h2 className="page-title">Billing Run #{openRunId}</h2>
           <p className="text-xs" style={{ color: 'rgba(255,255,255,0.92)' }}>
-            {run?.from_date} → {run?.to_date} · {trips.length} acknowledged trips {isFetching && '· loading…'}
+            {fmtDate(run?.from_date)} → {fmtDate(run?.to_date)} · {trips.length} acknowledged trips {isFetching && '· loading…'}
           </p>
         </div>
         <span className="px-3 py-1 rounded-full text-xs font-bold text-white" style={{ background: color }}>{label}</span>
@@ -234,8 +286,20 @@ export default function TankerBilling() {
           <div className="text-xl font-bold">₹ {nf(run?.total_amount)}</div>
         </div>
         <button className="btn-secondary text-xs flex items-center gap-1.5" onClick={downloadReport}>
-          <Download size={13}/> Report
+          <Download size={13}/> Report{vendorFilter.length ? ` (${vendorFilter.length})` : ''}
         </button>
+        {editable && ['draft', 'rejected', 'pending_vendor'].includes(run.status) && (
+          <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={pushVendorMut.isPending}
+                  title={vendorFilter.length
+                    ? `Email draft tanker cards to only: ${vendorFilter.map(v => v.vendor_name).join(', ')}`
+                    : 'Email draft tanker cards to each vendor for review before final submission — safe to re-send after editing more trips'}
+                  onClick={() => window.confirm(vendorFilter.length
+                      ? `Email DRAFT tanker cards to ${vendorFilter.length} selected vendor(s) only?`
+                      : 'Email DRAFT tanker cards to all vendors on this run for verification?') && pushVendorMut.mutate()}>
+            <Send size={13}/> {pushVendorMut.isPending ? 'Sending…' : (run.status === 'pending_vendor' ? 'Push to Vendors Again' : 'Push to Vendors')}
+            {vendorFilter.length ? ` (${vendorFilter.length})` : ''}
+          </button>
+        )}
         {editable && (<>
           <button className="btn-secondary text-xs" disabled={!Object.keys(edits).length || saveMut.isPending}
                   onClick={() => {
@@ -248,9 +312,12 @@ export default function TankerBilling() {
             {saveMut.isPending ? 'Saving…' : `Save (${Object.keys(edits).length})`}
           </button>
           <button className="btn-primary text-xs flex items-center gap-1.5" disabled={submitMut.isPending}
-                  title={missing ? `${missing} trip(s) missing state/rate` : 'Send to Level 1 approver'}
+                  title={unassignedTankers.length ? `No vendor mapped for: ${unassignedTankers.join(', ')} — assign on the Vendor Wise tab`
+                         : missing ? `${missing} trip(s) missing state/rate` : 'Send to Level 1 approver'}
                   onClick={() => {
                     if (Object.keys(edits).length) return toast.error('Save your changes first');
+                    if (unassignedTankers.length)
+                      return toast.error(`No vendor mapped for: ${unassignedTankers.join(', ')} — assign a vendor on the Vendor Wise tab first`, { duration: 8000 });
                     window.confirm(`Submit ₹ ${nf(run?.total_amount)} for approval? Email goes to Mahesh K (L1).`) && submitMut.mutate();
                   }}>
             <Send size={13}/> Submit for Approval
@@ -286,15 +353,34 @@ export default function TankerBilling() {
       )}
 
       {/* tabs */}
-      <div className="flex gap-2">
-        {[['trips', 'Trip Wise'], ['dates', 'Date Wise'], ['tankers', 'Tanker Wise'], ['vendors', 'Vendor Wise'], ['tolls', 'Toll Challans']].map(([k, l]) => (
+      <div className="flex gap-2 items-center flex-wrap">
+        {[['trips', 'Trip Wise'], ['vendors', 'Vendor Wise'], ['saleTankers', 'Sale Tankers'], ['tolls', 'Toll Challans']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold"
             style={tab === k ? { background: '#cc785c', color: '#fff' } : { background: '#fff', color: '#57534e' }}>
             {l}
           </button>
         ))}
+        <VendorFilterPicker vendorList={vendorList || []} selected={vendorFilter} onChange={setVendorFilter}/>
+        {tab === 'trips' && (<>
+          <input type="text" placeholder="Search route…" value={searchRoute}
+                 onChange={e => setSearchRoute(e.target.value)}
+                 className="input text-xs py-1 px-2 w-36"/>
+          <input type="text" placeholder="Search tanker…" value={searchTanker}
+                 onChange={e => setSearchTanker(e.target.value)}
+                 className="input text-xs py-1 px-2 w-32"/>
+          {(searchRoute || searchTanker) && (
+            <button className="text-xs text-white/90 underline" onClick={() => { setSearchRoute(''); setSearchTanker(''); }}>
+              clear
+            </button>
+          )}
+        </>)}
         {missing > 0 && editable && <span className="text-xs text-white/90 self-center">⚠ {missing} trip(s) missing state / rate</span>}
+        {unassignedTankers.length > 0 && editable &&
+          <span className="text-xs text-white font-semibold self-center bg-red-600/80 px-2 py-1 rounded"
+                title={unassignedTankers.join(', ')}>
+            ⚠ {unassignedTankers.length} tanker(s) with no vendor mapped — payment cannot run for {unassignedTankers.length > 3 ? `${unassignedTankers.slice(0,3).join(', ')}…` : unassignedTankers.join(', ')} (fix on Vendor Wise tab)
+          </span>}
       </div>
 
       {tab === 'trips' && (
@@ -302,12 +388,12 @@ export default function TankerBilling() {
           <div className="overflow-x-auto max-h-[62vh]">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
-                <tr>{['', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
                      'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
               <tbody>
-                {trips.map(t => (
+                {filteredTrips.map(t => (
                   <FragmentRow key={t.id} t={t} editable={editable} expanded={!!expanded[t.id]}
                     carried={run?.from_date && t.plan_for_date < run.from_date}
                     onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
@@ -315,13 +401,55 @@ export default function TankerBilling() {
                     legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}
                     ratePreview={ratePreviews[t.id]} previewRate={previewRate} />
                 ))}
+                {filteredTrips.length === 0 && (
+                  <tr><td colSpan={18} className="px-3 py-4 text-center text-gray-400">No trips match this search.</td></tr>
+                )}
                 <tr className="bg-blue-100 font-bold">
-                  <td className="px-2 py-2" colSpan={11}>TOTAL — {trips.length} trips</td>
-                  <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
-                  <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
-                  <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
+                  <td className="px-2 py-2" colSpan={12}>
+                    TOTAL — {filteredTrips.length}{filteredTrips.length !== trips.length ? ` of ${trips.length}` : ''} trips
+                    ({filteredTrips.filter(t => val(t,"excluded")).length} excluded)
+                  </td>
+                  <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
                   <td/>
-                  <td className="px-2 py-2 text-right">{nf(trips.reduce((s, t) => s + (+t.amount || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (val(t,"excluded") ? 0 : (+t.amount || 0)), 0))}</td>
+                  <td/>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'saleTankers' && (
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto max-h-[62vh]">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
+                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                     'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
+                     .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {saleTrips.map(t => (
+                  <FragmentRow key={t.id} t={t} editable={editable} expanded={!!expanded[t.id]}
+                    carried={run?.from_date && t.plan_for_date < run.from_date}
+                    onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
+                    val={val} setEdit={setEdit}
+                    legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}
+                    ratePreview={ratePreviews[t.id]} previewRate={previewRate} />
+                ))}
+                {saleTrips.length === 0 && (
+                  <tr><td colSpan={18} className="px-3 py-4 text-center text-gray-400">No Sale Tanker trips in this run.</td></tr>
+                )}
+                <tr className="bg-blue-100 font-bold">
+                  <td className="px-2 py-2" colSpan={12}>TOTAL — {saleTrips.length} Sale Tanker trip(s), not billed to vendors</td>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
+                  <td/>
+                  <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.amount || 0), 0))}</td>
                   <td/>
                 </tr>
               </tbody>
@@ -334,7 +462,20 @@ export default function TankerBilling() {
         <TollPanel runId={openRunId} tolls={run?.tolls || []} tankers={summary?.tankers || []} editable={editable}/>
       )}
 
-      {tab !== 'trips' && tab !== 'tolls' && (() => {
+      {tab === 'vendors' && unassignedTankers.length > 0 && editable && (
+        <div className="card p-3 space-y-2" style={{ background: '#fef2f2', border: '1px solid #dc2626' }}>
+          <div className="text-xs font-bold" style={{ color: '#991b1b' }}>
+            ⚠ {unassignedTankers.length} tanker(s) have no vendor mapped — payment cannot run for these until a vendor is assigned.
+          </div>
+          {unassignedTankers.map(tn => (
+            <VendorAssignRow key={tn} tankerNumber={tn} vendorList={vendorList || []}
+              onAssign={vendor_id => assignVendorMut.mutate({ tanker_number: tn, vendor_id })}
+              pending={assignVendorMut.isPending}/>
+          ))}
+        </div>
+      )}
+
+      {tab !== 'trips' && tab !== 'tolls' && tab !== 'saleTankers' && (() => {
         const withToll = tab === 'tankers' || tab === 'vendors';
         const rows = (tab === 'tankers' ? summary?.tankers : tab === 'dates' ? summary?.dates : summary?.vendors) || [];
         return (
@@ -401,6 +542,8 @@ function TollPanel({ runId, tolls, tankers, editable }) {
     const amount = f.amount !== undefined ? f.amount : existing?.amount;
     if (amount === undefined || amount === '' || +amount < 0)
       return toast.error('Enter the toll challan amount');
+    if (!f.file && !existing?.has_file)
+      return toast.error(`${tn}: choose a toll challan attachment (PDF/JPG/PNG) before saving — a record can't be saved without one`, { duration: 7000 });
     const fd = new FormData();
     fd.append('tanker_number', tn);
     fd.append('amount', amount);
@@ -522,6 +665,80 @@ function TollPanel({ runId, tolls, tankers, editable }) {
   );
 }
 
+// Type-to-search, multi-select vendor filter — scopes Push to Vendors and
+// the Report download to only the selected vendor(s). Empty = all vendors.
+function VendorFilterPicker({ vendorList, selected, onChange }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const selectedIds = new Set(selected.map(v => v.id));
+  const matches = vendorList
+    .filter(v => !selectedIds.has(v.id))
+    .filter(v => !q.trim() || (v.vendor_name || '').toLowerCase().includes(q.trim().toLowerCase()))
+    .slice(0, 8);
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-1 flex-wrap max-w-md">
+        {selected.map(v => (
+          <span key={v.id} className="bg-white/20 text-white text-[11px] px-2 py-0.5 rounded-full flex items-center gap-1">
+            {v.vendor_name}
+            <button onClick={() => onChange(selected.filter(s => s.id !== v.id))} className="hover:text-red-200">×</button>
+          </span>
+        ))}
+        <input type="text" placeholder={selected.length ? 'add vendor…' : 'Filter by vendor…'}
+               className="input text-xs py-1 px-2 w-40" value={q}
+               onFocus={() => setOpen(true)} onChange={e => { setQ(e.target.value); setOpen(true); }}
+               onBlur={() => setTimeout(() => setOpen(false), 150)}/>
+        {selected.length > 0 && (
+          <button className="text-[11px] text-white/80 underline" onClick={() => onChange([])}>clear</button>
+        )}
+      </div>
+      {open && (
+        <div className="absolute left-0 top-8 z-10 bg-white border border-gray-200 rounded shadow-lg w-64 max-h-48 overflow-y-auto text-xs">
+          {matches.length === 0 && <div className="px-3 py-2 text-gray-400">No matching vendor.</div>}
+          {matches.map(v => (
+            <button key={v.id} className="w-full text-left px-3 py-1.5 hover:bg-blue-50"
+                    onClick={() => { onChange([...selected, v]); setQ(''); setOpen(false); }}>
+              {v.vendor_name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Inline searchable vendor picker for a tanker with no vendor mapped —
+// shown on the Vendor Wise tab so the biller can fix it without leaving
+// the billing screen. Searches vendor name, code and email.
+function VendorAssignRow({ tankerNumber, vendorList, onAssign, pending }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const matches = q.trim()
+    ? vendorList.filter(v => [v.vendor_name, v.vendor_code, v.email].some(f => (f || '').toLowerCase().includes(q.trim().toLowerCase()))).slice(0, 8)
+    : vendorList.slice(0, 8);
+  return (
+    <div className="flex items-center gap-2 relative">
+      <span className="font-semibold text-[#005ba3] text-xs w-32">{tankerNumber}</span>
+      <input type="text" className="input text-xs py-1 px-2 w-72" placeholder="Search vendor by name, code or email…"
+             value={q} onFocus={() => setOpen(true)}
+             onChange={e => { setQ(e.target.value); setOpen(true); }} disabled={pending}/>
+      {open && (
+        <div className="absolute left-32 top-7 z-10 bg-white border border-gray-200 rounded shadow-lg w-96 max-h-48 overflow-y-auto text-xs">
+          {matches.length === 0 && <div className="px-3 py-2 text-gray-400">No matching vendor.</div>}
+          {matches.map(v => (
+            <button key={v.id} className="w-full text-left px-3 py-1.5 hover:bg-blue-50 flex flex-col"
+                    onClick={() => { onAssign(v.id); setQ(''); setOpen(false); }}>
+              <span className="font-semibold">{v.vendor_name} <span className="text-gray-400 font-normal">({v.vendor_code})</span></span>
+              <span className="text-gray-500">{v.email || 'no email in Vendor master'}</span>
+            </button>
+          ))}
+          <button className="w-full text-center px-3 py-1 text-gray-400 hover:bg-gray-50 border-t" onClick={() => setOpen(false)}>close</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
                        legEdits = {}, setLegEdit, ratePreview, previewRate }) {
   // Unsaved rate preview (fetched on state selection) takes display precedence
@@ -536,17 +753,24 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
   const legsTotal = legs.reduce((s, l, i) => s + legKm(l, i), 0);
   const legsEdited = Object.keys(legEdits).length > 0;
   return (<>
-    <tr className="border-t border-gray-100 hover:bg-blue-50/40">
+    <tr className={`border-t border-gray-100 hover:bg-blue-50/40 ${val(t,'excluded') ? 'opacity-50' : ''}`}>
       <td className="px-2 py-1.5">
         <button onClick={onToggle} className="p-0.5 text-gray-500" title="Show distance legs">
           {expanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
         </button>
       </td>
+      <td className="px-2 py-1.5 text-center" title="Exclude this trip from vendor billing (e.g. Sale Tanker trips)">
+        <input type="checkbox" checked={!!val(t, 'excluded')} disabled={!editable}
+               onChange={e => setEdit(t.id, 'excluded', e.target.checked)}/>
+      </td>
       <td className="px-2 py-1.5 whitespace-nowrap">
-        {t.plan_for_date}
+        {fmtDate(t.plan_for_date)}
         {carried && <span className="ml-1 px-1 rounded bg-amber-500 text-white text-[10px]" title="Late acknowledgement — carried forward from the previous fortnight">carry-fwd</span>}
       </td>
-      <td className="px-2 py-1.5 font-semibold text-[#005ba3] whitespace-nowrap">{t.tanker_number}</td>
+      <td className="px-2 py-1.5 font-semibold text-[#005ba3] whitespace-nowrap">
+        {t.tanker_number}
+        {t.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px]" title="Sale Tanker — milk sold directly at the BMCU, not billed to any vendor. Milk still counts in TS/Analytics reports.">Sale</span>}
+      </td>
       <td className="px-2 py-1.5 text-right">{t.capacity_litres ? (t.capacity_litres / 1000).toFixed(1) : '—'}</td>
       <td className="px-2 py-1.5">{t.vendor_name || <span className="text-red-600">no vendor</span>}</td>
       <td className="px-2 py-1.5">{t.route_name || '—'}</td>
@@ -601,7 +825,7 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
     {expanded && (
       <tr className="bg-gray-50">
         <td/>
-        <td colSpan={16} className="px-3 py-2">
+        <td colSpan={17} className="px-3 py-2">
           <div className="text-[11px] font-semibold text-gray-600 mb-1">
             Distance legs — Master {nf(t.master_km)} km · Google {nf(t.google_km)} km · Estimated {nf(t.estimated_km)} km ·
             Total {nf(legsTotal)} km
@@ -777,7 +1001,7 @@ function PaymentReport() {
                   <tbody>
                     {data.trips.map((t, i) => (
                       <tr key={i} className="border-t border-gray-100">
-                        <td className="px-2 py-1.5 whitespace-nowrap">{t.plan_for_date}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{fmtDate(t.plan_for_date)}</td>
                         <td className="px-2 py-1.5">#{t.run_id}</td>
                         <td className="px-2 py-1.5">{t.run_status}</td>
                         <td className="px-2 py-1.5 font-semibold text-[#005ba3]">{t.tanker_number}</td>

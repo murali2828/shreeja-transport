@@ -20,12 +20,13 @@ function normalisePair(fromType, fromId, toType, toId) {
 // execute processes ~1000 trips × ~5 legs — per-leg SELECTs are an N+1).
 // Key matches normalisePair ordering. Callers pass the Map as masterCache.
 async function loadMasterDistanceCache(db) {
-  const r = await db.query('SELECT from_type, from_id, to_type, to_id, distance_km, road_notes FROM distance_master');
+  const r = await db.query('SELECT from_type, from_id, to_type, to_id, distance_km, google_km, road_notes FROM distance_master');
   const cache = new Map();
   for (const row of r.rows) {
     cache.set(`${row.from_type}:${row.from_id}|${row.to_type}:${row.to_id}`, {
       km: parseFloat(row.distance_km),
       fromGoogle: /google/i.test(row.road_notes || ''),
+      googleKm: row.google_km != null ? parseFloat(row.google_km) : null,
     });
   }
   return cache;
@@ -35,7 +36,7 @@ async function getMasterDistanceKm(db, fromType, fromId, toType, toId, masterCac
   const p = normalisePair(fromType, parseInt(fromId), toType, parseInt(toId));
   if (masterCache) return masterCache.get(`${p.fromType}:${p.fromId}|${p.toType}:${p.toId}`) || null;
   const r = await db.query(
-    `SELECT distance_km, road_notes FROM distance_master
+    `SELECT distance_km, google_km, road_notes FROM distance_master
      WHERE from_type=$1 AND from_id=$2 AND to_type=$3 AND to_id=$4`,
     [p.fromType, p.fromId, p.toType, p.toId]
   );
@@ -45,7 +46,21 @@ async function getMasterDistanceKm(db, fromType, fromId, toType, toId, masterCac
     // Rows cached from the Routes API keep their Google attribution even
     // though they now live in the Distance Master.
     fromGoogle: /google/i.test(r.rows[0].road_notes || ''),
+    googleKm: r.rows[0].google_km != null ? parseFloat(r.rows[0].google_km) : null,
   };
+}
+
+// Backfill just the Google reference on an EXISTING Distance Master row,
+// without touching the (possibly manually entered) distance_km used for
+// billing. Used when a pair already has a master distance but has never
+// had its Google reference fetched.
+async function upsertGoogleRefOnly(db, fromType, fromId, toType, toId, googleKm) {
+  const p = normalisePair(fromType, parseInt(fromId), toType, parseInt(toId));
+  await db.query(
+    `UPDATE distance_master SET google_km=$5, updated_at=NOW()
+     WHERE from_type=$1 AND from_id=$2 AND to_type=$3 AND to_id=$4`,
+    [p.fromType, p.fromId, p.toType, p.toId, parseFloat(googleKm)]
+  );
 }
 
 // Cache a road km into Distance Master (insert or update). Used to persist
@@ -62,4 +77,4 @@ async function upsertMasterDistanceKm(db, fromType, fromId, toType, toId, km, no
   );
 }
 
-module.exports = { normalisePair, getMasterDistanceKm, upsertMasterDistanceKm, loadMasterDistanceCache };
+module.exports = { normalisePair, getMasterDistanceKm, upsertMasterDistanceKm, loadMasterDistanceCache, upsertGoogleRefOnly };

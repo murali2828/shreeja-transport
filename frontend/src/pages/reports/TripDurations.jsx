@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
 import { getTripDurations, downloadTripDurationsExcel } from '../../api/index';
+import { fmtDate } from '../../utils/date';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
@@ -82,7 +83,7 @@ export default function TripDurations() {
               {rt.map((x, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="table-td font-bold text-[#0078d4]">#{x.trip_no}</td>
-                  <td className="table-td whitespace-nowrap">{x.plan_for_date}</td>
+                  <td className="table-td whitespace-nowrap">{fmtDate(x.plan_for_date)}</td>
                   <td className="table-td font-mono">{x.tanker_number || '—'}</td>
                   <td className="table-td">{x.route_name || '—'}</td>
                   <td className="table-td">{x.starting_point || '—'}</td>
@@ -131,7 +132,7 @@ export default function TripDurations() {
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="table-td font-mono font-semibold text-[#005ba3]">{x.tanker_number || '—'}</td>
                   <td className="table-td font-bold text-[#0078d4]">#{x.arrived_trip_no}</td>
-                  <td className="table-td whitespace-nowrap">{x.plan_for_date}</td>
+                  <td className="table-td whitespace-nowrap">{fmtDate(x.plan_for_date)}</td>
                   <td className="table-td">{x.delivery_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{fmtTs(x.arrived_at)}</td>
                   <td className="table-td whitespace-nowrap">{fmtTs(x.unloading_done_at)}</td>

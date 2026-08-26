@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
 import { getPlans } from '../../api/index';
+import { fmtDate } from '../../utils/date';
 
 export default function DeletedPlansList() {
   const [dateFilter, setDateFilter] = useState('');
@@ -66,7 +67,7 @@ export default function DeletedPlansList() {
               {plans.map(p => (
                 <tr key={p.id} className="border-b border-gray-50 bg-gray-50/50">
                   <td className="table-td font-bold text-gray-400">#{p.trip_no}</td>
-                  <td className="table-td text-gray-500">{p.plan_for_date?.slice(0,10)}</td>
+                  <td className="table-td text-gray-500">{fmtDate(p.plan_for_date)}</td>
                   <td className="table-td font-mono text-xs text-gray-500">{p.tanker_number}</td>
                   <td className="table-td text-xs text-gray-500">{p.route_name || '—'}</td>
                   <td className="table-td text-xs text-gray-500">{p.delivery_point_name || '—'}</td>

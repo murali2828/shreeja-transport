@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
+import { fmtDate } from '../../utils/date';
 
 const nf = v => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -61,7 +62,7 @@ export default function BillingDecision() {
             </h2>
             {info && (
               <p style={{ color: '#4b5563', fontSize: 14, margin: '0 0 14px' }}>
-                Billing Run <b>#{info.run_id}</b> · {info.from_date} → {info.to_date}<br/>
+                Billing Run <b>#{info.run_id}</b> · {fmtDate(info.from_date)} → {fmtDate(info.to_date)}<br/>
                 Total payable: <b>₹ {nf(info.total_amount)}</b> · You are the Level {info.level} approver
               </p>
             )}

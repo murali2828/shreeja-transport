@@ -7,7 +7,7 @@
 //     recalc totals and distance — the single write path for execution data.
 
 const { haversineKm, ROAD_FACTOR } = require('../utils/geo');
-const { getMasterDistanceKm, upsertMasterDistanceKm, normalisePair } = require('./distanceLookup');
+const { getMasterDistanceKm, upsertMasterDistanceKm, upsertGoogleRefOnly, normalisePair } = require('./distanceLookup');
 const { googleLegKm } = require('./roadDistance');
 
 const KG_FACTOR = 1.0285;
@@ -57,12 +57,30 @@ async function computeExecutionDistance(client, execId, userId, masterCache) {
 
   for (let i = 0; i < nodes.length - 1; i++) {
     const a = nodes[i], z = nodes[i + 1];
+    // Same node twice in a row (e.g. a Balance Milk row duplicating a BMCU):
+    // zero-length self-leg — skip entirely (no leg, no new-combination flag).
+    if (a.type === z.type && a.id === z.id) continue;
     let km = 0, source = 'missing', isNew = false, googleKm = null;
 
     const master = await getMasterDistanceKm(client, a.type, a.id, z.type, z.id, masterCache);
     if (master != null) {
       km = master.km; source = master.fromGoogle ? 'google' : 'master';
       if (master.fromGoogle) googleKm = master.km;
+      else if (master.googleKm != null) googleKm = master.googleKm;
+      // Master has a manually-entered distance but no Google reference yet —
+      // fetch one for comparison (billing's Google KM column) without
+      // touching the billed distance_km itself.
+      else if (a.lat != null && a.lng != null && z.lat != null && z.lng != null) {
+        const g = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
+        if (g != null) {
+          googleKm = g;
+          await upsertGoogleRefOnly(client, a.type, a.id, z.type, z.id, g);
+          if (masterCache) {
+            const p = normalisePair(a.type, parseInt(a.id), z.type, parseInt(z.id));
+            masterCache.set(`${p.fromType}:${p.fromId}|${p.toType}:${p.toId}`, { ...master, googleKm: g });
+          }
+        }
+      }
     } else if (a.lat != null && a.lng != null && z.lat != null && z.lng != null) {
       isNew = true; // pair was NOT in the Distance Master — new combination
       const g = await googleLegKm(a.lat, a.lng, z.lat, z.lng);
@@ -142,7 +160,8 @@ async function assertWithinCapacity(client, execId) {
 async function applyExecutionData(client, execId, data, userId, opts = {}) {
   const { setSavedStatus = false } = opts;
   const { actual_km, delivery_point_id, start_point_id,
-          bmcus, shift_rows, entries, ack_date, acknowledgements } = data || {};
+          bmcus, shift_rows, entries, ack_date, acknowledgements,
+          third_party_sales } = data || {};
 
   const exec = await client.query('SELECT * FROM trip_executions WHERE id=$1', [execId]);
   if (!exec.rows.length) throw new Error('Execution not found');
@@ -165,13 +184,20 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
       const dpsKgs = calcKgs(bm.dps_qty_litres);
 
       if (bm.id) {
+        // seq_no/bmcu_id MUST be updated here — a biller re-sorting BMCU
+        // pickup order on an already-saved execution sends the same row
+        // ids back with new seq_no values; dropping them from the SET
+        // clause silently kept every trip billed against its original
+        // (pre-reorder) sequence, so distance calc never reflected the
+        // corrected pickup order.
         await client.query(
           `UPDATE trip_execution_bmcus SET
-             milk_date=$1,shift=$2,qty_litres=$3,qty_kgs=$4,fat_pct=$5,snf_pct=$6,
-             kg_fat=$7,kg_snf=$8,description=$9,source_bmcu_id=$10,chamber=$11,
-             dps_qty_litres=$12,dps_qty_kgs=$13,is_deleted=FALSE
-           WHERE id=$14 AND execution_id=$15`,
-          [bm.milk_date||null, bm.shift||null,
+             seq_no=$1,bmcu_id=$2,milk_date=$3,shift=$4,qty_litres=$5,qty_kgs=$6,fat_pct=$7,snf_pct=$8,
+             kg_fat=$9,kg_snf=$10,description=$11,source_bmcu_id=$12,chamber=$13,
+             dps_qty_litres=$14,dps_qty_kgs=$15,is_deleted=FALSE
+           WHERE id=$16 AND execution_id=$17`,
+          [bm.seq_no, bm.bmcu_id,
+           bm.milk_date||null, bm.shift||null,
            bm.qty_litres||null, kgs||null, bm.fat_pct||null, bm.snf_pct||null,
            kgFat||null, kgSnf||null, bm.description||'RMRD',
            bm.source_bmcu_id||null, bm.chamber||null,
@@ -248,6 +274,28 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     }
   }
 
+  // Third party sale (replace-all) — milk sold directly to a buyer, off the
+  // trip's normal BMCU/plant chain. Per-BMCU (bmcu_seq_no): the sale reduces
+  // that specific BMCU's RMRD total wherever RMRD is computed/displayed
+  // (see routes/reports.js and ExecutionForm.jsx) — it does NOT touch the
+  // trip's dispatch quantity at all.
+  if (third_party_sales !== undefined) {
+    await client.query('DELETE FROM trip_third_party_sales WHERE execution_id=$1', [execId]);
+    for (const s of (third_party_sales || [])) {
+      const kgs   = calcKgs(s.qty_litres);
+      const kgFat = calcKgFat(kgs, s.fat_pct);
+      const kgSnf = calcKgSnf(kgs, s.snf_pct);
+      await client.query(
+        `INSERT INTO trip_third_party_sales
+           (execution_id, bmcu_seq_no, qty_litres, qty_kgs, fat_pct, snf_pct, kg_fat, kg_snf, customer_name, remarks, entered_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [execId, s.bmcu_seq_no||null, s.qty_litres||null, kgs||null, s.fat_pct||null, s.snf_pct||null,
+         kgFat||null, kgSnf||null, (s.customer_name||'').trim() || null,
+         (s.remarks||'').trim() || null, userId || null]
+      );
+    }
+  }
+
   // Capacity guard: no volume area may exceed 110% of the tanker's registered
   // capacity. Throws (code 400) → the caller's transaction rolls back. Covers
   // the PUT save AND change-request approval, since both route through here.
@@ -267,6 +315,15 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     [execId]
   );
   const t = totals.rows[0];
+  t.total_litres = parseFloat(t.total_litres);
+  t.total_kgs    = parseFloat(t.total_kgs);
+  t.total_kg_fat = parseFloat(t.total_kg_fat);
+  t.total_kg_snf = parseFloat(t.total_kg_snf);
+  // NOTE: Third Party Sale is deliberately NOT netted out of the dispatch
+  // total here — a sale reduces the specific BMCU's RMRD figure instead
+  // (computed/displayed in routes/reports.js and ExecutionForm.jsx from
+  // trip_execution_bmcu_shifts), never this trip_executions dispatch total.
+
   const avgFat = t.total_kgs > 0 ? (t.total_kg_fat / t.total_kgs) * 100 : 0;
   const avgSnf = t.total_kgs > 0 ? (t.total_kg_snf / t.total_kgs) * 100 : 0;
 

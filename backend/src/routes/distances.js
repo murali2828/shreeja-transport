@@ -430,9 +430,25 @@ router.post('/:id(\\d+)/google-refresh', authenticate, authorize('admin'), async
 router.post('/google-refresh-all', authenticate, authorize('admin'), async (req, res) => {
   const BATCH = 150, CONCURRENCY = 5;
   try {
-    const rows = (await pool.query(
-      `SELECT id, from_type, from_id, to_type, to_id FROM distance_master
-       WHERE google_km IS NULL ORDER BY id LIMIT $1`, [BATCH])).rows;
+    // Only FETCHABLE pairs (both ends have coordinates) — otherwise a batch
+    // full of coordinate-less rows fetches 0 and the pagination never
+    // advances past them.
+    const rows = (await pool.query(`
+      WITH nodes AS (
+        SELECT 'bmcu' AS t, id, latitude, longitude FROM bmcus
+        UNION ALL SELECT 'starting_point', id, latitude, longitude FROM starting_points
+        UNION ALL SELECT 'delivery_point', id, latitude, longitude FROM delivery_points
+        UNION ALL SELECT 'testing_point', id, latitude, longitude FROM testing_points)
+      SELECT dm.id, dm.from_type, dm.from_id, dm.to_type, dm.to_id
+      FROM distance_master dm
+      JOIN nodes a ON a.t = dm.from_type AND a.id = dm.from_id
+        AND a.latitude IS NOT NULL AND a.longitude IS NOT NULL
+      JOIN nodes z ON z.t = dm.to_type AND z.id = dm.to_id
+        AND z.latitude IS NOT NULL AND z.longitude IS NOT NULL
+      WHERE dm.google_km IS NULL
+      -- Random order: pairs Google can't route stay NULL, and in id-order
+      -- they'd permanently clog the batch window and stall the loop.
+      ORDER BY random() LIMIT $1`, [BATCH])).rows;
 
     // Preload all node coordinates once
     const coordMap = new Map();
