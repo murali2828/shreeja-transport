@@ -21,6 +21,14 @@ const pool = new Pool({
   statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT_MS || '30000'),
   query_timeout: parseInt(process.env.DB_QUERY_TIMEOUT_MS || '35000'),
   idle_in_transaction_session_timeout: parseInt(process.env.DB_IDLE_TX_TIMEOUT_MS || '300000'),
+  // SSL is off by default (matches today's same-host docker-compose deployment,
+  // where backend and db share a trusted network and the db has no SSL
+  // configured). Set DB_SSL=true if the database ever moves to a separate
+  // host or a managed service that requires/accepts TLS; DB_SSL_REJECT_UNAUTHORIZED=false
+  // additionally disables certificate verification (e.g. for a self-signed cert).
+  ssl: process.env.DB_SSL === 'true'
+    ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' }
+    : false,
 });
 
 pool.on('error', (err) => {
