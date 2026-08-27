@@ -7,7 +7,7 @@
 //      for the same state + capacity + type is rejected.
 const express = require('express');
 const router  = express.Router();
-const XLSX    = require('xlsx');
+const ExcelJS = require('exceljs');
 const multer  = require('multer');
 const { query } = require('../config/db');
 const { authenticate, authorizeOrModule } = require('../middleware/auth');
@@ -52,6 +52,21 @@ const toDate = v => {
   return null;
 };
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+
+// ─── Helper: raw cell value the way the former xlsx `sheet_to_json(ws,
+// { header:1, defval:'' })` produced it — '' for blank, else the underlying
+// number/string/Date so toDate()/num() keep working unchanged. ───
+function cellRaw(cell) {
+  const v = cell.value;
+  if (v == null) return '';
+  if (v instanceof Date) return v;
+  if (typeof v === 'object') {
+    if (Array.isArray(v.richText)) return v.richText.map(t => t.text).join('');
+    if (v.result !== undefined) return v.result == null ? '' : v.result;
+    if (v.text !== undefined) return v.text;
+  }
+  return v;
+}
 
 // Validate one rate row; returns { error } or { row }.
 function validateRow(r) {
@@ -180,7 +195,6 @@ const MILEAGE = { 6: [6.4, 7], 9: [5.5, 6], 10: [5.5, 6], 11: [5, 5.5], 12: [5, 
   23: [3, 3.6], 24: [3, 3.6], 25: [3, 3.6], 26: [3, 3.6], 27: [3, 3.6], 28: [3, 3.6], 29: [3, 3.6], 30: [2.9, 3.2] };
 
 router.get('/template', authenticate, async (req, res) => {
-  const ExcelJS = require('exceljs');
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Tanker Rates');
 
@@ -289,9 +303,22 @@ router.get('/template', authenticate, async (req, res) => {
 router.post('/upload', authenticate, authorizeOrModule('masters', 'admin'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: false });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const wb = new ExcelJS.Workbook();
+    try {
+      await wb.xlsx.load(req.file.buffer);
+    } catch (loadErr) {
+      return res.status(400).json({ error: 'Invalid or corrupted Excel file' });
+    }
+    const worksheet = wb.worksheets[0];
+    if (!worksheet) return res.status(400).json({ error: 'No sheets found in the uploaded file' });
+    const raw = [];
+    for (let r = 1; r <= worksheet.rowCount; r++) {
+      const row = worksheet.getRow(r);
+      const arr = [];
+      const maxCol = Math.max(row.cellCount, 12);
+      for (let c = 1; c <= maxCol; c++) arr[c - 1] = cellRaw(row.getCell(c));
+      raw[r - 1] = arr;
+    }
 
     // Locate the header block by content (robust to added/removed rows)
     const findRow = pred => raw.findIndex(r => r.some(c => pred(String(c || ''))));

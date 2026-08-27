@@ -2,7 +2,6 @@
 const express      = require('express');
 const router       = express.Router();
 const multer       = require('multer');
-const XLSX         = require('xlsx');
 const ExcelJS      = require('exceljs');
 const nodemailer   = require('nodemailer');
 const { pool, query } = require('../config/db');
@@ -15,6 +14,23 @@ const XL_FILTER = (req, file, cb) => {
   cb(ok ? null : new Error('Only .xlsx / .xls / .csv files are allowed'), ok);
 };
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: XL_FILTER });
+
+// ─── Helper: extract a cell's value as the trimmed/normalised string the
+// former xlsx `{ raw:false }` parsing produced (formatted text, ISO dates). ───
+function cellText(cell) {
+  const v = cell.value;
+  if (v == null) return '';
+  if (v instanceof Date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
+  }
+  if (typeof v === 'object') {
+    if (Array.isArray(v.richText)) return v.richText.map(t => t.text).join('');
+    if (v.result !== undefined) return v.result == null ? '' : String(v.result);
+    if (v.text !== undefined) return String(v.text);
+  }
+  return String(v);
+}
 
 // ─── Helper: maintenance guard ───────────────────────────────────────────────
 // A tanker out on an unreturned Maintainance gate pass cannot be planned.
@@ -742,10 +758,33 @@ router.post('/upload', authenticate, authorizeOrModule('planning', 'admin','plan
   if (!plan_date || !plan_for_date)
     return res.status(400).json({ error: 'plan_date and plan_for_date required' });
 
-  const wb   = XLSX.read(req.file.buffer, { type: 'buffer' });
+  const wb = new ExcelJS.Workbook();
+  try {
+    await wb.xlsx.load(req.file.buffer);
+  } catch (err) {
+    return res.status(400).json({ error: 'Invalid or corrupted Excel file' });
+  }
   // Find the Trip Plans sheet by name; fall back to first sheet for plain uploads
-  const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes('trip')) || wb.SheetNames[0];
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { range: 2, raw: false });
+  const worksheet = wb.worksheets.find(w => w.name.toLowerCase().includes('trip')) || wb.worksheets[0];
+  if (!worksheet) return res.status(400).json({ error: 'No sheets found in the uploaded file' });
+
+  // Row 3 holds the column headers (rows 1-2 are title/instructions); rows 4+
+  // are data — matches the previous xlsx `{ range: 2 }` (0-indexed) parsing.
+  const headers = [];
+  worksheet.getRow(3).eachCell({ includeEmpty: true }, (cell, colNumber) => {
+    headers[colNumber] = String(cell.value || '').trim();
+  });
+  const rows = [];
+  for (let r = 4; r <= worksheet.rowCount; r++) {
+    const row = worksheet.getRow(r);
+    if (row.cellCount === 0) continue;
+    const obj = {};
+    headers.forEach((h, colNumber) => {
+      if (!h) return;
+      obj[h] = cellText(row.getCell(colNumber));
+    });
+    rows.push(obj);
+  }
 
   // Parse multi-row format: group rows into trips
   const trips = [];
