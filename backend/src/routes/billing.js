@@ -652,7 +652,10 @@ function collectNewCombos(trips) {
 
 function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = []) {
   const base = BASE_URL();
-  const approveUrl = `${base}/api/billing/decide?token=${token}&decision=approve`;
+  // Both links land on the no-login frontend decision page, which shows the
+  // run details and only fires the actual state-changing POST /decide when
+  // the approver clicks the on-page button (never on a bare GET).
+  const approveUrl = `${base}/billing-decision?token=${token}&decision=approve`;
   const rejectUrl  = `${base}/billing-decision?token=${token}&decision=reject`;
   const row = (cells, bold = false) =>
     `<tr>${cells.map(c => `<td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:12px;${bold ? 'font-weight:700;background:#dbeafe;' : ''}">${c}</td>`).join('')}</tr>`;
@@ -685,8 +688,8 @@ function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = [
         <a href="${approveUrl}" style="background:#16a34a;color:#fff;padding:11px 30px;border-radius:8px;text-decoration:none;font-weight:700;margin-right:14px;">✓ APPROVE</a>
         <a href="${rejectUrl}"  style="background:#dc2626;color:#fff;padding:11px 30px;border-radius:8px;text-decoration:none;font-weight:700;">✗ REJECT</a>
       </div>
-      <p style="font-size:11px;color:#9ca3af;">One-click links — no login needed. Rejection asks for mandatory remarks.
-        To add optional remarks while approving, use: <a href="${base}/billing-decision?token=${token}&decision=approve">approve with remarks</a>.</p>
+      <p style="font-size:11px;color:#9ca3af;">No login needed — click a button above to open a confirmation page with the
+        run details, then confirm there. Rejection asks for mandatory remarks; remarks are optional when approving.</p>
     </div>
   </div>`;
 }
@@ -976,19 +979,17 @@ const decisionPage = (title, body, ok) => `<!doctype html>
       <p style="color:#4b5563;font-size:14px;">${body}</p>
     </div></body></html>`;
 
-// ── GET /api/billing/decide — one-click approve from email (public) ──────────
-router.get('/decide', async (req, res) => {
+// ── GET /api/billing/decide — LEGACY link only, never mutates state ──────────
+// Approval emails no longer point here (they link straight to the frontend
+// /billing-decision page, whose Approve/Reject button fires the real
+// POST /api/billing/decide). This GET is kept only so any already-sent email
+// with the old GET-mutate link still works: it just forwards the visitor to
+// the same no-login confirmation page instead of acting on the link itself.
+router.get('/decide', (req, res) => {
   const { token, decision } = req.query;
-  if (!token || decision !== 'approve')
+  if (!token || !['approve', 'reject'].includes(decision))
     return res.send(decisionPage('Invalid link', 'This link is malformed. Use the buttons in the approval email.', false));
-  try {
-    const r = await decide(token, 'approve', null);
-    if (r.error) return res.send(decisionPage('Cannot approve', esc(r.error), false));
-    res.send(decisionPage('Approved', esc(r.message), true));
-  } catch (err) {
-    console.error('Billing decide error:', err);
-    res.send(decisionPage('Something went wrong', esc(err.message), false));
-  }
+  res.redirect(`${BASE_URL()}/billing-decision?token=${encodeURIComponent(token)}&decision=${decision}`);
 });
 
 // ── GET /api/billing/decision-info — public info for the remarks page ────────

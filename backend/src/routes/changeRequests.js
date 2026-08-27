@@ -144,8 +144,11 @@ function buildDiffHtml(snapshot, changes) {
 
 async function sendApprovalEmail(cr, execInfo, approver) {
   const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
-  const approveUrl = `${base}/api/change-requests/decide?token=${cr.approval_token}&decision=approve`;
-  const rejectUrl  = `${base}/api/change-requests/decide?token=${cr.approval_token}&decision=reject`;
+  // Both links land on the no-login frontend decision page, which shows the
+  // request diff and only fires the actual state-changing POST /decide when
+  // the approver clicks the on-page button (never on a bare GET).
+  const approveUrl = `${base}/change-request-decision?token=${cr.approval_token}&decision=approve`;
+  const rejectUrl  = `${base}/change-request-decision?token=${cr.approval_token}&decision=reject`;
 
   const html = `
     <p style="font-family:sans-serif;font-size:14px;">Dear ${esc(approver.full_name)},</p>
@@ -431,24 +434,50 @@ router.get('/', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/change-requests/decide?token=&decision=  — EMAIL LINK (token-authenticated)
-router.get('/decide', async (req, res) => {
+// GET /api/change-requests/decide?token=&decision= — LEGACY link only, never
+// mutates state. Approval emails no longer point here (they link straight to
+// the frontend /change-request-decision page, whose Approve/Reject button
+// fires the real POST /api/change-requests/decide). This GET is kept only so
+// any already-sent email with the old GET-mutate link still works: it just
+// forwards the visitor to the same no-login confirmation page instead of
+// acting on the link itself.
+router.get('/decide', (req, res) => {
   const { token, decision } = req.query;
-  const page = (title, body, color) => res.send(`<!doctype html>
-    <html><body style="font-family:sans-serif;background:#f0f7ff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-      <div style="background:#fff;border-radius:14px;padding:36px 44px;box-shadow:0 8px 30px rgba(0,60,120,0.12);max-width:460px;text-align:center;">
-        <div style="font-size:40px;">${color === '#16a34a' ? '✅' : color === '#dc2626' ? '🚫' : 'ℹ️'}</div>
-        <h2 style="color:${color};margin:12px 0 8px;">${title}</h2>
-        <p style="color:#4b5563;font-size:14px;">${body}</p>
-      </div></body></html>`);
+  if (!token || !['approve', 'reject'].includes(decision))
+    return res.status(400).send('This approval link is malformed.');
+  const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+  res.redirect(`${base}/change-request-decision?token=${encodeURIComponent(token)}&decision=${decision}`);
+});
 
+// GET /api/change-requests/decision-info?token= — public, read-only info for
+// the frontend decision page (no mutation, no auth — just enough to render
+// the confirmation screen).
+router.get('/decision-info', async (req, res) => {
   try {
-    if (!token || !['approve', 'reject'].includes(decision))
-      return page('Invalid link', 'This approval link is malformed.', '#dc2626');
+    const r = await query(`
+      SELECT cr.id, cr.status, cr.reason, cr.requested_by_name,
+             tp.trip_no, te.execution_date, t.tanker_number
+      FROM execution_change_requests cr
+      JOIN trip_executions te ON te.id=cr.execution_id
+      JOIN trip_plans tp      ON tp.id=te.trip_plan_id
+      LEFT JOIN tankers t     ON t.id=tp.tanker_id
+      WHERE cr.approval_token=$1`, [req.query.token]);
+    if (!r.rows.length) return res.status(404).json({ error: 'This request was already decided, or the link is no longer valid.' });
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
+// POST /api/change-requests/decide — public (token-authenticated), the ONLY
+// route that actually approves/rejects via the email flow. Reached by the
+// Approve/Reject button on the frontend decision page.
+router.post('/decide', async (req, res) => {
+  const { token, decision, remarks } = req.body;
+  if (!token || !['approve', 'reject'].includes(decision))
+    return res.status(400).json({ error: 'Invalid request' });
+  try {
     const crRes = await query('SELECT * FROM execution_change_requests WHERE approval_token=$1', [token]);
     if (!crRes.rows.length)
-      return page('Link expired', 'This request was already decided, or the link is no longer valid.', '#6b7280');
+      return res.status(400).json({ error: 'This request was already decided, or the link is no longer valid.' });
     const cr = crRes.rows[0];
 
     const approver = await getApprover();
@@ -456,21 +485,26 @@ router.get('/decide', async (req, res) => {
       ? { id: approver.id, full_name: `${approver.full_name} (via email)` }
       : { id: null, full_name: 'via email' };
 
-    await decideRequest(cr.id, decision, decider, 'Decided via email link');
+    await decideRequest(cr.id, decision, decider, String(remarks || '').trim() || 'Decided via email link');
 
-    // Manual audit entry (GETs are skipped by the audit middleware).
+    // Manual audit entry (POSTs from a public/unauthenticated route still go
+    // through the normal audit middleware for req.user, but there is no
+    // req.user here, so log it explicitly as with the old GET link).
     query(
       `INSERT INTO audit_logs (user_id, user_name, method, path, module, action, entity_id, status_code, success, details)
-       VALUES ($1,$2,'GET','/api/change-requests/decide','Change Requests',$3,$4,200,TRUE,$5)`,
+       VALUES ($1,$2,'POST','/api/change-requests/decide','Change Requests',$3,$4,200,TRUE,$5)`,
       [decider.id, decider.full_name, decision === 'approve' ? 'approve' : 'cancel',
        String(cr.id), JSON.stringify({ execution_id: cr.execution_id, via: 'email' })]
     ).catch(() => {});
 
-    return decision === 'approve'
-      ? page('Change request approved', `Request #${cr.id} has been approved and the changes are now applied to Trip data and all reports.`, '#16a34a')
-      : page('Change request rejected', `Request #${cr.id} has been rejected. The original data remains unchanged.`, '#dc2626');
+    res.json({
+      ok: true,
+      message: decision === 'approve'
+        ? `Request #${cr.id} has been approved and the changes are now applied to Trip data and all reports.`
+        : `Request #${cr.id} has been rejected. The original data remains unchanged.`,
+    });
   } catch (err) {
-    return page('Something went wrong', esc(err.message), '#dc2626');
+    res.status(err.code === 404 ? 404 : err.code === 400 ? 400 : 500).json({ error: err.message });
   }
 });
 
