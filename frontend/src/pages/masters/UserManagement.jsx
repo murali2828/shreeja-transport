@@ -89,7 +89,7 @@ export default function UserManagement() {
   const resetMut = useMutation({
     mutationFn: () => {
       if (!resetPwd) throw new Error('Password is required');
-      if (resetPwd.length < 6) throw new Error('Password must be at least 6 characters');
+      if (resetPwd.length < 8) throw new Error('Password must be at least 8 characters');
       if (resetPwd !== resetPwdCfm) throw new Error('Passwords do not match');
       return updateUser(resetModal.id, { password: resetPwd });
     },
@@ -204,7 +204,7 @@ export default function UserManagement() {
                   className="input w-full pr-16"
                   value={form.password}
                   onChange={e => set('password', e.target.value)}
-                  placeholder={modal === 'add' ? 'Min 6 characters' : 'Leave blank to keep current'}/>
+                  placeholder={modal === 'add' ? 'Min 8 characters' : 'Leave blank to keep current'}/>
                 <button type="button" onClick={() => setShowPw(!showPw)}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600">
                   {showPw ? 'Hide' : 'Show'}
@@ -260,7 +260,7 @@ export default function UserManagement() {
                   className="input w-full pr-16"
                   value={resetPwd}
                   onChange={e => setResetPwd(e.target.value)}
-                  placeholder="Min 6 characters"
+                  placeholder="Min 8 characters"
                   autoFocus
                 />
                 <button type="button" onClick={() => setShowResetPw(!showResetPw)}

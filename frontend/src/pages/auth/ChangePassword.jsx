@@ -33,7 +33,7 @@ export default function ChangePassword() {
     if (!currentPwd || !newPwd || !confirmPwd)
       return toast.error('All fields are required');
     if (newPwd.length < 6)
-      return toast.error('New password must be at least 6 characters');
+      return toast.error('New password must be at least 8 characters');
     if (newPwd !== confirmPwd)
       return toast.error('New passwords do not match');
     if (newPwd === currentPwd)
@@ -97,7 +97,7 @@ export default function ChangePassword() {
                 className="input w-full pr-12"
                 value={newPwd}
                 onChange={e => setNewPwd(e.target.value)}
-                placeholder="Min 6 characters"
+                placeholder="Min 8 characters"
               />
               <button type="button" onClick={() => setShowNew(!showNew)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">

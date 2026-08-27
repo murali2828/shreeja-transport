@@ -218,7 +218,7 @@ router.post('/:id/file', authenticate, authorizeOrModule('masters', 'admin','exe
 
     // Best-effort removal of the previous disk file.
     if (prev.rows[0].file_path) {
-      fs.unlink(path.join(UPLOAD_DIR, prev.rows[0].file_path), () => {});
+      fs.unlink(path.join(UPLOAD_DIR, path.basename(prev.rows[0].file_path)), () => {});
     }
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -242,7 +242,11 @@ router.get('/:id/file', authenticate, async (req, res) => {
     res.setHeader('Content-Disposition', `${disp}; filename="${safeName}"`);
 
     if (file_path) {
-      const full = path.join(UPLOAD_DIR, file_path);
+      // Defense-in-depth: file_path is server-generated at upload time (a bare
+      // filename with no directory separators), but basename it before joining
+      // so a future code path that ever lets it be attacker-influenced can't
+      // traverse outside UPLOAD_DIR.
+      const full = path.join(UPLOAD_DIR, path.basename(file_path));
       if (!fs.existsSync(full)) return res.status(404).json({ error: 'File missing on disk' });
       return fs.createReadStream(full).pipe(res);
     }
@@ -260,7 +264,7 @@ router.delete('/:id/file', authenticate, authorizeOrModule('masters', 'admin'), 
       [req.params.id]
     );
     if (prev.rows[0]?.file_path) {
-      fs.unlink(path.join(UPLOAD_DIR, prev.rows[0].file_path), () => {});
+      fs.unlink(path.join(UPLOAD_DIR, path.basename(prev.rows[0].file_path)), () => {});
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }

@@ -27,7 +27,7 @@ export default function ResetPassword() {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!password) { toast.error('Enter a new password'); return; }
-    if (password.length < 6) { toast.error('Password must be at least 6 characters'); return; }
+    if (password.length < 8) { toast.error('Password must be at least 8 characters'); return; }
     if (password !== confirm) { toast.error('Passwords do not match'); return; }
     if (!token) { toast.error('Missing reset token — use the link from your email'); return; }
     mut.mutate();
@@ -89,7 +89,7 @@ export default function ResetPassword() {
                   autoFocus
                   type={showPw ? 'text' : 'password'}
                   className="input w-full pr-10"
-                  placeholder="At least 6 characters"
+                  placeholder="At least 8 characters"
                   value={password}
                   onChange={e => setPassword(e.target.value)}/>
                 <button type="button" onClick={() => setShowPw(v => !v)}

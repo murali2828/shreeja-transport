@@ -225,7 +225,7 @@ router.post('/forgot-password', async (req, res) => {
 router.post('/reset-password', async (req, res) => {
   const { token, new_password } = req.body;
   if (!token || !new_password) return res.status(400).json({ error: 'token and new_password required' });
-  if (new_password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (new_password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   try {
     const r = await query(
       `SELECT prt.*, u.id AS uid FROM password_reset_tokens prt
@@ -249,8 +249,8 @@ router.post('/change-password', authenticate, async (req, res) => {
   const { current_password, new_password } = req.body;
   if (!current_password || !new_password)
     return res.status(400).json({ error: 'current_password and new_password required' });
-  if (new_password.length < 6)
-    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (new_password.length < 8)
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
   try {
     const r = await query('SELECT * FROM users WHERE id=$1', [req.user.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
