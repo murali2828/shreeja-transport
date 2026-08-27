@@ -2,7 +2,7 @@
 const express = require('express');
 const router  = express.Router();
 const { pool, query } = require('../config/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeOrModule } = require('../middleware/auth');
 const {
   calcKgs, calcKgFat, calcKgSnf,
   computeExecutionDistance, applyExecutionData, assertWithinCapacity,
@@ -244,7 +244,7 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // POST /api/executions  — create execution from a published plan
-router.post('/', authenticate, authorize('admin','planner','executor','biller'), async (req, res) => {
+router.post('/', authenticate, authorizeOrModule('execution', 'admin','planner','executor','biller'), async (req, res) => {
   const { trip_plan_id, execution_date, dc_number } = req.body;
   if (!trip_plan_id || !execution_date)
     return res.status(400).json({ error: 'trip_plan_id and execution_date required' });
@@ -306,7 +306,7 @@ router.post('/', authenticate, authorize('admin','planner','executor','biller'),
 
 // PUT /api/executions/:id  — save BMCU data, recalc totals
 // (write logic shared with the change-request approval flow — services/executionData.js)
-router.put('/:id', authenticate, authorize('admin','planner','executor','biller'), async (req, res) => {
+router.put('/:id', authenticate, authorizeOrModule('execution', 'admin','planner','executor','biller'), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -361,7 +361,7 @@ router.get('/:id/distance', authenticate, async (req, res) => {
 });
 
 // POST /api/executions/:id/cancel  — admin only, any status except closed
-router.post('/:id/cancel', authenticate, authorize('admin','planner','executor','biller'), async (req, res) => {
+router.post('/:id/cancel', authenticate, authorizeOrModule('execution', 'admin','planner','executor','biller'), async (req, res) => {
   if (req.user.role !== 'admin')
     return res.status(403).json({ error: 'Admin only' });
   const { reason } = req.body;
@@ -386,7 +386,7 @@ router.post('/:id/cancel', authenticate, authorize('admin','planner','executor',
 });
 
 // POST /api/executions/:id/submit-ack  — saved → pending_ack
-router.post('/:id/submit-ack', authenticate, authorize('admin','planner','executor','biller'), async (req, res) => {
+router.post('/:id/submit-ack', authenticate, authorizeOrModule('execution', 'admin','planner','executor','biller'), async (req, res) => {
   try {
     const r = await query(
       "UPDATE trip_executions SET status='pending_ack',updated_at=NOW() WHERE id=$1 AND status='saved' RETURNING *",
@@ -398,7 +398,7 @@ router.post('/:id/submit-ack', authenticate, authorize('admin','planner','execut
 });
 
 // POST /api/executions/:id/acknowledgements  — save chamber acks → closed
-router.post('/:id/acknowledgements', authenticate, authorize('admin','planner','executor','biller'), async (req, res) => {
+router.post('/:id/acknowledgements', authenticate, authorizeOrModule('execution', 'admin','planner','executor','biller'), async (req, res) => {
   const { ack_date, chambers } = req.body;
   if (!chambers?.length) return res.status(400).json({ error: 'chambers array required' });
 

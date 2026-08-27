@@ -6,7 +6,7 @@ const XLSX         = require('xlsx');
 const ExcelJS      = require('exceljs');
 const nodemailer   = require('nodemailer');
 const { pool, query } = require('../config/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeOrModule } = require('../middleware/auth');
 
 const { createTransport } = require('../config/mailer');
 
@@ -154,7 +154,7 @@ router.get('/:id(\\d+)', authenticate, async (req, res) => {
 });
 
 // POST /api/plans
-router.post('/', authenticate, authorize('admin','planner'), async (req, res) => {
+router.post('/', authenticate, authorizeOrModule('planning', 'admin','planner'), async (req, res) => {
   const {
     plan_date, plan_for_date, trip_no, route_id, tanker_id,
     start_point_id, testing_point_id, delivery_point_id,
@@ -205,7 +205,7 @@ router.post('/', authenticate, authorize('admin','planner'), async (req, res) =>
 });
 
 // PUT /api/plans/:id
-router.put('/:id', authenticate, authorize('admin','planner'), async (req, res) => {
+router.put('/:id', authenticate, authorizeOrModule('planning', 'admin','planner'), async (req, res) => {
   const {
     plan_for_date, trip_no, route_id, tanker_id,
     start_point_id, testing_point_id, delivery_point_id,
@@ -277,7 +277,7 @@ router.put('/:id', authenticate, authorize('admin','planner'), async (req, res) 
 });
 
 // DELETE /api/plans/:id  — soft-delete (status=deleted); warn if execution data exists
-router.delete('/:id', authenticate, authorize('admin','planner'), async (req, res) => {
+router.delete('/:id', authenticate, authorizeOrModule('planning', 'admin','planner'), async (req, res) => {
   try {
     const plan = await query('SELECT * FROM trip_plans WHERE id=$1', [req.params.id]);
     if (!plan.rows.length) return res.status(404).json({ error: 'Plan not found' });
@@ -304,7 +304,7 @@ router.delete('/:id', authenticate, authorize('admin','planner'), async (req, re
 });
 
 // POST /api/plans/publish  — bulk publish drafts
-router.post('/publish', authenticate, authorize('admin','planner'), async (req, res) => {
+router.post('/publish', authenticate, authorizeOrModule('planning', 'admin','planner'), async (req, res) => {
   const { plan_for_date } = req.body;
   if (!plan_for_date) return res.status(400).json({ error: 'plan_for_date required' });
   try {
@@ -372,7 +372,7 @@ router.post('/publish', authenticate, authorize('admin','planner'), async (req, 
 // ── Plan Email Config CRUD ────────────────────────────────────────────────────
 
 // GET /api/plans/email-config
-router.get('/email-config', authenticate, authorize('admin'), async (req, res) => {
+router.get('/email-config', authenticate, authorizeOrModule('planning', 'admin'), async (req, res) => {
   try {
     const r = await query('SELECT * FROM plan_email_configs ORDER BY created_at');
     res.json(r.rows);
@@ -380,7 +380,7 @@ router.get('/email-config', authenticate, authorize('admin'), async (req, res) =
 });
 
 // POST /api/plans/email-config
-router.post('/email-config', authenticate, authorize('admin'), async (req, res) => {
+router.post('/email-config', authenticate, authorizeOrModule('planning', 'admin'), async (req, res) => {
   const { email, name } = req.body;
   if (!email) return res.status(400).json({ error: 'email required' });
   try {
@@ -393,7 +393,7 @@ router.post('/email-config', authenticate, authorize('admin'), async (req, res) 
 });
 
 // PUT /api/plans/email-config/:id
-router.put('/email-config/:id', authenticate, authorize('admin'), async (req, res) => {
+router.put('/email-config/:id', authenticate, authorizeOrModule('planning', 'admin'), async (req, res) => {
   const { email, name, is_active } = req.body;
   try {
     const r = await query(
@@ -406,7 +406,7 @@ router.put('/email-config/:id', authenticate, authorize('admin'), async (req, re
 });
 
 // DELETE /api/plans/email-config/:id
-router.delete('/email-config/:id', authenticate, authorize('admin'), async (req, res) => {
+router.delete('/email-config/:id', authenticate, authorizeOrModule('planning', 'admin'), async (req, res) => {
   try {
     await query('DELETE FROM plan_email_configs WHERE id=$1', [req.params.id]);
     res.json({ deleted: true });
@@ -736,7 +736,7 @@ router.get('/template/download', authenticate, async (req, res) => {
 });
 
 // POST /api/plans/upload
-router.post('/upload', authenticate, authorize('admin','planner'), upload.single('file'), async (req, res) => {
+router.post('/upload', authenticate, authorizeOrModule('planning', 'admin','planner'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const { plan_date, plan_for_date } = req.body;
   if (!plan_date || !plan_for_date)

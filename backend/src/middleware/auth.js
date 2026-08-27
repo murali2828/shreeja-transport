@@ -73,4 +73,29 @@ function authorizeModule(moduleKey) {
   };
 }
 
-module.exports = { authenticate, authorize, authorizeModule, MODULES };
+// authorizeOrModule(moduleKey, ...roles): additive OR-composition of the two
+// existing checks above. Grants access if EITHER req.user.role is one of
+// `roles` (identical to authorize(...roles)) OR the user's role has
+// permissions[moduleKey] === true in the `roles` table (identical to
+// authorizeModule(moduleKey)). Admin is always allowed via the same hardcoded
+// safety net as authorizeModule. This never restricts anything the old
+// authorize(...roles) already allowed — it only adds custom-role users.
+function authorizeOrModule(moduleKey, ...roles) {
+  return async (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    if (req.user.role === 'admin') return next();
+    if (roles.includes(req.user.role)) return next();
+    try {
+      const r = await query('SELECT permissions FROM roles WHERE name = $1', [req.user.role]);
+      const perms = r.rows[0]?.permissions;
+      if (!perms || perms[moduleKey] !== true) {
+        return res.status(403).json({ error: 'Insufficient permissions' });
+      }
+      next();
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  };
+}
+
+module.exports = { authenticate, authorize, authorizeModule, authorizeOrModule, MODULES };

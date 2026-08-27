@@ -2,7 +2,7 @@
 const express = require('express');
 const router  = express.Router();
 const { pool, query } = require('../config/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeOrModule } = require('../middleware/auth');
 
 // ─── Tankers ──────────────────────────────────────────────────────────────────
 router.get('/tankers', authenticate, async (req, res) => {
@@ -25,7 +25,7 @@ router.get('/tankers', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/tankers', authenticate, authorize('admin'), async (req, res) => {
+router.post('/tankers', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { tanker_number, compartments, capacity_litres, per_km_rate,
           vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p, vendor_id,
           induction_type, validity_start, validity_end } = req.body;
@@ -50,7 +50,7 @@ router.post('/tankers', authenticate, authorize('admin'), async (req, res) => {
   }
 });
 
-router.put('/tankers/:id', authenticate, authorize('admin'), async (req, res) => {
+router.put('/tankers/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { tanker_number, compartments, capacity_litres, per_km_rate, is_active,
           vendor_code, vendor_name, rate_per_km_bmcu, rate_per_km_p2p, vendor_id,
           induction_type, validity_start, validity_end } = req.body;
@@ -72,7 +72,7 @@ router.put('/tankers/:id', authenticate, authorize('admin'), async (req, res) =>
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.delete('/tankers/:id', authenticate, authorize('admin'), async (req, res) => {
+router.delete('/tankers/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     await query('UPDATE tankers SET is_active=FALSE,updated_at=NOW() WHERE id=$1', [req.params.id]);
     res.json({ deleted: true });
@@ -92,7 +92,7 @@ router.get('/bmcus', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/bmcus', authenticate, authorize('admin'), async (req, res) => {
+router.post('/bmcus', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { bmcu_code, bmcu_name, address, district, state, contact, latitude, longitude } = req.body;
   if (!bmcu_code || !bmcu_name) return res.status(400).json({ error: 'bmcu_code and bmcu_name required' });
   try {
@@ -109,7 +109,7 @@ router.post('/bmcus', authenticate, authorize('admin'), async (req, res) => {
   }
 });
 
-router.put('/bmcus/:id', authenticate, authorize('admin'), async (req, res) => {
+router.put('/bmcus/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { bmcu_name, address, district, state, contact, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
@@ -123,7 +123,7 @@ router.put('/bmcus/:id', authenticate, authorize('admin'), async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.delete('/bmcus/:id', authenticate, authorize('admin'), async (req, res) => {
+router.delete('/bmcus/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     await query('UPDATE bmcus SET is_active=FALSE,updated_at=NOW() WHERE id=$1', [req.params.id]);
     res.json({ deleted: true });
@@ -137,7 +137,7 @@ router.get('/starting-points', authenticate, async (req, res) => {
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.post('/starting-points', authenticate, authorize('admin'), async (req, res) => {
+router.post('/starting-points', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { name, location, description, latitude, longitude } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
@@ -148,7 +148,7 @@ router.post('/starting-points', authenticate, authorize('admin'), async (req, re
     res.status(201).json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.put('/starting-points/:id', authenticate, authorize('admin'), async (req, res) => {
+router.put('/starting-points/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { name, location, description, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
@@ -159,7 +159,7 @@ router.put('/starting-points/:id', authenticate, authorize('admin'), async (req,
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.delete('/starting-points/:id', authenticate, authorize('admin'), async (req, res) => {
+router.delete('/starting-points/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     await query('UPDATE starting_points SET is_active=FALSE WHERE id=$1', [req.params.id]);
     res.json({ deleted: true });
@@ -173,7 +173,7 @@ router.get('/testing-points', authenticate, async (req, res) => {
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.post('/testing-points', authenticate, authorize('admin'), async (req, res) => {
+router.post('/testing-points', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { name, location, latitude, longitude } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
@@ -184,7 +184,7 @@ router.post('/testing-points', authenticate, authorize('admin'), async (req, res
     res.status(201).json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.put('/testing-points/:id', authenticate, authorize('admin'), async (req, res) => {
+router.put('/testing-points/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { name, location, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
@@ -195,7 +195,7 @@ router.put('/testing-points/:id', authenticate, authorize('admin'), async (req, 
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.delete('/testing-points/:id', authenticate, authorize('admin'), async (req, res) => {
+router.delete('/testing-points/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     await query('UPDATE testing_points SET is_active=FALSE WHERE id=$1', [req.params.id]);
     res.json({ deleted: true });
@@ -209,7 +209,7 @@ router.get('/delivery-points', authenticate, async (req, res) => {
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.post('/delivery-points', authenticate, authorize('admin'), async (req, res) => {
+router.post('/delivery-points', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { name, receiver_name, location, latitude, longitude } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
@@ -220,7 +220,7 @@ router.post('/delivery-points', authenticate, authorize('admin'), async (req, re
     res.status(201).json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.put('/delivery-points/:id', authenticate, authorize('admin'), async (req, res) => {
+router.put('/delivery-points/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { name, receiver_name, location, is_active, latitude, longitude } = req.body;
   try {
     const r = await query(
@@ -231,7 +231,7 @@ router.put('/delivery-points/:id', authenticate, authorize('admin'), async (req,
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.delete('/delivery-points/:id', authenticate, authorize('admin'), async (req, res) => {
+router.delete('/delivery-points/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     await query('UPDATE delivery_points SET is_active=FALSE WHERE id=$1', [req.params.id]);
     res.json({ deleted: true });
@@ -277,7 +277,7 @@ router.get('/routes/:id', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/routes', authenticate, authorize('admin'), async (req, res) => {
+router.post('/routes', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { route_name, route_no, start_point_id, testing_point_id, delivery_point_id, distance_km, bmcus } = req.body;
   if (!route_name) return res.status(400).json({ error: 'route_name required' });
   const client = await pool.connect();
@@ -305,7 +305,7 @@ router.post('/routes', authenticate, authorize('admin'), async (req, res) => {
   } finally { client.release(); }
 });
 
-router.put('/routes/:id', authenticate, authorize('admin'), async (req, res) => {
+router.put('/routes/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { route_name, route_no, start_point_id, testing_point_id, delivery_point_id, distance_km, is_active, bmcus } = req.body;
   const client = await pool.connect();
   try {
@@ -336,13 +336,13 @@ router.put('/routes/:id', authenticate, authorize('admin'), async (req, res) => 
 });
 
 // ─── Email Config ─────────────────────────────────────────────────────────────
-router.get('/email-config', authenticate, authorize('admin'), async (req, res) => {
+router.get('/email-config', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     const r = await query('SELECT * FROM report_email_config ORDER BY full_name');
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.post('/email-config', authenticate, authorize('admin'), async (req, res) => {
+router.post('/email-config', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { full_name, email } = req.body;
   if (!full_name || !email) return res.status(400).json({ error: 'full_name and email required' });
   try {
@@ -356,7 +356,7 @@ router.post('/email-config', authenticate, authorize('admin'), async (req, res) 
     res.status(500).json({ error: err.message });
   }
 });
-router.put('/email-config/:id', authenticate, authorize('admin'), async (req, res) => {
+router.put('/email-config/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { full_name, email, is_active } = req.body;
   try {
     const r = await query(
@@ -367,7 +367,7 @@ router.put('/email-config/:id', authenticate, authorize('admin'), async (req, re
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-router.delete('/email-config/:id', authenticate, authorize('admin'), async (req, res) => {
+router.delete('/email-config/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     await query('DELETE FROM report_email_config WHERE id=$1', [req.params.id]);
     res.json({ deleted: true });

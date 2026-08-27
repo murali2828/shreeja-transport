@@ -11,7 +11,7 @@
 const express = require('express');
 const router  = express.Router();
 const { pool } = require('../config/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeOrModule } = require('../middleware/auth');
 const {
   buildDistanceMap, makeResolver, nodeKey,
   nearestNeighbourOrder, computeRouteKm, clarkeWrightSavings,
@@ -21,7 +21,7 @@ const {
 // =============================================================================
 // POST /api/optimize/run
 // =============================================================================
-router.post('/run', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.post('/run', authenticate, authorizeOrModule('planning', 'admin', 'planner'), async (req, res) => {
   const {
     plan_for_date, delivery_point_id, start_point_id,
     shifts_milk, strategy = 'distance_savings',
@@ -270,7 +270,7 @@ router.post('/run', authenticate, authorize('admin', 'planner'), async (req, res
 // =============================================================================
 // POST /api/optimize/:sessionId/save-as-plans
 // =============================================================================
-router.post('/:sessionId/save-as-plans', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.post('/:sessionId/save-as-plans', authenticate, authorizeOrModule('planning', 'admin', 'planner'), async (req, res) => {
   const { sessionId } = req.params;
   const { trips: overrides = [] } = req.body;
 
@@ -372,7 +372,7 @@ router.post('/:sessionId/save-as-plans', authenticate, authorize('admin', 'plann
 });
 
 // GET /api/optimize/sessions
-router.get('/sessions', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.get('/sessions', authenticate, authorizeOrModule('planning', 'admin', 'planner'), async (req, res) => {
   try {
     const { plan_for_date } = req.query;
     let q = `
@@ -390,7 +390,7 @@ router.get('/sessions', authenticate, authorize('admin', 'planner'), async (req,
 });
 
 // GET /api/optimize/sessions/:id
-router.get('/sessions/:id', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.get('/sessions/:id', authenticate, authorizeOrModule('planning', 'admin', 'planner'), async (req, res) => {
   try {
     const sessRes = await pool.query(
       `SELECT os.*, dp.name AS delivery_point_name, sp.name AS start_point_name
@@ -418,7 +418,7 @@ router.get('/sessions/:id', authenticate, authorize('admin', 'planner'), async (
 });
 
 // GET /api/optimize/compare?plan_for_date=YYYY-MM-DD
-router.get('/compare', authenticate, authorize('admin', 'planner'), async (req, res) => {
+router.get('/compare', authenticate, authorizeOrModule('planning', 'admin', 'planner'), async (req, res) => {
   try {
     const { plan_for_date } = req.query;
     if (!plan_for_date) return res.status(400).json({ error: 'plan_for_date required' });

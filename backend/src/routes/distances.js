@@ -7,7 +7,7 @@ const router  = express.Router();
 const XLSX    = require('xlsx');
 const multer  = require('multer');
 const { pool } = require('../config/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeOrModule } = require('../middleware/auth');
 
 const XL_FILTER = (req, file, cb) => {
   const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname || '');
@@ -144,7 +144,7 @@ router.get('/summary', authenticate, async (req, res) => {
 // POST /api/distances
 // Body: { from_type, from_id, to_type, to_id, distance_km, road_notes }
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/', authenticate, authorize('admin'), async (req, res) => {
+router.post('/', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     const { from_type, from_id, to_type, to_id, distance_km, road_notes } = req.body;
     if (!from_type || !from_id || !to_type || !to_id || distance_km == null)
@@ -172,7 +172,7 @@ router.post('/', authenticate, authorize('admin'), async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // PUT /api/distances/:id
 // ─────────────────────────────────────────────────────────────────────────────
-router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
+router.put('/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     const { distance_km, road_notes } = req.body;
     const r = await pool.query(
@@ -190,7 +190,7 @@ router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /api/distances/:id
 // ─────────────────────────────────────────────────────────────────────────────
-router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
+router.delete('/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     const r = await pool.query('DELETE FROM distance_master WHERE id=$1 RETURNING id', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
@@ -271,7 +271,7 @@ router.get('/template', authenticate, async (req, res) => {
 // POST /api/distances/upload
 // Bulk upload from the Excel template
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/upload', authenticate, authorize('admin'), upload.single('file'), async (req, res) => {
+router.post('/upload', authenticate, authorizeOrModule('masters', 'admin'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   const client = await pool.connect();
@@ -396,7 +396,7 @@ router.get('/export', authenticate, async (req, res) => {
 // Stores the Google Routes km in google_km WITHOUT touching distance_km, so
 // manually entered distances can be compared against Google.
 const { googleLegKm } = require('../services/roadDistance');
-router.post('/:id(\\d+)/google-refresh', authenticate, authorize('admin'), async (req, res) => {
+router.post('/:id(\\d+)/google-refresh', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   try {
     const row = (await pool.query('SELECT * FROM distance_master WHERE id=$1', [req.params.id])).rows[0];
     if (!row) return res.status(404).json({ error: 'Distance entry not found' });
@@ -427,7 +427,7 @@ router.post('/:id(\\d+)/google-refresh', authenticate, authorize('admin'), async
 // Processes up to BATCH rows per call with bounded concurrency; the screen
 // calls it repeatedly until nothing more was fetched. Pairs whose locations
 // lack coordinates are skipped (they surface in the Missing Coordinates report).
-router.post('/google-refresh-all', authenticate, authorize('admin'), async (req, res) => {
+router.post('/google-refresh-all', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const BATCH = 150, CONCURRENCY = 5;
   try {
     // Only FETCHABLE pairs (both ends have coordinates) — otherwise a batch

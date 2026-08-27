@@ -16,7 +16,7 @@ const crypto     = require('crypto');
 const nodemailer = require('nodemailer');
 const ExcelJS    = require('exceljs');
 const { query, pool } = require('../config/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeOrModule } = require('../middleware/auth');
 const { computeExecutionDistance } = require('../services/executionData');
 const { fmtDateDisplay } = require('../utils/date');
 const { loadMasterDistanceCache } = require('../services/distanceLookup');
@@ -79,7 +79,7 @@ function recomputeAmount(trip) {
 }
 
 // ── POST /api/billing/runs  { from_date, to_date } — execute a fortnight ────
-router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
+router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   const { from_date, to_date } = req.body;
   if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date are required' });
   if (to_date < from_date)    return res.status(400).json({ error: 'to_date is before from_date' });
@@ -205,7 +205,7 @@ router.post('/runs', authenticate, authorize(...canBill), async (req, res) => {
 // ── GET /api/billing/rate-lookup — live rate preview for the run editor ──────
 // Called when the biller selects a State so the rate/amount show immediately,
 // before Save. Same findRate the save path uses.
-router.get('/rate-lookup', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+router.get('/rate-lookup', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
   try {
     const { state, transport_type, capacity_litres, plan_date } = req.query;
     const rate = await findRate(state, transport_type, capacity_litres, plan_date);
@@ -214,7 +214,7 @@ router.get('/rate-lookup', authenticate, authorize(...canBill, 'viewer'), async 
 });
 
 // ── GET /api/billing/runs — list ─────────────────────────────────────────────
-router.get('/runs', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+router.get('/runs', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
   try {
     const r = await query(`
       SELECT br.*, br.from_date::text AS from_date, br.to_date::text AS to_date,
@@ -225,7 +225,7 @@ router.get('/runs', authenticate, authorize(...canBill, 'viewer'), async (req, r
 });
 
 // ── GET /api/billing/runs/:id — full detail ──────────────────────────────────
-router.get('/runs/:id', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+router.get('/runs/:id', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
   try {
     const run = await query(`
       SELECT br.*, br.from_date::text AS from_date, br.to_date::text AS to_date
@@ -249,7 +249,7 @@ router.get('/runs/:id', authenticate, authorize(...canBill, 'viewer'), async (re
 // ── POST /api/billing/runs/:id/assign-vendor — fix a tanker with no vendor
 // mapped, without leaving the billing screen. Updates the Tanker master
 // (so future runs auto-map it) and every line for that tanker in THIS run.
-router.post('/runs/:id/assign-vendor', authenticate, authorize(...canBill), async (req, res) => {
+router.post('/runs/:id/assign-vendor', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   const { tanker_number, vendor_id } = req.body;
   if (!tanker_number || !vendor_id) return res.status(400).json({ error: 'tanker_number and vendor_id required' });
   try {
@@ -271,7 +271,7 @@ router.post('/runs/:id/assign-vendor', authenticate, authorize(...canBill), asyn
 });
 
 // ── PUT /api/billing/runs/:id/trips — bulk update lines (biller edits) ───────
-router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, res) => {
+router.put('/runs/:id/trips', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   const updates = req.body.trips || [];
   try {
     const run = await query('SELECT status FROM billing_runs WHERE id=$1', [req.params.id]);
@@ -347,7 +347,7 @@ router.put('/runs/:id/trips', authenticate, authorize(...canBill), async (req, r
 });
 
 // ── DELETE /api/billing/runs/:id — discard a draft/rejected run ──────────────
-router.delete('/runs/:id', authenticate, authorize(...canBill), async (req, res) => {
+router.delete('/runs/:id', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const r = await query(`DELETE FROM billing_runs WHERE id=$1 AND status IN ('draft','rejected','pending_vendor') RETURNING id`,
       [req.params.id]);
@@ -368,7 +368,7 @@ async function assertEditableRun(runId, res) {
 }
 
 // Upsert: attach/replace the fortnight's challan + amount for one tanker
-router.post('/runs/:id/tolls', authenticate, authorize(...canBill), challanUpload.single('file'), async (req, res) => {
+router.post('/runs/:id/tolls', authenticate, authorizeOrModule('billing', ...canBill), challanUpload.single('file'), async (req, res) => {
   try {
     if (!(await assertEditableRun(req.params.id, res))) return;
     const { tanker_number, amount, remarks } = req.body;
@@ -409,7 +409,7 @@ router.post('/runs/:id/tolls', authenticate, authorize(...canBill), challanUploa
 // attached as the challan document). Supports ICICI E-Statements (multi-
 // vehicle Vehicle Summary) and generic FASTag account summaries.
 const { parseFastagPdf, normPlate } = require('../services/fastagParser');
-router.post('/runs/:id/fastag', authenticate, authorize(...canBill), challanUpload.single('file'), async (req, res) => {
+router.post('/runs/:id/fastag', authenticate, authorizeOrModule('billing', ...canBill), challanUpload.single('file'), async (req, res) => {
   try {
     if (!(await assertEditableRun(req.params.id, res))) return;
     if (!req.file || !/\.pdf$/i.test(req.file.originalname || ''))
@@ -446,7 +446,7 @@ router.post('/runs/:id/fastag', authenticate, authorize(...canBill), challanUplo
   }
 });
 
-router.delete('/runs/:id/tolls/:tollId', authenticate, authorize(...canBill), async (req, res) => {
+router.delete('/runs/:id/tolls/:tollId', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     if (!(await assertEditableRun(req.params.id, res))) return;
     await query('DELETE FROM billing_run_tolls WHERE id=$1 AND run_id=$2', [req.params.tollId, req.params.id]);
@@ -455,7 +455,7 @@ router.delete('/runs/:id/tolls/:tollId', authenticate, authorize(...canBill), as
   } catch (err) { res.status(500).json({ error: 'Failed to delete toll challan' }); }
 });
 
-router.get('/runs/:id/tolls/:tollId/file', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+router.get('/runs/:id/tolls/:tollId/file', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
   try {
     const r = await query(
       'SELECT file_name, file_mime, file_data FROM billing_run_tolls WHERE id=$1 AND run_id=$2',
@@ -515,7 +515,7 @@ async function runSummaries(runId, { vendorIds } = {}) {
   return { tankers: tankers.rows, vendors: vendors.rows, dates: dates.rows };
 }
 
-router.get('/runs/:id/summary', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+router.get('/runs/:id/summary', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
   try { res.json(await runSummaries(req.params.id)); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -619,7 +619,7 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
   return { wb, run, trips, tankers, vendors };
 }
 
-router.get('/runs/:id/report', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+router.get('/runs/:id/report', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
   try {
     const vendorIds = req.query.vendor_ids
       ? String(req.query.vendor_ids).split(',').map(Number).filter(Number.isFinite) : undefined;
@@ -848,7 +848,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
 // ── POST /api/billing/runs/:id/push-vendor — send draft tanker cards to each
 // vendor for verification before finalizing. Run stays editable; biller can
 // still fix corrections the vendor reports back, then Submit as normal.
-router.post('/runs/:id/push-vendor', authenticate, authorize(...canBill), async (req, res) => {
+router.post('/runs/:id/push-vendor', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const runId = req.params.id;
     const run = (await query('SELECT * FROM billing_runs WHERE id=$1', [runId])).rows[0];
@@ -867,7 +867,7 @@ router.post('/runs/:id/push-vendor', authenticate, authorize(...canBill), async 
 });
 
 // ── POST /api/billing/runs/:id/submit — finalize & start the approval chain ─
-router.post('/runs/:id/submit', authenticate, authorize(...canBill), async (req, res) => {
+router.post('/runs/:id/submit', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const runId = req.params.id;
     const run = (await query('SELECT * FROM billing_runs WHERE id=$1', [runId])).rows[0];
@@ -1086,7 +1086,7 @@ async function reportData(q) {
   return { trips: trips.rows, dates: dates.rows, tankers: tankers.rows, vendors: vendors.rows };
 }
 
-router.get('/report-data', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+router.get('/report-data', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
   try { res.json(await reportData(req.query)); }
@@ -1094,7 +1094,7 @@ router.get('/report-data', authenticate, authorize(...canBill, 'viewer'), async 
 });
 
 // Excel of the cross-run report
-router.get('/report-excel', authenticate, authorize(...canBill, 'viewer'), async (req, res) => {
+router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
   try {

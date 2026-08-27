@@ -3,7 +3,7 @@
 const express = require('express');
 const router  = express.Router();
 const { query } = require('../config/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeOrModule } = require('../middleware/auth');
 
 // GET /api/vendors?all=true
 router.get('/', authenticate, async (req, res) => {
@@ -20,7 +20,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // POST /api/vendors
-router.post('/', authenticate, authorize('admin'), async (req, res) => {
+router.post('/', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { vendor_code, vendor_name, contact_person, phone, email, gst_number, pan_number, address } = req.body;
   if (!vendor_code || !vendor_name) return res.status(400).json({ error: 'vendor_code and vendor_name required' });
   try {
@@ -37,7 +37,7 @@ router.post('/', authenticate, authorize('admin'), async (req, res) => {
 });
 
 // PUT /api/vendors/:id
-router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
+router.put('/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
   const { vendor_name, contact_person, phone, email, gst_number, pan_number, address, is_active } = req.body;
   try {
     const r = await query(

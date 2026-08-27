@@ -6,7 +6,7 @@
 const express = require('express');
 const router  = express.Router();
 const { query, pool } = require('../config/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeOrModule } = require('../middleware/auth');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/trip-docs/status?plan_for_date=YYYY-MM-DD
@@ -54,7 +54,7 @@ router.get('/:planId(\\d+)', authenticate, async (req, res) => {
 // trip_document_prints is written identically either way, so the Trip
 // Duration Report and print-status badges see no difference between the two.
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/:planId(\\d+)/print', authenticate, authorize('admin','planner','executor','biller'), async (req, res) => {
+router.post('/:planId(\\d+)/print', authenticate, authorizeOrModule('execution', 'admin','planner','executor','biller'), async (req, res) => {
   const planId = req.params.planId;
   const { doc_type, printed_at, no_print } = req.body;
   if (!['gate_pass', 'coa', 'unloading'].includes(doc_type))
@@ -168,7 +168,7 @@ router.get('/non-trip', authenticate, async (req, res) => {
 });
 
 // POST /api/trip-docs/non-trip
-router.post('/non-trip', authenticate, authorize('admin','planner','executor','biller'), async (req, res) => {
+router.post('/non-trip', authenticate, authorizeOrModule('execution', 'admin','planner','executor','biller'), async (req, res) => {
   const { tanker_id, delivery_point_id, reason, other_text, billing, remarks, km, tanker_vendor_rate, balaji_dairy_rate, issued_at } = req.body;
   if (!tanker_id) return res.status(400).json({ error: 'tanker_id required' });
   if (!delivery_point_id) return res.status(400).json({ error: 'Issuing delivery point required' });
@@ -198,7 +198,7 @@ router.post('/non-trip', authenticate, authorize('admin','planner','executor','b
 // POST /api/trip-docs/non-trip/:id/return — tanker reported back (e.g. from
 // maintenance). Frees the tanker for trip planning again. Optional manual
 // returned_at in the body (blank = now); must not precede issue time.
-router.post('/non-trip/:id(\\d+)/return', authenticate, authorize('admin','planner','executor','biller'), async (req, res) => {
+router.post('/non-trip/:id(\\d+)/return', authenticate, authorizeOrModule('execution', 'admin','planner','executor','biller'), async (req, res) => {
   try {
     const manualReturned = parseManualTs(req.body?.returned_at, 'Return date/time');
     if (manualReturned) {
