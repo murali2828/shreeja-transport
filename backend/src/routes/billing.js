@@ -108,6 +108,16 @@ router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), asy
     // arrived late and which were never included in any other billing run,
     // e.g. planned on the 15th but acknowledged on the 16th/17th. Rates for
     // carried trips still apply by their own PLANNING date.
+    //
+    // BILLING_CARRY_FORWARD_FLOOR (env, optional, 'YYYY-MM-DD'): the
+    // carry-forward window never reaches earlier than this date, regardless
+    // of the 31-day lookback. Set on production only, to '2026-08-16' —
+    // billing cycles for 2nd fortnight July 2026 through 1st fortnight
+    // August 2026 were intentionally never run, and those unbilled trips
+    // must NOT be swept into the 2nd fortnight August 2026 run. Once every
+    // run's own 31-day lookback naturally stays at/after this floor (i.e.
+    // from the run after 2nd fortnight August 2026 onward), this setting
+    // becomes a permanent no-op and can be left in place or removed.
     const trips = await client.query(`
       SELECT te.id AS execution_id, tp.plan_for_date::text AS plan_for_date,
              (tp.plan_for_date < $1::date) AS carried_forward,
@@ -148,7 +158,7 @@ router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), asy
       LEFT JOIN route_masters rm   ON rm.id = tp.route_id
       LEFT JOIN starting_points sp ON sp.id = tp.start_point_id
       LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
-      WHERE tp.plan_for_date BETWEEN ($1::date - INTERVAL '31 days') AND $2
+      WHERE tp.plan_for_date BETWEEN GREATEST($1::date - INTERVAL '31 days', COALESCE($4::date, '1900-01-01'::date)) AND $2
         AND tp.status NOT IN ('cancelled','deleted')
         AND (
           -- Acknowledgement entry must be fully complete by the fortnight
@@ -160,7 +170,8 @@ router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), asy
           OR t.tanker_number ILIKE 'SALE%'
         )
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
-      ORDER BY tp.plan_for_date, t.tanker_number`, [from_date, to_date, `${to_date} 23:59:59`]);
+      ORDER BY tp.plan_for_date, t.tanker_number`,
+      [from_date, to_date, `${to_date} 23:59:59`, process.env.BILLING_CARRY_FORWARD_FLOOR || null]);
 
     // Preload the whole Distance Master once — avoids ~5 SELECTs per trip
     // (an N+1 of thousands of round-trips on a full fortnight).
