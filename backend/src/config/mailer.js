@@ -27,7 +27,7 @@ function createTransport(redirectTo) {
       to: redirect,
       cc: undefined,
       bcc: undefined,
-      subject: `[QA→${orig}] ${mail.subject || ''}`,
+      subject: `[Redirected from ${orig}] ${mail.subject || ''}`,
       headers: { ...(mail.headers || {}), 'X-Original-To': orig },
     };
     console.log(`[mailer] redirect active — "${mail.subject}" diverted from (${orig}) to ${redirect}`);

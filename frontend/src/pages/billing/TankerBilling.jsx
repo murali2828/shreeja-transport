@@ -4,7 +4,7 @@
 // system km (Master+Google, expandable leg breakdown), editable billed km,
 // remarks. Rate applied from Tanker Rates by planning date. Submit → 3-level
 // email approval (Mahesh → Krithiga → Thimmappa).
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { ChevronDown, ChevronRight, Download, Send, Trash2, Play, ArrowLeft } from 'lucide-react';
@@ -214,6 +214,8 @@ export default function TankerBilling() {
           </button>
         </>)}
       </div>
+
+      {view === 'runs' && user?.role === 'admin' && <VendorEmailToggle/>}
 
       {view === 'report' && <PaymentReport />}
 
@@ -667,6 +669,52 @@ function TollPanel({ runId, tolls, tankers, editable }) {
 
 // Type-to-search, multi-select vendor filter — scopes Push to Vendors and
 // the Report download to only the selected vendor(s). Empty = all vendors.
+// Admin-only switch: while off, all vendor-facing tanker-card emails (Push
+// to Vendors + final approval) are diverted to one inbox instead of real
+// vendor addresses — used to trial-run billing against real data without
+// contacting vendors. Approver/biller notification emails are unaffected.
+function VendorEmailToggle() {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['billing-vendor-email-settings'],
+    queryFn: () => api.get('/billing/vendor-email-settings').then(r => r.data),
+  });
+  const [redirectTo, setRedirectTo] = useState('');
+  useEffect(() => { if (data?.redirect_to !== undefined) setRedirectTo(data.redirect_to); }, [data?.redirect_to]);
+
+  const save = useMutation({
+    mutationFn: body => api.put('/billing/vendor-email-settings', body),
+    onSuccess: r => {
+      qc.setQueryData(['billing-vendor-email-settings'], r.data);
+      toast.success(r.data.enabled ? 'Vendor emails are now ON — real vendors will receive mail' : 'Vendor emails are now OFF — diverted to the redirect address');
+    },
+    onError: e => toast.error(e.response?.data?.error || e.message),
+  });
+
+  if (!data) return null;
+  return (
+    <div className="card p-3 flex flex-wrap items-center gap-3 text-xs"
+         style={{ background: data.enabled ? '#eafbea' : '#fef2f2', border: `1px solid ${data.enabled ? '#86d992' : '#f0b4ae'}` }}>
+      <label className="flex items-center gap-2 cursor-pointer select-none font-semibold"
+             style={{ color: data.enabled ? '#0a7a1e' : '#a3231d' }}>
+        <input type="checkbox" checked={!!data.enabled}
+               onChange={e => save.mutate({ enabled: e.target.checked, redirect_to: redirectTo })}
+               disabled={save.isPending}/>
+        Vendor emails: {data.enabled ? 'ON — sent to real vendors' : 'OFF — diverted for trial run'}
+      </label>
+      {!data.enabled && (<>
+        <span className="text-gray-500">Redirect address:</span>
+        <input type="email" className="input text-xs py-1 px-2 w-64" value={redirectTo}
+               onChange={e => setRedirectTo(e.target.value)} placeholder="you@shreejamilk.com"/>
+        <button className="btn-secondary text-xs" disabled={save.isPending}
+                onClick={() => save.mutate({ enabled: false, redirect_to: redirectTo })}>
+          Save address
+        </button>
+      </>)}
+    </div>
+  );
+}
+
 function VendorFilterPicker({ vendorList, selected, onChange }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);

@@ -16,7 +16,7 @@ const crypto     = require('crypto');
 const nodemailer = require('nodemailer');
 const ExcelJS    = require('exceljs');
 const { query, pool } = require('../config/db');
-const { authenticate, authorizeOrModule } = require('../middleware/auth');
+const { authenticate, authorize, authorizeOrModule } = require('../middleware/auth');
 const { computeExecutionDistance } = require('../services/executionData');
 const { fmtDateDisplay } = require('../utils/date');
 const { loadMasterDistanceCache } = require('../services/distanceLookup');
@@ -39,6 +39,49 @@ const { createTransport: baseTransport } = require('../config/mailer');
 // billing approval/notification emails to one inbox. Other modules
 // (TS report, plan emails, etc.) are never affected.
 const createTransport = () => baseTransport(process.env.BILLING_EMAIL_REDIRECT);
+
+// ── Vendor email on/off switch — admin-toggleable from the Billing screen,
+// separate from the QA-only env redirect above. When OFF (the seeded
+// default), vendor-facing tanker-card emails (Push to Vendors + final
+// approval) are diverted to a single inbox instead of real vendor
+// addresses — used to trial-run the billing workflow against real
+// production data without actually contacting vendors. Approver/biller
+// notification emails are NOT affected; only the vendor send path checks this.
+async function getVendorEmailSettings() {
+  const r = await query(`SELECT key, value FROM app_settings WHERE key IN ('billing_vendor_emails_enabled','billing_vendor_email_redirect_to')`);
+  const m = Object.fromEntries(r.rows.map(x => [x.key, x.value]));
+  return {
+    enabled: m.billing_vendor_emails_enabled === 'true',
+    redirect_to: m.billing_vendor_email_redirect_to || '',
+  };
+}
+async function createVendorTransport() {
+  const s = await getVendorEmailSettings();
+  return baseTransport(s.enabled ? null : s.redirect_to);
+}
+
+router.get('/vendor-email-settings', authenticate, authorize('admin'), async (req, res) => {
+  try { res.json(await getVendorEmailSettings()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.put('/vendor-email-settings', authenticate, authorize('admin'), async (req, res) => {
+  const { enabled, redirect_to } = req.body;
+  if (!enabled && !String(redirect_to || '').trim())
+    return res.status(400).json({ error: 'A redirect address is required while vendor emails are switched off' });
+  try {
+    await query(`
+      INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES ('billing_vendor_emails_enabled', $1, NOW(), $2)
+      ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW(), updated_by=$2`,
+      [enabled ? 'true' : 'false', req.user.id]);
+    if (redirect_to !== undefined) {
+      await query(`
+        INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES ('billing_vendor_email_redirect_to', $1, NOW(), $2)
+        ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW(), updated_by=$2`,
+        [String(redirect_to || '').trim(), req.user.id]);
+    }
+    res.json(await getVendorEmailSettings());
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 const canBill = ['admin', 'biller'];
 
@@ -830,7 +873,8 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
 
     try {
-      await createTransport().sendMail({
+      const vendorTransport = await createVendorTransport();
+      await vendorTransport.sendMail({
         from: process.env.SMTP_FROM,
         to: v.email,
         subject: `${draft ? '[DRAFT for verification] ' : ''}Shreeja Tanker Payment ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} — ${v.name} · ₹ ${nf(total)}`,
