@@ -602,8 +602,8 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
     { title: 'As per Dispatch',        fill: 'FFDCFCE7', heads: ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Kg.Fat','Kg.SNF'] },
     { title: 'As per RMRD',            fill: 'FFE0F2FE', heads: ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Kg.Fat','Kg.SNF','TS'] },
     { title: 'As per Acknowledgement', fill: 'FFEDE9FE', heads: ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Kg.Fat','Kg.SNF'] },
-    { title: 'Variation As per Dispatch to Ack', fill: 'FFFDE68A', heads: ['Qty Kgs','Kg.Fat','Kg.SNF','TS','TS Gain/TS Loss %'], diff: true },
-    { title: 'Variation As per RMRD to Ack', fill: 'FFFECACA', heads: ['Qty Kgs','Kg.Fat','Kg.SNF','TS','TS Gain/TS Loss %'], diff: true },
+    { title: 'Variation As per Dispatch to Ack', fill: 'FFFDE68A', heads: ['Qty Kgs','Kg.Fat','Kg.SNF','TS','TS Gain/TS Loss %','Qty Gain/Qty Loss%'], diff: true },
+    { title: 'Variation As per RMRD to Ack', fill: 'FFFECACA', heads: ['Qty Kgs','Kg.Fat','Kg.SNF','TS','TS Gain/TS Loss %','Qty Gain/Qty Loss%'], diff: true },
   ];
   const NCOLS = 2 + GROUPS.reduce((s, g) => s + g.heads.length, 0);
 
@@ -648,15 +648,20 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
     const sum = k => rows.reduce((s, x) => s + (parseFloat(x[k]) || 0), 0);
     const w = (part, kgs) => sum(kgs) > 0 ? sum(part) / sum(kgs) * 100 : null;
     const daKgFat = sum('da_kg_fat'), daKgSnf = sum('da_kg_snf');
-    const dispTs = sum('disp_kg_fat') + sum('disp_kg_snf');
+    const dispKgs = sum('disp_kgs'), dispTs = sum('disp_kg_fat') + sum('disp_kg_snf');
     const drKgFat = sum('dr_kg_fat'), drKgSnf = sum('dr_kg_snf');
-    const rmrdTs = sum('rmrd_kg_fat') + sum('rmrd_kg_snf');
+    const rmrdKgs = sum('rmrd_kgs'), rmrdTs = sum('rmrd_kg_fat') + sum('rmrd_kg_snf');
+    const daKgs = sum('da_kgs'), drKgs = sum('dr_kgs');
     return {
-      disp: [sum('disp_litres'), sum('disp_kgs'), w('disp_kg_fat','disp_kgs'), w('disp_kg_snf','disp_kgs'), sum('disp_kg_fat'), sum('disp_kg_snf')],
-      rmrd: [sum('rmrd_litres'), sum('rmrd_kgs'), w('rmrd_kg_fat','rmrd_kgs'), w('rmrd_kg_snf','rmrd_kgs'), sum('rmrd_kg_fat'), sum('rmrd_kg_snf'), sum('rmrd_kg_fat') + sum('rmrd_kg_snf')],
+      disp: [sum('disp_litres'), dispKgs, w('disp_kg_fat','disp_kgs'), w('disp_kg_snf','disp_kgs'), sum('disp_kg_fat'), sum('disp_kg_snf')],
+      rmrd: [sum('rmrd_litres'), rmrdKgs, w('rmrd_kg_fat','rmrd_kgs'), w('rmrd_kg_snf','rmrd_kgs'), sum('rmrd_kg_fat'), sum('rmrd_kg_snf'), sum('rmrd_kg_fat') + sum('rmrd_kg_snf')],
       ack:  [sum('ack_litres'), sum('ack_kgs'), w('ack_kg_fat','ack_kgs'), w('ack_kg_snf','ack_kgs'), sum('ack_kg_fat'), sum('ack_kg_snf')],
-      vari: [sum('da_kgs'), daKgFat, daKgSnf, daKgFat + daKgSnf, dispTs > 0 ? (daKgFat + daKgSnf) / dispTs * 100 : null],
-      variRmrd: [sum('dr_kgs'), drKgFat, drKgSnf, drKgFat + drKgSnf, rmrdTs > 0 ? (drKgFat + drKgSnf) / rmrdTs * 100 : null],
+      // [Qty Kgs diff, Kg.Fat diff, Kg.SNF diff, TS diff, TS Gain/Loss %,
+      //  Qty Gain/Loss % — this section's own Qty Kgs diff over its own base]
+      vari: [daKgs, daKgFat, daKgSnf, daKgFat + daKgSnf, dispTs > 0 ? (daKgFat + daKgSnf) / dispTs * 100 : null,
+             dispKgs > 0 ? daKgs / dispKgs * 100 : null],
+      variRmrd: [drKgs, drKgFat, drKgSnf, drKgFat + drKgSnf, rmrdTs > 0 ? (drKgFat + drKgSnf) / rmrdTs * 100 : null,
+                 rmrdKgs > 0 ? drKgs / rmrdKgs * 100 : null],
     };
   };
 
@@ -701,14 +706,16 @@ function addConsolidatedSheet(wb, days, rowsByDay) {
     rmrd: [sumIdx('rmrd',0), sumIdx('rmrd',1), wPct('rmrd',4,1), wPct('rmrd',5,1), sumIdx('rmrd',4), sumIdx('rmrd',5), sumIdx('rmrd',6)],
     ack:  [sumIdx('ack',0),  sumIdx('ack',1),  wPct('ack',4,1),  wPct('ack',5,1),  sumIdx('ack',4),  sumIdx('ack',5)],
     vari: (() => {
-      const f = sumIdx('vari',1), s2 = sumIdx('vari',2);
-      const dispTs = sumIdx('disp',4) + sumIdx('disp',5);
-      return [sumIdx('vari',0), f, s2, f + s2, dispTs > 0 ? (f + s2) / dispTs * 100 : null];
+      const f = sumIdx('vari',1), s2 = sumIdx('vari',2), qtyKgs = sumIdx('vari',0);
+      const dispTs = sumIdx('disp',4) + sumIdx('disp',5), dispKgs = sumIdx('disp',1);
+      return [qtyKgs, f, s2, f + s2, dispTs > 0 ? (f + s2) / dispTs * 100 : null,
+              dispKgs > 0 ? qtyKgs / dispKgs * 100 : null];
     })(),
     variRmrd: (() => {
-      const f = sumIdx('variRmrd',1), s2 = sumIdx('variRmrd',2);
-      const rmrdTs = sumIdx('rmrd',4) + sumIdx('rmrd',5);
-      return [sumIdx('variRmrd',0), f, s2, f + s2, rmrdTs > 0 ? (f + s2) / rmrdTs * 100 : null];
+      const f = sumIdx('variRmrd',1), s2 = sumIdx('variRmrd',2), qtyKgs = sumIdx('variRmrd',0);
+      const rmrdTs = sumIdx('rmrd',4) + sumIdx('rmrd',5), rmrdKgs = sumIdx('rmrd',1);
+      return [qtyKgs, f, s2, f + s2, rmrdTs > 0 ? (f + s2) / rmrdTs * 100 : null,
+              rmrdKgs > 0 ? qtyKgs / rmrdKgs * 100 : null];
     })(),
   };
   GROUPS.forEach(g => {
