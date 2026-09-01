@@ -964,6 +964,20 @@ export default function ExecutionForm() {
       const violation = capacityViolation();
       if (violation) { window.alert(`⚠ Cannot save\n\n${violation}`); return Promise.reject(new Error(violation)); }
 
+      const missing = [];
+      if (!startPointId) missing.push('Starting Point');
+      if (!deliveryPointId) missing.push('Delivery Point');
+      // OUT/IN are mandatory, but once recorded (Gate Pass/COA, or a prior
+      // Save) the typed fields clear themselves — so "already recorded"
+      // (docStatus) also satisfies the requirement, not just what's typed now.
+      if (!docStatus.gate_pass && (!outDate || !outTime)) missing.push('Tanker OUT date & time');
+      if (!docStatus.coa && (!inDate || !inTime)) missing.push('Tanker IN date & time');
+      if (missing.length) {
+        const msg = `Cannot save — required before saving: ${missing.join(', ')}`;
+        toast.error(msg, { duration: 7000 });
+        return Promise.reject(new Error(msg));
+      }
+
       // OUT/IN typed but the Save button clicked (instead of Gate Pass/COA):
       // record the same timestamp, just without printing.
       let outTs, inTs;
