@@ -1,0 +1,67 @@
+id,route_name,start_point,delivery_point,distance_km,is_active
+121,7th Mile CC,,,350.00,t
+119,Avulanatham CC,,,307.00,t
+86,B Kothakota,,,331.00,t
+85,B Pappuru,,,33.00,t
+136,Baireddipalle,S K A Dairy,S K A Dairy,460.00,t
+109,CR Palyam,,,380.00,t
+117,CTM CC,,,373.00,t
+97,Dakkili,,,320.00,t
+110,Devanur,,,520.00,t
+93,GD Nellore,,,217.00,t
+144,Gandlapenta  CC,Bathalapalli,Balaji Dairy,,t
+113,Gorantla CC,,,357.00,t
+112,Gowraram,,,338.00,t
+108,Harur,,,390.00,t
+139,K Echambadi,S K A Dairy,S K A Dairy,210.00,t
+131,K G Chatram,Balaji Dairy,Balaji Dairy,,t
+141,K Nagaram,Balaji Dairy,Balaji Dairy,,t
+116,K Talapula CC,,,373.00,t
+100,KG Sathram,,,220.00,t
+89,Kalakada,,,360.00,t
+87,Kalikiri,,,279.00,t
+132,Kalwakurthy,ARVAIS Dairy(HYD),ARVAIS Dairy(HYD),,t
+98,Kanipaka Patnam,,,237.00,t
+127,Kankanuru,S K A Dairy,S K A Dairy,,t
+106,Karapattu,,,446.00,t
+130,Kokkanti Cross(KK Cross),Balaji Dairy,Balaji Dairy,,t
+105,Konaluru,,,446.00,t
+138,Konda Kinda Palli,Balaji Dairy,Balaji Dairy,218.00,t
+94,Konda Kinda Palli,Balaji Dairy,Balaji Dairy,240.00,t
+143,Kothacheruvu,Bathalapalli,Balaji Dairy,,t
+111,Kumaravadi,,,420.00,t
+103,Kuppam,,,383.00,t
+122,Kuppam CC,,,307.00,t
+118,Lakkireddy Palli,,,638.00,t
+135,Lepakshi CC,Bathalapalli,KMF Plant,,t
+1,MB Cross,Balaji Dairy,Balaji Dairy,620.00,t
+147,MILMA Sale tanker,,,,f
+114,Madakasira CC,,,357.00,t
+101,Madetipalli,,,296.00,t
+125,Mandakolathur,S K A Dairy,S K A Dairy,420.00,t
+145,Mandakolathur,S K A Dairy,S K A Dairy,,t
+115,Manesamudram CC,,,204.00,t
+91,Mellacheruvu,,,188.00,t
+84,Mohammadabad,,,620.00,t
+129,N Vaddanahalli,KMF Kanakapura,KMF Plant,,t
+146,NADIMURU,,,,t
+148,Nulukunta Cross,Balaji Dairy,S K A Dairy,,t
+95,Pakala,,,231.00,t
+123,Palamaneru CC,,,307.00,t
+134,Penumuru,Balaji Dairy,Balaji Dairy,94.00,t
+88,Piler,,,360.00,t
+104,Punganur,,,640.00,t
+124,Putturu CC,,,65.00,t
+120,Ramakuppam CC,,,307.00,t
+142,Rangampeta,Balaji Dairy,Balaji Dairy,0.00,t
+133,Settipalli,S K A Dairy,S K A Dairy,,t
+90,Thamballapalli,,,320.00,t
+140,Thurakapalli CC,Balaji Dairy,Balaji Dairy,420.00,t
+128,V K Patrapalli,KMF Kanakapura,KMF Plant,,t
+102,V Kota,,,407.00,t
+107,Vanapuram,,,446.00,t
+126,Vanapuram,S K A Dairy,S K A Dairy,,t
+96,Varadaiah Palem,,,301.00,t
+137,Vedurukuppam,Balaji Dairy,Balaji Dairy,102.00,t
+92,YV Pallem,,,180.00,t
+99,Yadamarri,,,220.00,t

@@ -1,0 +1,165 @@
+id,bmcu_code,bmcu_name,district,state,is_active
+1,3001,Penumuru,,	Andhra Pradesh,t
+2,3002,Pakala,,	Andhra Pradesh,t
+3,3003,Damalacheruvu,,Andhra Pradesh,t
+280,3004,Y S Gate,,	Andhra Pradesh,t
+281,3005,Komireddygari Palli,,	Andhra Pradesh,t
+282,3006,Polireddipalli,,	Andhra Pradesh,t
+283,3007,Polakala,,	Andhra Pradesh,t
+284,3010,Yerpedu,,	Andhra Pradesh,t
+285,3011,Varadaiahpalem,,	Andhra Pradesh,t
+286,3013,B N Khandriga,,	Andhra Pradesh,t
+287,3014,Thottambedu,,	Andhra Pradesh,t
+288,3015,Pichatur,,	Andhra Pradesh,t
+289,3016,Nagalapuram,,	Andhra Pradesh,t
+290,3017,K V B Puram,,	Andhra Pradesh,t
+291,3018,Satyavedu,,	Andhra Pradesh,t
+292,3019,Pannuru,,	Andhra Pradesh,t
+293,3020,Putturu CC,,	Andhra Pradesh,t
+294,3021,Chandragiri CC,,	Andhra Pradesh,t
+392,3022,Vedurukuppam,,	Andhra Pradesh,t
+427,3023,Rangampeta Cross,,	Andhra Pradesh,t
+295,3101,Kumaravadi,,Tamil Nadu,t
+296,3102,Thammanuru,,	Tamil Nadu,t
+398,3103,Konaluru,,	Tamil Nadu,t
+393,3104,Karapattu,,	Tamil Nadu,t
+394,3105,Vanapuram,,	Tamil Nadu,t
+395,3106,Vandavasi,,	Tamil Nadu,t
+396,3107,Devanur,,	Tamil Nadu,t
+406,3108,Sankaranarayanapuram(SN Puram),,	Tamil Nadu,t
+397,3109,Mandakolathur,,	Tamil Nadu,t
+405,3110,Kankanur,,	Tamil Nadu,t
+408,3112,Harur,,	Tamil Nadu,t
+407,3113,CR Palyam,,	Tamil Nadu,t
+431,3114,Rayakottai,,Tamil Nadu,t
+413,3116,LN Puram,,	Tamil Nadu,t
+430,3117,Aavalurpet,,Tamil Nadu,t
+425,3118,Gollamangalam,,Tamil Nadu,t
+423,3119,K Echambadi,,Tamil Nadu,t
+445,3122,Naikenkottai,Dharmapuri,Tamil Nadu,t
+424,3123,Alamelupuram,,Tamil Nadu,t
+297,3201,Mellacheruv,,Andhra Pradesh,t
+298,3202,Y V Pallm,,Andhra Pradesh,t
+412,3203,Talapula(Piler),,Andhra Pradesh,t
+299,3204,Bakarapeta,,Andhra Pradesh,t
+300,3205,C.G.Gallu,,Andhra Pradesh,t
+301,3206,Bodevandlapalli,,Andhra Pradesh,t
+302,3207,Karvetinagaram,,Andhra Pradesh,t
+303,3208,S R Puram,,Andhra Pradesh,t
+304,3209,Kothapallimitta,,Andhra Pradesh,t
+305,3210,Kollagunta,,,f
+306,3211,Kondakinda Pali,,Andhra Pradesh,t
+307,3212,M.Kothuru,,Andhra Pradesh,t
+308,3213,Narayanavanam,,Andhra Pradesh,t
+309,3215,Yadamari,,Andhra Pradesh,t
+310,3217,K Patnam,,Andhra Pradesh,t
+311,3218,Maddipatlapalli,,,f
+312,3219,Reddigunta,,Andhra Pradesh,t
+313,3220,Thumindapallyam,,,f
+314,3221,Bomma Samudram,,Andhra Pradesh,t
+315,3222,G D Nellore,,Andhra Pradesh,t
+316,3223,Thugundram,,Andhra Pradesh,t
+317,3224,Palasamudram,,Andhra Pradesh,t
+318,3226,Patrapalli,,,f
+319,3227,Pincha,,Andhra Pradesh,t
+428,3228,Udaymanikyam CC,,Andhra Pradesh,t
+320,3401,Gangavaram,,,f
+321,3402,Baireddipalle,,Andhra Pradesh,t
+322,3403,Palamaner BMCU,,Andhra Pradesh,t
+323,3404,Peddapanjani,,Andhra Pradesh,t
+324,3405,Pathikonda,,Andhra Pradesh,t
+325,3406,Palamaner CC,,Andhra Pradesh,t
+326,3407,V Kota,,Andhra Pradesh,t
+327,3408,Ramakuppam BMCU,,Andhra Pradesh,t
+328,3409,Shanthi Puram,,Andhra Pradesh,t
+329,3413,Pedduru,,Andhra Pradesh,t
+330,3414,Gudupalli,,Andhra Pradesh,t
+331,3415,Kuppam BMCU,,Andhra Pradesh,t
+399,3416,7th Mile CC,,Andhra Pradesh,t
+400,3417,Avulanatham CC,,Andhra Pradesh,t
+332,3418,Nadimur,,Andhra Pradesh,t
+333,3419,Punganur,,Andhra Pradesh,t
+334,3420,Chandramakula Palli,,Andhra Pradesh,t
+335,3421,Rayalapeta,,,f
+336,3422,Bangarupalyam,,,f
+337,3424,Kasirala,,,f
+338,3425,Gajulapalli,,Andhra Pradesh,t
+339,3426,Thumba Kuppm,,,f
+340,3427,Perumala Palli,,Andhra Pradesh,t
+341,3429,G.K.Manchi,,Andhra Pradesh,t
+342,3430,Mogili,,Andhra Pradesh,t
+343,3432,Madetipalli,,Andhra Pradesh,t
+344,3433,Mallanur Kottalau,,,f
+345,3434,N Vaddanahalli CC,,Karnataka,t
+401,3435,Settipalli,,Andhra Pradesh,t
+402,3436,VK Patrapalli CC,,Andhra Pradesh,t
+429,3437,Kuppiganipalli,,Andhra Pradesh,t
+414,3438,Kuppam Rural CC,,Andhra Pradesh,t
+438,3439,KG Sathram,,Andhra Pradesh,t
+436,3440,Kondahalli CC,,Karnataka,t
+440,3441,Ramakuppam CC,,Andhra Pradesh,t
+426,3442,Ramasamudhram CC,,Andhra Pradesh,t
+441,3443,Lakkanapalli CC,,Andhra Pradesh,t
+443,3446,Nulukunta Cross,,Andhra Pradesh,t
+346,3601,Chinthaparthi,,Andhra Pradesh,t
+347,3602,Tharigonda,,Andhra Pradesh,t
+348,3603,Vayalpadu,,Andhra Pradesh,t
+349,3604,Kona,,,f
+350,3606,Cheruvumundrapalli,,,f
+351,3607,Manchuru,,Andhra Pradesh,t
+352,3608,Singanodu Palli,,,f
+353,3609,Kurabala Kota,,Andhra Pradesh,t
+354,3610,B Kothakota,,Andhra Pradesh,t
+355,3611,Kotavuru,,,f
+356,3612,Poojavari Palli,,Andhra Pradesh,t
+357,3613,P T M,,Andhra Pradesh,t
+411,3614,Nallacheruvu,,,f
+358,3615,Cheekatimanupalli,,,f
+359,3616,Kalikiri,,Andhra Pradesh,t
+360,3617,Kalakada,,Andhra Pradesh,t
+361,3618,Gadi,,Andhra Pradesh,t
+362,3619,Garnimitta,,Andhra Pradesh,t
+363,3620,Piler,,Andhra Pradesh,t
+364,3621,Regallu,,Andhra Pradesh,t
+365,3622,Gyarampalli,,Andhra Pradesh,t
+366,3623,Yallam Palli,,Andhra Pradesh,t
+367,3624,Thamballapalle,,Andhra Pradesh,t
+368,3625,Reddi Kota,,Andhra Pradesh,t
+369,3626,Kosuvaripalli,,,f
+370,3627,Mudivedu,,Andhra Pradesh,t
+371,3628,Diguva Thotluvari Palli,,Andhra Pradesh,t
+372,3629,Kadiri Talapula CC,,Andhra Pradesh,t
+373,3631,Gorantla CC,,Andhra Pradesh,t
+374,3632,Gandlapenta CC,,Andhra Pradesh,t
+375,3633,Nallamada CC,,Andhra Pradesh,t
+376,3634,Kotha Cheruvu CC,,Andhra Pradesh,t
+377,3635,Chilamathur,,,f
+378,3637,Nimmanna Palli,,Andhra Pradesh,t
+379,3641,Thurakapalli CC,,Andhra Pradesh,t
+380,3642,Kokkanti Cross CC,,Andhra Pradesh,t
+381,3643,Kanumukkala,,,f
+382,3644,Penchupadu,,Andhra Pradesh,t
+388,3645,Manesamudram,,Andhra Pradesh,t
+403,3646,Moram Pali,,Andhra Pradesh,t
+404,3647,Ragavapalli,,Andhra Pradesh,t
+409,3648,Mohamadabad/MB Cross,,Andhra Pradesh,t
+415,3649,B.Pappuru,,Andhra Pradesh,t
+439,3651,CTM CC,,Andhra Pradesh,t
+433,3652,Lepakshi CC,,Andhra Pradesh,t
+418,3653,Mamillapalli,,Andhra Pradesh,t
+432,3654,Madakasira CC,,Andhra Pradesh,t
+435,3655,Rallananthapur CC,,Andhra Pradesh,t
+383,3701,Pellakuru,,Andhra Pradesh,t
+384,3702,Venkatagiri,,Andhra Pradesh,t
+385,3704,Dakilli,,Andhra Pradesh,t
+386,3708,Pokurupalli,,Andhra Pradesh,t
+387,3801,Chakrayapeta,,,f
+389,3802,Devagudipalli,,Andhra Pradesh,f
+390,3806,Rly Koduru,,,f
+391,3807,Lakkireddipalli,,Andhra Pradesh,t
+410,3808,Boreddygaripalli,,,f
+434,3809,Diguva Kancharla Palli,,Andhra Pradesh,t
+416,3901,Gowraram ,,Telangana,t
+421,3902,Kalwakurthy,,Telangana,t
+417,3903,Thalakondapalli,,Telangana,t
+422,3904,Kandukuru,,Telangana,t
