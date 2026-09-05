@@ -22,14 +22,14 @@ Companion docs in this folder:
 
 ## 0. TOP-LINE WARNINGS (read this first)
 
-1. **KG_FACTOR is 1.0285, not 1.028.** TMS converts litres→kg using
-   `KG_FACTOR = 1.0285` (`backend/src/services/executionData.js:13`, and duplicated as
-   `KG = 1.0285` in `backend/src/routes/analytics.js:17`). Assure's spec in the task
-   description assumes 1.028 kg/L. This is a ~0.05% systematic difference on every kg
-   figure — small per trip, but it will not exactly reconcile against Assure math that
-   uses 1.028, especially at scale over months. **Recommend Assure use 1.0285 for any
-   recomputation of TMS-origin litres→kg, and flag this constant as a config value to
-   keep in sync, not hardcode independently.**
+1. **KG_FACTOR is 1.0285 — AGREED: Assure will use 1.0285 too (decision 2026-09-05).**
+   TMS converts litres→kg using `KG_FACTOR = 1.0285`
+   (`backend/src/services/executionData.js:13`, and duplicated as `KG = 1.0285` in
+   `backend/src/routes/analytics.js:17`). The original Assure brief assumed 1.028 kg/L;
+   that would have been a ~0.05% systematic difference on every kg figure. **Resolved:
+   Assure has confirmed it will adopt 1.0285**, so TMS-origin kg figures reconcile
+   exactly. Keep this as a shared config constant on both sides rather than
+   hardcoding independently, so any future change is made in lockstep.
 
 2. **TMS billing pays the TRANSPORTER (tanker vendor) per kilometre travelled — it does
    NOT pay for milk value at all.** See `backend/src/routes/billing.js:1-9` (top
@@ -393,7 +393,8 @@ code path was found that explicitly forbids mixed shifts within one execution.
   rounding drift (`executions.js:419-421`, comment explains why). So a given
   `trip_acknowledgements.qty_kgs` may not be exactly `qty_litres × 1.0285` if a human
   corrected it.
-- **1.0285 vs Assure's assumed 1.028 — flagged in §0 above as the top finding.**
+- **Density constant: both systems use 1.0285.** Assure confirmed (2026-09-05) it will
+  adopt TMS's 1.0285 rather than the 1.028 in the original brief — see §0.1.
 
 ### Time
 - `docker-compose.yml` / `docker-compose.qa.yml` set `TZ: Asia/Kolkata` and
