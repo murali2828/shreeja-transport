@@ -7,6 +7,8 @@ const express = require('express');
 const router  = express.Router();
 const { query, pool } = require('../config/db');
 const { authenticate, authorizeOrModule } = require('../middleware/auth');
+const ExcelJS = require('exceljs');
+const { fmtDateDisplay } = require('../utils/date');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/trip-docs/status?plan_for_date=YYYY-MM-DD
@@ -218,8 +220,8 @@ router.post('/non-trip/:id(\\d+)/return', authenticate, authorizeOrModule('execu
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/trip-docs/tanker-position — live tanker status/position dashboard.
-// Status per tanker from its LATEST event:
+// Tanker status/position dashboard data. Status per tanker from its LATEST
+// event:
 //   trip cycle:  gate pass → Running · COA → Unloading Point ·
 //                unloading → Cleaning · (next gate pass starts a new cycle)
 //   non-trip GP: Maintainance → maintenance · Tankers without driver →
@@ -227,8 +229,7 @@ router.post('/non-trip/:id(\\d+)/return', authenticate, authorizeOrModule('execu
 //   no events   → idle
 // Location = delivery point of the tanker's latest trip (else 'Unassigned').
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/tanker-position', authenticate, async (req, res) => {
-  try {
+async function buildTankerPosition() {
     const tankers = (await query(
       `SELECT id, tanker_number, is_active FROM tankers ORDER BY tanker_number`)).rows;
     const active = tankers.filter(t => t.is_active);
@@ -313,13 +314,53 @@ router.get('/tanker-position', authenticate, async (req, res) => {
     for (const loc of Object.values(locations))
       for (const s of STATUSES) loc[s] = loc[s] || 0;
 
-    res.json({
+    return {
       total_tankers: tankers.length,
       active_tankers: active.length,
       last_updated: new Date().toISOString(),
       statuses: STATUSES,
       locations: Object.values(locations).sort((a, b) => b.total - a.total),
-    });
+    };
+}
+
+router.get('/tanker-position', authenticate, async (req, res) => {
+  try {
+    res.json(await buildTankerPosition());
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/trip-docs/tanker-position/report — same data as above, as an
+// Excel workbook (one row per active tanker: status, location, since, detail).
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/tanker-position/report', authenticate, async (req, res) => {
+  try {
+    const built = await buildTankerPosition();
+    const allRows = built.locations.flatMap(l => l.tankers);
+    allRows.sort((a, b) => a.location.localeCompare(b.location) || a.tanker_number.localeCompare(b.tanker_number));
+
+    const STATUS_LABEL = {
+      unloading: 'Unloading Point', running: 'Running', cleaning: 'Cleaning',
+      maintenance: 'Maintenance', without_driver: 'Without Driver', idle: 'Idle / Available',
+    };
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Tanker Position');
+    ws.addRow([`Tanker Position — ${built.total_tankers} total, ${built.active_tankers} active — ${fmtDateDisplay(built.last_updated)}`])
+      .font = { bold: true, size: 13 };
+    ws.addRow([]);
+    const head = ws.addRow(['Tanker', 'Location', 'Status', 'Since', 'Detail']);
+    head.font = { bold: true };
+    ws.columns.forEach(c => { c.width = 20; });
+    ws.getColumn(2).width = 26; ws.getColumn(5).width = 34;
+    allRows.forEach(t => ws.addRow([
+      t.tanker_number, t.location, STATUS_LABEL[t.status] || t.status,
+      t.since ? new Date(t.since).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
+      t.detail || '',
+    ]));
+
+    res.setHeader('Content-Disposition', `attachment; filename=tanker_position_${new Date().toISOString().slice(0,10)}.xlsx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(Buffer.from(await wb.xlsx.writeBuffer()));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
