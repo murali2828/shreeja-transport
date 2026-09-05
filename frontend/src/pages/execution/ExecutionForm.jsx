@@ -1103,7 +1103,7 @@ export default function ExecutionForm() {
             {/* Tanker OUT — applies to the Gate Pass */}
             <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
                    title="Tanker OUT — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click Gate Pass.">
-              OUT
+              OUT<span className="text-red-400">*</span>
               <input type="date" className="input py-0.5 px-1 text-[11px]" max={today}
                      value={outDate} onChange={e => setOutDate(e.target.value)}/>
               <input type="text" placeholder="HH:MM" maxLength={5}
@@ -1119,7 +1119,7 @@ export default function ExecutionForm() {
             {/* Tanker IN — applies to COA / Unload */}
             <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
                    title="Tanker IN (arrival at the plant) — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click COA or Unload.">
-              IN
+              IN<span className="text-red-400">*</span>
               <input type="date" className="input py-0.5 px-1 text-[11px]" max={today}
                      value={inDate} onChange={e => setInDate(e.target.value)}/>
               <input type="text" placeholder="HH:MM" maxLength={5}
@@ -1179,7 +1179,7 @@ export default function ExecutionForm() {
       {/* Trip summary */}
       <div className="card p-4 grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm">
         <div>
-          <label className="label text-xs">Starting Point</label>
+          <label className="label text-xs">Starting Point <span className="text-red-600">*</span></label>
           <select className="input w-full py-1.5" value={startPointId}
             disabled={isClosed} onChange={e => setStartPointId(e.target.value)}>
             <option value="">— Select —</option>
@@ -1220,7 +1220,7 @@ export default function ExecutionForm() {
           )}
         </div>
         <div>
-          <label className="label text-xs">Delivery Point</label>
+          <label className="label text-xs">Delivery Point <span className="text-red-600">*</span></label>
           <select className="input w-full py-1.5" value={deliveryPointId}
             disabled={isClosed} onChange={e => setDeliveryPointId(e.target.value)}>
             <option value="">— Select —</option>
