@@ -1,11 +1,52 @@
-# Sample Export Shapes (no live data included)
+# Sample Exports — one week of production data
 
-This environment has **no live database connection** (no docker/psql access), so this
-folder contains no actual CSV data. A ready-to-run export script is expected to be
-supplied separately (outside this documentation task) to pull real sample rows from a
-live TMS database. This file documents, purely from the schema, what each planned
-export file's GRAIN and join keys would be, so Assure can anticipate the shape before
-real data arrives.
+Produced 2026-09-05 from **production** with `scripts/export_samples.sh` (read-only,
+`\copy ... TO STDOUT` only) for the week **2026-08-01 → 2026-08-07**. The CSVs live in
+this folder. Column names are TMS's native column names (or explicit aliases shown in
+the script); dates are ISO `YYYY-MM-DD`; blanks are empty fields, not `NULL` text.
+
+## What was actually exported
+
+| File | Grain (one row = …) | Rows | Notes |
+|---|---|---|---|
+| `trips_2026-08-01_2026-08-07.csv` | one planned trip (`trip_plans.id`) | 350 | includes `status` — cancelled/deleted rows are **kept, not filtered** |
+| `loadings_2026-08-01_2026-08-07.csv` | one BMCU pickup on an execution (`trip_execution_bmcus.id`) | 1,150 | **filter `is_deleted = FALSE`** for reconciliation; ~3.3 rows per trip |
+| `receipts_2026-08-01_2026-08-07.csv` | one acknowledgement row = one **chamber** (`trip_acknowledgements.id`) | 951 | this IS the customer weighbridge figure, transcribed — SUM chambers per `execution_id` for a per-trip receipt |
+| `third_party_sales_2026-08-01_2026-08-07.csv` | one direct-sale record | **0** | feature shipped 2026-08-31; no production history yet |
+| `payments_2026-08-01_2026-08-07.csv` | one transporter-billing line (`billing_run_trips.id`) | **0** | **not a bug** — see below |
+| `vehicles.csv` | one tanker | 90 | master, full |
+| `bmcus.csv` | one BMCU | 164 | master, full |
+| `customers.csv` | one delivery point | 11 | master, full — these are the "customer plants" |
+| `routes.csv` | one route | 66 | master, full |
+
+**Why `payments` is empty for this week:** Shreeja deliberately did not run the billing
+cycle for the 2nd fortnight of July or the 1st fortnight of August 2026 (see
+`BILLING_CARRY_FORWARD_FLOOR` in `backend/src/routes/billing.js`). `billing_run_trips`
+rows only exist for periods that were billed, so 1–7 Aug has none. For a populated
+payments sample, re-run the script for a billed window, e.g. the 1st fortnight of
+July: `FROM_DATE=2026-07-01 TO_DATE=2026-07-07`. Remember these are transporter
+per-km payments, not milk value (README §4).
+
+**Masking:** `driver_name` and `loader_name` are reduced to first name + `***`. No
+mobile/phone columns exist in this schema. Everything else (codes, quantities, fat/SNF,
+timestamps, amounts) is real.
+
+**Join keys:** `trips.trip_plan_id` ← `loadings.trip_plan_id` / `receipts.trip_plan_id`
+/ `payments.execution_id→…`; `loadings.execution_id` = `receipts.execution_id` =
+`third_party_sales.execution_id`. `loadings.seq_no` = `third_party_sales.bmcu_seq_no`
+within the same `execution_id`. Masters join by name (`tanker_number`, `bmcu_code`,
+`delivery_point` name) as exported, or by `id`.
+
+**Planned files NOT produced by this script** (the sections below describe them from
+the schema so Assure can request them): `executions.csv` (its columns —
+`execution_id`, `trip_plan_id`, `status` — are already embedded in `loadings` and
+`receipts`), `loading_shifts.csv` (per-shift RMRD fat/SNF), `gate_pass_events.csv`
+(OUT/IN timestamps), `users.csv`. Say which are wanted and they can be added to the
+script.
+
+---
+
+## Schema-level grain and join notes (all files, including not-yet-exported ones)
 
 ## `trips.csv` — one row per planned trip
 - Grain: one row per `trip_plans.id`.
@@ -80,9 +121,7 @@ real data arrives.
 - `users.csv` ← `users` (id, user_id, full_name, role — no employee code exists, see
   identity.md)
 
-## What real volume/row-count figures will show
-Not available from this environment — no live DB connection here. Once the export
-script (to be supplied separately) is run against production, real row counts per
-month for `trip_plans`, `trip_executions`, `trip_execution_bmcus`, and
-`trip_acknowledgements` should be captured and added to this file for Assure's
-capacity planning.
+## Real volume / row-count figures
+Captured from production on 2026-09-05 — see the **Volume** section of `../README.md`
+for the monthly table (July/Aug ≈ 1,100–1,400 closed executions, 4,500–5,300 BMCU
+loadings and 3,000–4,500 acknowledgement rows per month; 86 tankers, 142 BMCUs).
