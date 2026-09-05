@@ -613,6 +613,7 @@ export default function ExecutionForm() {
   const [actualKm,         setActualKm]         = useState('');
   const [deliveryPointId,  setDeliveryPointId]  = useState('');
   const [startPointId,     setStartPointId]     = useState('');
+  const pointsInitRef = useRef(false); // blank Starting/Delivery Point only on first load of an in-progress trip
   const [bmcuRows,         setBmcuRows]         = useState([]);
   const [shiftRows,        setShiftRows]        = useState([]);
   const [entries,          setEntries]          = useState([]);
@@ -769,8 +770,21 @@ export default function ExecutionForm() {
   useEffect(() => {
     if (exec) {
       setActualKm(exec.actual_km || '');
-      setDeliveryPointId(String(exec.delivery_point_id || ''));
-      setStartPointId(String(exec.start_point_id || ''));
+      // Starting/Delivery Point come from the trip PLAN, which already has
+      // a route default — but the execution team must actively confirm the
+      // actual plant used, not silently inherit the plan's default. Only a
+      // CLOSED trip (view/history/Request Changes) shows its recorded value;
+      // an in-progress trip starts blank until re-selected — but only on
+      // the FIRST load, so a later refetch (e.g. after Save) doesn't wipe
+      // out what the executor just picked.
+      if (exec.status === 'closed') {
+        setDeliveryPointId(String(exec.delivery_point_id || ''));
+        setStartPointId(String(exec.start_point_id || ''));
+      } else if (!pointsInitRef.current) {
+        setDeliveryPointId('');
+        setStartPointId('');
+      }
+      pointsInitRef.current = true;
       setBmcuRows((exec.bmcus || []).map(b => ({
         ...b,
         milk_date: b.milk_date ? b.milk_date.slice(0, 10) : ''
