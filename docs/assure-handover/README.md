@@ -38,11 +38,17 @@ Companion docs in this folder:
    anywhere in TMS. Assure's `proc_dairy_receipt_raw.rate_per_litre` / `amount`
    fields have **no TMS equivalent** — see `mapping.md`.
 
-3. **No customer-side weighbridge, CLR, acidity, temperature-as-number, or
-   accept/reject fields exist.** `trip_acknowledgements` only has `qty_litres`,
-   `qty_kgs`, `fat_pct`, `snf_pct`, a free-text `temperature` VARCHAR, and a free-text
-   `description`. There is no gross/tare weight, no CLR, no acidity, no numeric
-   temperature, no grade, no accepted/rejected split.
+3. **`trip_acknowledgements` IS the customer's weighbridge reading, transcribed by
+   Shreeja's team (confirmed by Shreeja, 2026-09-05).** The acknowledgement row's
+   `qty_litres` / `qty_kgs` / `fat_pct` / `snf_pct` / `temperature` are typed into TMS
+   from the customer plant's own weighbridge + lab slip — they are NOT an independent
+   Shreeja measurement. So for reconciliation, the acknowledgement is the customer-end
+   figure and the correct thing to compare against BMCU dispatch.
+   What the customer slip carries that TMS does **not** store: gross/tare weight (only
+   the NET figure is entered), CLR, acidity, a numeric temperature (`temperature` is a
+   free-text VARCHAR), grade, an accepted/rejected split, and the customer's own
+   slip/GRN/challan number. Those must come from a customer-provided file if Assure
+   needs them — see `gaps.md`.
 
 4. **Multi-BMCU trips have exactly ONE blended acknowledgement per chamber, never
    per-BMCU.** A `trip_execution` can dispatch from several BMCUs
@@ -449,6 +455,15 @@ imported file anywhere in `executions.js` or `executionData.js`. No analyzer/dev
 integration code, no file-import path for quality readings, was found in the routes
 reviewed. **Confirmed: fat/SNF at both loading and acknowledgement are manually typed
 into the TMS web portal**, not device- or file-sourced.
+
+**Where the typed numbers come from (confirmed by Shreeja, 2026-09-05):**
+- Loading (`trip_execution_bmcus`, `trip_execution_bmcu_shifts`): the BMCU's own
+  dispatch/RMRD reading, entered by Shreeja's execution team.
+- Acknowledgement (`trip_acknowledgements`): the **customer plant's weighbridge and lab
+  slip**, transcribed by Shreeja's team. TMS does not take its own measurement at the
+  customer end — the acknowledgement is a copy of the customer's figure. Because it is
+  hand-copied from a slip, transcription error is a real (unquantified) source of
+  variance that Assure's tolerance bands should allow for.
 
 ### Codes
 - `bmcu_code`: VARCHAR(10), real examples are 4-digit numeric strings ('3001'..'3005')

@@ -37,17 +37,17 @@ the 1.0285 kg factor, and TMS billing being per-km not per-milk-value).
 
 | Assure column | TMS source | Transform / notes |
 |---|---|---|
-| dairy_ref | `delivery_points.id` (surrogate) or `.name` | No formal dairy/customer code exists — see identity.md |
+| dairy_ref | **Not available in TMS as a customer-issued number.** Use `trip_acknowledgements.execution_id` as a stable surrogate for now | Assure's spec wants the customer's slip/GRN number as the unique key. The customer's slip *is* what the ack is transcribed from, but its number is not stored — see gaps.md #6, recommended as the single highest-value column to add |
 | dairy_code | **Not available in TMS** | `delivery_points` has no code column |
 | receipt_date | `trip_acknowledgements.ack_date` | User-entered business date |
 | vehicle_no | `tankers.tanker_number` (via the trip's plan) | Same as trip mapping |
-| gross_weight | **Not available in TMS** | No weighbridge integration or gross-weight field anywhere |
-| tare_weight | **Not available in TMS** | Same |
-| net_litres | `trip_acknowledgements.qty_litres` (SUM across chamber rows for the execution) | |
-| fat | `trip_acknowledgements.fat_pct` (weighted average across chambers if more than one) | |
-| snf | `trip_acknowledgements.snf_pct` | |
-| clr | **Not available in TMS** | No CLR field |
-| acidity | **Not available in TMS** | No acidity field |
+| gross_weight | **Not available in TMS** | The customer's weighbridge slip carries gross/tare, but the ack form only has a box for the NET figure. Cheap to add — gaps.md #1 |
+| tare_weight | **Not available in TMS** | Same as gross_weight |
+| net_litres | `trip_acknowledgements.qty_litres` (SUM across chamber rows for the execution) | **This IS the customer's weighbridge net figure**, transcribed by Shreeja's team from the customer's slip (confirmed 2026-09-05) — not an independent Shreeja measurement |
+| fat | `trip_acknowledgements.fat_pct` (weighted average across chambers if more than one) | Customer's lab reading, transcribed from the slip |
+| snf | `trip_acknowledgements.snf_pct` | Customer's lab reading, transcribed from the slip |
+| clr | **Not available in TMS** | On the customer's lab slip but no column for it — gaps.md #2 |
+| acidity | **Not available in TMS** | On the customer's lab slip but no column for it — gaps.md #2 |
 | quality_grade | **Not available in TMS** | No grade field; `trip_acknowledgements.description` is free text, sometimes used for notes, not a structured grade |
 | rate_per_litre | **Not available in TMS** — see README §0.2/§4 | TMS never prices milk; billing is transporter-per-km only |
 | amount | **Not available in TMS** (as a milk-value amount) | `billing_run_trips.amount` exists but = `billed_km × rate_per_km`, a TRANSPORT payment, not a milk-value payment — do not map these together |
