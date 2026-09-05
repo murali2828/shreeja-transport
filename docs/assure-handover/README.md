@@ -474,8 +474,33 @@ into the TMS web portal**, not device- or file-sourced.
   vehicle-registration-style string, stored uppercase, free-form beyond that.
 
 ### Volume (row counts / actual data volume)
-**Not available from this environment** — there is no live database connection here
-(no docker/psql access), so no real row-count-per-month or per-day figures can be
-produced. A script to pull these from a live database is expected to be supplied
-separately (see `samples/README.md`), and the user should run it against production to
-get real figures once this handover doc is delivered.
+Real figures from **production**, pulled 2026-09-05 with
+`scripts/volume_counts.sh` (read-only). June is a partial month — the system went live
+mid/late June, so use **July and August as the representative months**.
+
+| Month | Trip plans (published) | Executions closed | BMCU loadings | Acknowledgements |
+|---|---|---|---|---|
+| 2026-06 (partial) | 715 | 60 | 526 | 144 |
+| 2026-07 | 1,310 | 1,137 | 4,573 | 3,054 |
+| 2026-08 | 1,393 | 1,402 | 5,290 | 4,458 |
+
+Fleet in the window: **86 distinct tankers, 142 distinct BMCUs** active.
+
+What the ratios tell Assure (August):
+- **~3.8 BMCU loadings per closed execution** — multi-BMCU pickup is the norm, not the
+  exception (§6 MULTI-PICKUP applies to most trips, not an edge case).
+- **~3.2 acknowledgement rows per closed execution** — consistent with the per-chamber
+  grain (tankers have 2–3 compartments). Assure must SUM chambers per `execution_id`
+  to get a per-trip receipt.
+- **~2% of executions are not `closed`** at any moment (Aug: 16 in_progress, 8
+  pending_ack, 5 saved vs 1,402 closed). Reconcile `status='closed'` only.
+- **Soft-deleted loading rows exist: 192 of 5,290 in Aug (3.6%)** are
+  `is_deleted=TRUE`. Assure MUST filter these out or it will overcount dispatch.
+- **Soft-deleted plans: 136 in Aug** carry `status='deleted'` — confirms plans are
+  soft-deleted, never hard-deleted (§6 NATURAL KEYS).
+- **Third-party sales: 0 rows** in all three months. The feature shipped 2026-08-31
+  (migrations 032/033); there is no production history for it yet. Treat this table as
+  empty until told otherwise.
+
+Non-closed executions and soft-deleted rows are exactly the cases the proposed
+`assure_*_v` views in `sql/` expose via a status column rather than hide.
