@@ -11,9 +11,7 @@ import toast from 'react-hot-toast';
 import { getTankerPosition, getTankerPositionReport } from '../../api/index';
 
 const STATUS_META = {
-  unloading:      { label: 'Unloading Point Tankers', color: '#8b5cf6', bg: 'bg-violet-50',  text: 'text-violet-700' },
   running:        { label: 'Running Tankers',         color: '#3b82f6', bg: 'bg-blue-50',    text: 'text-blue-700' },
-  cleaning:       { label: 'Cleaning Tankers',        color: '#06b6d4', bg: 'bg-cyan-50',    text: 'text-cyan-700' },
   maintenance:    { label: 'Maintenance Tankers',     color: '#f59e0b', bg: 'bg-amber-50',   text: 'text-amber-700' },
   without_driver: { label: 'Without Driver Tankers',  color: '#ef4444', bg: 'bg-red-50',     text: 'text-red-600' },
   idle:           { label: 'Idle / Available',        color: '#6b7280', bg: 'bg-gray-50',    text: 'text-gray-600' },

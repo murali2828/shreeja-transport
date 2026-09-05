@@ -269,18 +269,18 @@ async function buildTankerPosition() {
       ORDER BY g.tanker_id, g.issued_at DESC`)).rows;
     const ntgpBy = Object.fromEntries(ntgp.map(g => [g.tanker_id, g]));
 
-    const STATUSES = ['unloading', 'running', 'cleaning', 'maintenance', 'without_driver', 'idle'];
+    // The execution team only records Gate Pass (tanker OUT) and non-trip
+    // gate passes (Maintenance / Without Driver) — COA and Unloading are not
+    // used, so a tanker stays 'running' from the moment it goes out, rather
+    // than progressing through separate Unloading Point / Cleaning stages.
+    const STATUSES = ['running', 'maintenance', 'without_driver', 'idle'];
     const rows = active.map(t => {
       const trip = tripBy[t.id];
       const gp = ntgpBy[t.id];
 
       // Trip-cycle candidate status + its defining event time
       let tripStatus = null, tripAt = null;
-      if (trip) {
-        if (trip.unload_at)   { tripStatus = 'cleaning';  tripAt = trip.unload_at; }
-        else if (trip.coa_at) { tripStatus = 'unloading'; tripAt = trip.coa_at; }
-        else if (trip.gp_at)  { tripStatus = 'running';   tripAt = trip.gp_at; }
-      }
+      if (trip?.gp_at) { tripStatus = 'running'; tripAt = trip.gp_at; }
       // Non-trip candidate
       let ntStatus = null, ntAt = null, ntLabel = null;
       if (gp) {
@@ -340,8 +340,7 @@ router.get('/tanker-position/report', authenticate, async (req, res) => {
     allRows.sort((a, b) => a.location.localeCompare(b.location) || a.tanker_number.localeCompare(b.tanker_number));
 
     const STATUS_LABEL = {
-      unloading: 'Unloading Point', running: 'Running', cleaning: 'Cleaning',
-      maintenance: 'Maintenance', without_driver: 'Without Driver', idle: 'Idle / Available',
+      running: 'Running', maintenance: 'Maintenance', without_driver: 'Without Driver', idle: 'Idle / Available',
     };
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Tanker Position');
