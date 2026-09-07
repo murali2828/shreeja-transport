@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getPlans, getExecutions, createExecution, cancelExecution, getExecutionCoverage } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
@@ -220,7 +220,14 @@ export default function ExecutionList() {
                             className="btn-secondary btn-sm flex items-center gap-1">
                             <Eye size={12}/> View
                           </button>
-                        ) : (
+                        ) : null}
+                        {exec && (
+                          <button onClick={() => navigate(`/tracking?execution=${exec.id}`)}
+                            className="btn-secondary btn-sm flex items-center gap-1" title="View on map (planned vs actual route)">
+                            <MapPin size={12}/>
+                          </button>
+                        )}
+                        {!exec && (
                           <button onClick={() => startMut.mutate(p.id)}
                             disabled={startMut.isPending}
                             className="btn-primary btn-sm flex items-center gap-1">
