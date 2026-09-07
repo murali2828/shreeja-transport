@@ -6,13 +6,12 @@
 //   non-trip gate passes (maintenance / without driver), else idle.
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { RefreshCw, ChevronLeft, Truck } from 'lucide-react';
-import { getTankerPosition } from '../../api/index';
+import { RefreshCw, ChevronLeft, Truck, Download } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { getTankerPosition, getTankerPositionReport } from '../../api/index';
 
 const STATUS_META = {
-  unloading:      { label: 'Unloading Point Tankers', color: '#8b5cf6', bg: 'bg-violet-50',  text: 'text-violet-700' },
   running:        { label: 'Running Tankers',         color: '#3b82f6', bg: 'bg-blue-50',    text: 'text-blue-700' },
-  cleaning:       { label: 'Cleaning Tankers',        color: '#06b6d4', bg: 'bg-cyan-50',    text: 'text-cyan-700' },
   maintenance:    { label: 'Maintenance Tankers',     color: '#f59e0b', bg: 'bg-amber-50',   text: 'text-amber-700' },
   without_driver: { label: 'Without Driver Tankers',  color: '#ef4444', bg: 'bg-red-50',     text: 'text-red-600' },
   idle:           { label: 'Idle / Available',        color: '#6b7280', bg: 'bg-gray-50',    text: 'text-gray-600' },
@@ -28,6 +27,14 @@ export default function TankerPosition() {
     queryFn:  () => getTankerPosition().then(r => r.data),
     refetchInterval: 60_000,
   });
+
+  const downloadReport = () =>
+    getTankerPositionReport().then(r => {
+      const url = URL.createObjectURL(r.data);
+      const a = document.createElement('a');
+      a.href = url; a.download = `tanker_position_${new Date().toISOString().slice(0,10)}.xlsx`; a.click();
+      URL.revokeObjectURL(url);
+    }).catch(e => toast.error(e.response?.data?.error || e.message || 'Report download failed'));
 
   const locations = data?.locations || [];
   const selected  = locations.find(l => l.name === loc) || null;
@@ -56,13 +63,16 @@ export default function TankerPosition() {
             </div>
           </div>
         </div>
-        <div className="flex gap-3 text-xs">
+        <div className="flex items-center gap-3 text-xs">
           <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-700 font-medium">
             {data?.total_tankers ?? '—'} total tankers
           </span>
           <span className="px-3 py-1 rounded-full bg-green-100 text-green-700 font-medium">
             {data?.active_tankers ?? '—'} active
           </span>
+          <button onClick={downloadReport} className="btn-secondary flex items-center gap-1.5 py-1.5">
+            <Download size={13}/> Report
+          </button>
         </div>
       </div>
 

@@ -121,6 +121,7 @@ export const getNonTripGatePasses  = (p) => api.get('/trip-docs/non-trip', { par
 export const createNonTripGatePass = (d) => api.post('/trip-docs/non-trip', d);
 export const markNonTripReturned   = (id, returned_at) => api.post(`/trip-docs/non-trip/${id}/return`, { returned_at: returned_at || undefined });
 export const getTankerPosition     = ()  => api.get('/trip-docs/tanker-position');
+export const getTankerPositionReport = () => api.get('/trip-docs/tanker-position/report', { responseType: 'blob' });
 
 // ── Day wise Tanker Utilisation ───────────────────────────────────────────────
 export const getDayUtilisation = (p) => api.get('/reports/day-utilisation', { params: p });

@@ -613,6 +613,7 @@ export default function ExecutionForm() {
   const [actualKm,         setActualKm]         = useState('');
   const [deliveryPointId,  setDeliveryPointId]  = useState('');
   const [startPointId,     setStartPointId]     = useState('');
+  const pointsInitRef = useRef(false); // blank Starting/Delivery Point only on first load of an in-progress trip
   const [bmcuRows,         setBmcuRows]         = useState([]);
   const [shiftRows,        setShiftRows]        = useState([]);
   const [entries,          setEntries]          = useState([]);
@@ -769,8 +770,21 @@ export default function ExecutionForm() {
   useEffect(() => {
     if (exec) {
       setActualKm(exec.actual_km || '');
-      setDeliveryPointId(String(exec.delivery_point_id || ''));
-      setStartPointId(String(exec.start_point_id || ''));
+      // Starting/Delivery Point come from the trip PLAN, which already has
+      // a route default — but the execution team must actively confirm the
+      // actual plant used, not silently inherit the plan's default. Only a
+      // CLOSED trip (view/history/Request Changes) shows its recorded value;
+      // an in-progress trip starts blank until re-selected — but only on
+      // the FIRST load, so a later refetch (e.g. after Save) doesn't wipe
+      // out what the executor just picked.
+      if (exec.status === 'closed') {
+        setDeliveryPointId(String(exec.delivery_point_id || ''));
+        setStartPointId(String(exec.start_point_id || ''));
+      } else if (!pointsInitRef.current) {
+        setDeliveryPointId('');
+        setStartPointId('');
+      }
+      pointsInitRef.current = true;
       setBmcuRows((exec.bmcus || []).map(b => ({
         ...b,
         milk_date: b.milk_date ? b.milk_date.slice(0, 10) : ''
@@ -964,6 +978,20 @@ export default function ExecutionForm() {
       const violation = capacityViolation();
       if (violation) { window.alert(`⚠ Cannot save\n\n${violation}`); return Promise.reject(new Error(violation)); }
 
+      const missing = [];
+      if (!startPointId) missing.push('Starting Point');
+      if (!deliveryPointId) missing.push('Delivery Point');
+      // OUT/IN are mandatory, but once recorded (Gate Pass/COA, or a prior
+      // Save) the typed fields clear themselves — so "already recorded"
+      // (docStatus) also satisfies the requirement, not just what's typed now.
+      if (!docStatus.gate_pass && (!outDate || !outTime)) missing.push('Tanker OUT date & time');
+      if (!docStatus.coa && (!inDate || !inTime)) missing.push('Tanker IN date & time');
+      if (missing.length) {
+        const msg = `Cannot save — required before saving: ${missing.join(', ')}`;
+        toast.error(msg, { duration: 7000 });
+        return Promise.reject(new Error(msg));
+      }
+
       // OUT/IN typed but the Save button clicked (instead of Gate Pass/COA):
       // record the same timestamp, just without printing.
       let outTs, inTs;
@@ -1075,7 +1103,7 @@ export default function ExecutionForm() {
             {/* Tanker OUT — applies to the Gate Pass */}
             <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
                    title="Tanker OUT — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click Gate Pass.">
-              OUT
+              OUT<span className="text-red-400">*</span>
               <input type="date" className="input py-0.5 px-1 text-[11px]" max={today}
                      value={outDate} onChange={e => setOutDate(e.target.value)}/>
               <input type="text" placeholder="HH:MM" maxLength={5}
@@ -1091,7 +1119,7 @@ export default function ExecutionForm() {
             {/* Tanker IN — applies to COA / Unload */}
             <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
                    title="Tanker IN (arrival at the plant) — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click COA or Unload.">
-              IN
+              IN<span className="text-red-400">*</span>
               <input type="date" className="input py-0.5 px-1 text-[11px]" max={today}
                      value={inDate} onChange={e => setInDate(e.target.value)}/>
               <input type="text" placeholder="HH:MM" maxLength={5}
@@ -1151,7 +1179,7 @@ export default function ExecutionForm() {
       {/* Trip summary */}
       <div className="card p-4 grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm">
         <div>
-          <label className="label text-xs">Starting Point</label>
+          <label className="label text-xs">Starting Point <span className="text-red-600">*</span></label>
           <select className="input w-full py-1.5" value={startPointId}
             disabled={isClosed} onChange={e => setStartPointId(e.target.value)}>
             <option value="">— Select —</option>
@@ -1192,7 +1220,7 @@ export default function ExecutionForm() {
           )}
         </div>
         <div>
-          <label className="label text-xs">Delivery Point</label>
+          <label className="label text-xs">Delivery Point <span className="text-red-600">*</span></label>
           <select className="input w-full py-1.5" value={deliveryPointId}
             disabled={isClosed} onChange={e => setDeliveryPointId(e.target.value)}>
             <option value="">— Select —</option>
