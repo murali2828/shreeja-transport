@@ -59,21 +59,34 @@ const STOP_COLOR = { start: '#6b7280', delivery: '#6b7280', bmcu: '#0078d4', unp
 const TRACKING_SINCE = '07-09-2026'; // first poller run — no history before this
 
 // Default Leaflet marker images don't resolve under Vite; use a divIcon with
-// an inline SVG dot instead (colour encodes state, arrow shows heading).
+// an inline SVG milk tanker instead. The tank is coloured by state (moving /
+// stopped / stale), the cab is dark, a white drop marks it as a milk tanker,
+// and a moving tanker is rotated to face its GPS heading. Rotation is
+// bucketed to 15° so the icon cache stays small.
 const iconCache = {};
 function iconFor(state, selected, angle) {
-  const key = `${state}-${selected ? 1 : 0}-${Math.round((angle || 0) / 15) * 15}`;
+  const heading = state === 'moving' && angle != null ? Math.round(angle / 15) * 15 : null;
+  const key = `tanker-${state}-${selected ? 1 : 0}-${heading ?? 'n'}`;
   if (iconCache[key]) return iconCache[key];
   const c = STATE_META[state].color;
-  const size = selected ? 26 : 20;
-  const ring = state === 'stale' ? `<circle cx="12" cy="12" r="10.5" fill="none" stroke="${c}" stroke-width="2" stroke-dasharray="3 2"/>` : '';
-  const arrow = state === 'moving' && angle != null
-    ? `<polygon points="12,1 15,7 9,7" fill="${c}" transform="rotate(${Math.round(angle)} 12 12)"/>` : '';
-  const html = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${size}" height="${size}">
-    ${ring}${arrow}
-    <circle cx="12" cy="12" r="6.5" fill="${c}" stroke="#fff" stroke-width="${selected ? 3 : 2}"/>
+  const w = selected ? 52 : 42, h = Math.round(w / 2);
+  const sw = selected ? 2.2 : 1.4;
+  const dim = state === 'stale' ? 'opacity="0.75"' : '';
+  // The artwork faces east (right). A GPS heading of 90° = east, so rotate by heading − 90.
+  const rot = heading != null ? `transform="rotate(${heading - 90} 24 12)"` : '';
+  const html = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 24" width="${w}" height="${h}" ${dim}>
+    <g ${rot}>
+      <rect x="2" y="4" width="30" height="13" rx="6.5" fill="${c}" stroke="#fff" stroke-width="${sw}"/>
+      <rect x="32.5" y="7" width="13" height="10.5" rx="2" fill="#1f2937" stroke="#fff" stroke-width="${sw}"/>
+      <rect x="35" y="8.5" width="7.5" height="4.5" rx="1" fill="#bfdbfe"/>
+      <path d="M17 6.5 C17 6.5 13.6 10.2 13.6 12.2 A3.4 3.4 0 0 0 20.4 12.2 C20.4 10.2 17 6.5 17 6.5 Z" fill="#fff" opacity="0.95"/>
+      <circle cx="9" cy="18.5" r="3.2" fill="#111827" stroke="#fff" stroke-width="1.2"/>
+      <circle cx="21" cy="18.5" r="3.2" fill="#111827" stroke="#fff" stroke-width="1.2"/>
+      <circle cx="40" cy="18.5" r="3.2" fill="#111827" stroke="#fff" stroke-width="1.2"/>
+      ${state === 'stale' ? `<rect x="0.5" y="2.5" width="47" height="20" rx="6" fill="none" stroke="${c}" stroke-width="1.6" stroke-dasharray="3 2"/>` : ''}
+    </g>
   </svg>`;
-  iconCache[key] = L.divIcon({ html, className: 'tracking-marker', iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2] });
+  iconCache[key] = L.divIcon({ html, className: 'tracking-marker', iconSize: [w, h], iconAnchor: [w / 2, h / 2], popupAnchor: [0, -h / 2] });
   return iconCache[key];
 }
 // Trip-mode icons: numbered planned BMCU, start (S) / delivery (D) squares, trail ▶ / ■.
