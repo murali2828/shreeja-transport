@@ -172,7 +172,7 @@ export default function DailyTSReport() {
                   <td className="table-td whitespace-nowrap">{r.route_name || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.starting_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.unloading_point || '—'}</td>
-                  <td className="table-td whitespace-nowrap font-mono text-[11px] text-gray-600">{r.entered_by || '—'}</td>
+                  <td className="table-td min-w-[220px] font-mono text-[11px] text-gray-600">{r.entered_by || '—'}</td>
                   {GROUPS.map(g => g.measures.map(([m], mi) => {
                     const key = `${g.prefix}_${m}`;
                     const fmt = m === 'litres' ? n2 : n4;

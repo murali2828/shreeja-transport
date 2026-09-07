@@ -21,6 +21,52 @@ const { fmtDateDisplay } = require('../utils/date');
 
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 
+// ─── "Entered By" — every user who created or modified an execution ──────────
+// One string per execution: `LOGIN (Full Name)` per user, joined with '; ',
+// de-duplicated by login. Order: the creator (trip_executions.executed_by)
+// first, then everyone else in order of their first change
+// (data_change_logs.created_at, module 'Executions'), with the last modifier
+// (trip_executions.updated_by) included even if the log has no row for them.
+// `rows` are SQL rows carrying execution_id + creator_login/creator_name +
+// updater_login/updater_name. ONE data_change_logs query per report build.
+const fmtUser = (login, name) => name ? `${login} (${name})` : login;
+async function enteredByMap(rows) {
+  const execIds = [...new Set(rows.map(x => x.execution_id).filter(Boolean))];
+  const byExec = {};
+  if (!execIds.length) return byExec;
+  // Login/name come from the users row where the log's user_id still resolves
+  // (canonical spelling), else from what the tracker recorded at the time.
+  const lg = await query(`
+    SELECT entity_id, login, MAX(name) AS name, MIN(created_at) AS first_at
+    FROM (
+      SELECT dcl.entity_id,
+             COALESCE(u.user_id, dcl.user_login) AS login,
+             COALESCE(u.full_name, dcl.user_name) AS name,
+             dcl.created_at
+      FROM data_change_logs dcl
+      LEFT JOIN users u ON u.id = dcl.user_id
+      WHERE dcl.module = 'Executions' AND dcl.entity_id = ANY($1::text[])
+    ) s
+    WHERE login IS NOT NULL AND login != ''
+    GROUP BY entity_id, login
+    ORDER BY entity_id, first_at, login`, [execIds.map(String)]);
+  const logByExec = {};
+  for (const l of lg.rows) (logByExec[l.entity_id] ||= []).push(l);
+  for (const x of rows) {
+    if (!x.execution_id || byExec[x.execution_id] != null) continue;
+    const seen = new Set(); const parts = [];
+    const add = (login, name) => {
+      if (!login || seen.has(login)) return;
+      seen.add(login); parts.push(fmtUser(login, name));
+    };
+    add(x.creator_login, x.creator_name);
+    for (const l of logByExec[String(x.execution_id)] || []) add(l.login, l.name);
+    add(x.updater_login, x.updater_name);
+    byExec[x.execution_id] = parts.join('; ');
+  }
+  return byExec;
+}
+
 async function buildTsReport(reportDate, basis = 'plan') {
   // basis 'plan': one row per plan of the planning date (default).
   // basis 'ack_entry': only trips whose acknowledgement was ENTERED on the
@@ -37,7 +83,8 @@ async function buildTsReport(reportDate, basis = 'plan') {
       tp.id AS plan_id, tp.trip_no, tp.shifts_milk,
       t.tanker_number, rm.route_name, sp.name AS starting_point, dp.name AS unloading_point,
       te.id AS execution_id, te.status AS execution_status, te.dc_number, te.actual_km,
-      COALESCE(uu2.user_id, uu1.user_id) AS entered_by,
+      uu1.user_id AS creator_login, uu1.full_name AS creator_name,
+      uu2.user_id AS updater_login, uu2.full_name AS updater_name,
 
       (SELECT MIN(teb.milk_date) FROM trip_execution_bmcus teb
         WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE)          AS lifting_date,
@@ -185,6 +232,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
     }
   }
 
+  const enteredBy = await enteredByMap(r.rows);
   const mapped = r.rows.map(row => {
     const rmrd = rmrdByExec[row.execution_id] || { litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 };
     const hasAck = row.ack_count > 0;
@@ -227,7 +275,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
       unloading_point: row.unloading_point,
       execution_status: row.execution_status,
       shifts_milk: row.shifts_milk,
-      entered_by: row.entered_by,
+      entered_by: enteredBy[row.execution_id] || '',
       has_ack: hasAck,
       rmrd_adjust_note: (adjNotes[row.execution_id] || []).join('; ') || null,
       rmrd_litres: rN(rmrd.litres), rmrd_kgs: rN(rmrd.kgs, 2),
@@ -363,7 +411,8 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
 
   // Column widths: 6 info + numeric measures
   ws.columns = [
-    { width: 14 }, { width: 12 }, { width: 12 }, { width: 16 }, { width: 20 }, { width: 18 }, { width: 18 }, { width: 14 },
+    { width: 14 }, { width: 12 }, { width: 12 }, { width: 16 }, { width: 20 }, { width: 18 }, { width: 18 },
+    { width: 40 }, // Entered By — "LOGIN (Full Name); ..." for every user who touched the execution
     ...Array(TS_NMEAS).fill({ width: 11 }),
     { width: 44 },  // Remarks (RMRD adjustment notes + Third Party Sale notes)
   ];
@@ -464,7 +513,7 @@ function addTsSheet(wb, rows, sheetName, reportDate, basis = 'plan') {
       const c = row.getCell(i + 1);
       c.value = v ?? '';
       c.border = BORDER;
-      c.alignment = { vertical: 'middle', horizontal: 'left' };
+      c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === NINFO - 1 };
       if (i === 3) c.font = { bold: true, color: { argb: 'FF005BA3' } };
     });
     TS_GROUPS.forEach(g => {
@@ -949,7 +998,8 @@ async function buildBmcuBreakup(reportDate) {
       tp.id AS plan_id, tp.trip_no,
       t.tanker_number, rm.route_name,
       te.id AS execution_id,
-      COALESCE(uu2.user_id, uu1.user_id) AS entered_by,
+      uu1.user_id AS creator_login, uu1.full_name AS creator_name,
+      uu2.user_id AS updater_login, uu2.full_name AS updater_name,
       dp.name AS delivery_point,
       (SELECT MIN(teb.milk_date) FROM trip_execution_bmcus teb
         WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE) AS lifting_date
@@ -970,6 +1020,7 @@ async function buildBmcuBreakup(reportDate) {
   const execIds = tr.rows.filter(x => x.execution_id).map(x => x.execution_id);
   const notes = [];
   if (!execIds.length) return { report_date: reportDate, trips: [], notes };
+  const enteredBy = await enteredByMap(tr.rows);
 
   // Dispatch rows per BMCU — ALL non-deleted rows, including those marked
   // 'Balance Milk' / 'Internal Shifting' (their RMRD shifts must count too;
@@ -1013,13 +1064,27 @@ async function buildBmcuBreakup(reportDate) {
   const tpsRes = await query(`
     SELECT execution_id, bmcu_seq_no,
            COALESCE(SUM(qty_litres),0) AS litres, COALESCE(SUM(qty_kgs),0) AS kgs,
-           COALESCE(SUM(kg_fat),0) AS kg_fat, COALESCE(SUM(kg_snf),0) AS kg_snf,
-           STRING_AGG(remarks, '; ') FILTER (WHERE remarks IS NOT NULL AND remarks != '') AS remarks
+           COALESCE(SUM(kg_fat),0) AS kg_fat, COALESCE(SUM(kg_snf),0) AS kg_snf
     FROM trip_third_party_sales
     WHERE execution_id = ANY($1)
     GROUP BY execution_id, bmcu_seq_no`, [execIds]);
   const tpsByBlock = {};
   for (const t of tpsRes.rows) tpsByBlock[`${t.execution_id}:${t.bmcu_seq_no}`] = t;
+  // Individual sales — one line per customer inside the BMCU block (the
+  // Gross Total row keeps only the aggregate numbers above).
+  const tpsRowsRes = await query(`
+    SELECT id, execution_id, bmcu_seq_no, qty_litres, qty_kgs, fat_pct, snf_pct,
+           kg_fat, kg_snf, customer_name, remarks
+    FROM trip_third_party_sales
+    WHERE execution_id = ANY($1)
+    ORDER BY execution_id, bmcu_seq_no, id`, [execIds]);
+  const tpsRowsByBlock = {};
+  for (const s of tpsRowsRes.rows)
+    (tpsRowsByBlock[`${s.execution_id}:${s.bmcu_seq_no}`] ||= []).push({
+      customer_name: s.customer_name || null, remarks: s.remarks || null,
+      kgs: rN(s.qty_kgs), litres: rN(s.qty_litres), fat: rN(s.fat_pct), snf: rN(s.snf_pct),
+      kg_fat: rN(s.kg_fat), kg_snf: rN(s.kg_snf),
+    });
 
   // Acknowledgement totals — recorded per CHAMBER for the whole trip execution
   // at the delivery point (not per-BMCU), so this is inherently trip-level.
@@ -1125,9 +1190,9 @@ async function buildBmcuBreakup(reportDate) {
         const tps = tpsRow
           ? { litres: rN(tpsRow.litres), kgs: rN(tpsRow.kgs),
               fat: wAvg(tpsRow.kg_fat, tpsRow.kgs), snf: wAvg(tpsRow.kg_snf, tpsRow.kgs),
-              kg_fat: rN(tpsRow.kg_fat) || 0, kg_snf: rN(tpsRow.kg_snf) || 0,
-              remarks: tpsRow.remarks || null }
-          : { litres: 0, kgs: 0, fat: null, snf: null, kg_fat: 0, kg_snf: 0, remarks: null };
+              kg_fat: rN(tpsRow.kg_fat) || 0, kg_snf: rN(tpsRow.kg_snf) || 0 }
+          : { litres: 0, kgs: 0, fat: null, snf: null, kg_fat: 0, kg_snf: 0 };
+        const tps_rows = tpsRowsByBlock[`${x.execution_id}:${b.seq_no}`] || [];
         rm.litres -= parseFloat(tpsRow?.litres) || 0;
         rm.kgs    -= parseFloat(tpsRow?.kgs)    || 0;
         rm.kg_fat -= parseFloat(tpsRow?.kg_fat) || 0;
@@ -1139,7 +1204,7 @@ async function buildBmcuBreakup(reportDate) {
         };
         return {
           bmcu_code: b.bmcu_code, bmcu_name: b.bmcu_name, compartment: b.compartment,
-          dispatch: b.dispatch, rows: b.rows, rmrd, tps,
+          dispatch: b.dispatch, rows: b.rows, rmrd, tps, tps_rows,
           diff: { // Difference Dispatch Vs RMRD = Dispatch − RMRD (RMRD already net of any sale)
             kgs:    rN(b.dispatch.kgs    - rm.kgs),
             litres: rN(b.dispatch.litres - rm.litres),
@@ -1157,8 +1222,7 @@ async function buildBmcuBreakup(reportDate) {
       const gt = sum6(bmcus.map(b => b.tps)); // trip-wide subtotal of sales, for the Grand Total row
       const tps = { litres: rN(gt.litres), kgs: rN(gt.kgs),
         fat: wAvg(gt.kg_fat, gt.kgs), snf: wAvg(gt.kg_snf, gt.kgs),
-        kg_fat: rN(gt.kg_fat), kg_snf: rN(gt.kg_snf),
-        remarks: bmcus.map(b => b.tps.remarks).filter(Boolean).join('; ') || null };
+        kg_fat: rN(gt.kg_fat), kg_snf: rN(gt.kg_snf) };
       // Acknowledgement — one row per chamber (FC/MC/BC) that has data, plus
       // the Grand Total row's Acknowledgement cells = the sum across chambers.
       const ackChambers = (ackByExec[x.execution_id] || []).map(a => {
@@ -1180,7 +1244,7 @@ async function buildBmcuBreakup(reportDate) {
       };
       return {
         trip_no: x.trip_no, tanker_number: x.tanker_number, route_name: x.route_name,
-        entered_by: x.entered_by, delivery_point: x.delivery_point,
+        entered_by: enteredBy[x.execution_id] || '', delivery_point: x.delivery_point,
         lifting_date: fmtDateDisplay(x.lifting_date), bmcus, ack_chambers: ackChambers,
         grand: {
           tps, ack,
@@ -1225,7 +1289,8 @@ function addBmcuBreakupSheet(wb, data) {
   //       7-12 dispatch, 13 Shift, 14-19 RMRD, 20-24 diff, 25-30 Acknowledgement,
   //       31 blank spacer, 32-37 Third Party Sale, 38 Remarks
   ws.columns = [
-    { width: 16 }, { width: 13 }, { width: 14 }, { width: 11 }, { width: 22 }, { width: 12 },
+    { width: 28 }, // Route Name — also carries the Grand Total "Entered by: ..." text
+    { width: 13 }, { width: 14 }, { width: 11 }, { width: 22 }, { width: 12 },
     ...Array(6).fill({ width: 10 }), { width: 8 }, ...Array(6).fill({ width: 10 }),
     ...Array(5).fill({ width: 10 }), ...Array(6).fill({ width: 10 }),
     { width: 3 }, ...Array(6).fill({ width: 12 }),
@@ -1364,6 +1429,27 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
         setRemark(row.getCell(REMARKS_COL), '');
         rIdx++;
       });
+      // Third Party Sales — one row per sale/customer recorded against this
+      // BMCU, after its dispatch/shift/adjustment rows and before Gross Total.
+      // Only the TPS group and Remarks carry values; Fat/SNF are the sale's
+      // own percentages (the Gross Total row shows the weighted aggregate).
+      for (const s of b.tps_rows) {
+        const row = ws.getRow(rIdx);
+        setTxt(row.getCell(1), trip.route_name);
+        setTxt(row.getCell(2), trip.lifting_date);
+        setTxt(row.getCell(3), trip.tanker_number, { color: 'FF005BA3', bold: true });
+        setTxt(row.getCell(4), b.bmcu_code);
+        setTxt(row.getCell(5), `Sale — ${s.customer_name || 'customer not given'}`, { color: 'FF92400E', bold: true });
+        setTxt(row.getCell(6), '');
+        for (let k = 0; k < 6; k++) setNum(row.getCell(7 + k), null, { fill: 'FFF0FDF4' });
+        setTxt(row.getCell(13), '');
+        for (let k = 0; k < 6; k++) setNum(row.getCell(14 + k), null, { fill: 'FFF0F9FF' });
+        for (let k = 0; k < 5; k++) setNum(row.getCell(20 + k), null);
+        for (let k = 0; k < 6; k++) setNum(row.getCell(ACK_COL + k), null);
+        T6(s).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { fill: 'FFF8FAFC' }));
+        setRemark(row.getCell(REMARKS_COL), s.remarks);
+        rIdx++;
+      }
       // Gross Total per BMCU
       const row = ws.getRow(rIdx);
       setTxt(row.getCell(1), trip.route_name, { fill: 'FFF8FAFC' });
@@ -1379,7 +1465,8 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
       // Acknowledgement has no valid per-BMCU allocation — blank on Gross Total too.
       for (let k = 0; k < 6; k++) setNum(row.getCell(ACK_COL + k), null, { fill: 'FFF8FAFC' });
       T6(b.tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFF8FAFC' }));
-      setRemark(row.getCell(REMARKS_COL), b.tps.remarks, { fill: 'FFF8FAFC' });
+      // Sale remarks live on the per-sale rows above — not joined here.
+      setRemark(row.getCell(REMARKS_COL), '', { fill: 'FFF8FAFC' });
       rIdx++;
     }
     // Acknowledgement break-up — one row per chamber (FC/MC/BC) that actually
@@ -1403,9 +1490,11 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
       setRemark(row.getCell(REMARKS_COL), '');
       rIdx++;
     }
-    // Grand Total per trip (cell 1 carries the entered-by user id)
+    // Grand Total per trip (cell 1 carries every user who created/modified
+    // the execution as "LOGIN (Full Name); ..." — wrapped, since it can be long)
     const row = ws.getRow(rIdx);
     setTxt(row.getCell(1), trip.entered_by ? `Entered by: ${trip.entered_by}` : '', { fill: 'FFDBEAFE' });
+    row.getCell(1).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
     for (let k = 2; k <= 4; k++) setTxt(row.getCell(k), '', { fill: 'FFDBEAFE' });
     setTxt(row.getCell(5), 'Grand Total', { bold: true, fill: 'FFDBEAFE' });
     setTxt(row.getCell(6), trip.ack_chambers.length ? trip.ack_chambers.map(a => a.chamber).join('&') : '', { fill: 'FFDBEAFE' });
@@ -1416,9 +1505,8 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     D4(trip.grand.diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFDBEAFE' }));
     M6(trip.grand.ack).forEach((v, k) => setNum(row.getCell(ACK_COL + k), v, { bold: true, fill: 'FFDBEAFE' }));
     T6(trip.grand.tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFDBEAFE' }));
-    // Sale remarks are shown once, against the specific BMCU they were
-    // recorded on (the per-BMCU Gross Total row) — not repeated on this
-    // trip-level Grand Total row.
+    // Sale remarks are shown once, on each sale's own row inside its BMCU
+    // block — not repeated on this trip-level Grand Total row.
     setRemark(row.getCell(REMARKS_COL), '', { fill: 'FFDBEAFE' });
     rIdx += 2; // blank spacer row between trips
   }
@@ -1463,8 +1551,8 @@ function appendBmcuBreakupBlock(ws, data, startRow, { title = false } = {}) {
     D4(diff).forEach((v, k) => setNum(row.getCell(20 + k), v, { diff: true, fill: 'FFBFDBFE' }));
     M6(ack).forEach((v, k) => setNum(row.getCell(ACK_COL + k), v, { bold: true, fill: 'FFBFDBFE' }));
     T6(tps).forEach((v, k) => setNum(row.getCell(TPS_COL + k), v, { bold: true, fill: 'FFBFDBFE' }));
-    // Sale remarks stay on each BMCU's own Gross Total row — not repeated
-    // on this day-wide overall total.
+    // Sale remarks stay on each sale's own row — not repeated on this
+    // day-wide overall total.
     setRemark(row.getCell(REMARKS_COL), '', { fill: 'FFBFDBFE' });
     rIdx += 2;
   }
