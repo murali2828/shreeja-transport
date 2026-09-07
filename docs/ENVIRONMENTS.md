@@ -66,3 +66,25 @@ backend container starts (see `backend/Dockerfile`).
   road-distance results are cached into each environment's Distance Master, so usage
   stays within the free monthly cap. Use a test SMTP inbox in QA to avoid emailing
   real vendors during testing.
+
+## WheelsEye GPS tracking (Live Tracking page)
+
+The backend runs a poller (`backend/src/jobs/wheelseyePoll.js`) that pulls every
+tanker's current position from the WheelsEye `currentLoc` API and stores it in
+`tanker_gps_latest` / `tanker_gps_history` (migration 038). The Live Tracking page
+and the GPS column on Tanker Position read from those tables only.
+
+- **`WHEELSEYE_ACCESS_TOKEN`** must be set in the server's `.env` / `.env.qa` to
+  enable the poller; without it the backend logs one line
+  (`[wheelseye] no WHEELSEYE_ACCESS_TOKEN — tracking poller disabled`) and the page
+  shows no positions. The token is a live credential — it is read only from the
+  environment and is never logged or returned by any API. Do not commit it.
+- Tuning (all optional): `WHEELSEYE_POLL_SECONDS` (default 120, min 60),
+  `WHEELSEYE_FETCH_ADDRESS` (`true` also pulls the reverse-geocoded address; slower),
+  `WHEELSEYE_STALE_MINUTES` (default 30), `WHEELSEYE_HISTORY_DAYS` (default 90).
+- Vehicles are matched to the tanker master by registration number with spaces,
+  hyphens and case ignored. Vehicles that still match nothing appear under
+  "Not in tanker master" on the Live Tracking page — fix the tanker number in
+  Tanker Master so it matches WheelsEye.
+- Admins can trigger an immediate poll with the "Poll now" button on the page
+  (`POST /api/tracking/poll-now`); `GET /api/tracking/status` shows poller health.

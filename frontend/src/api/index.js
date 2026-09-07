@@ -123,6 +123,12 @@ export const markNonTripReturned   = (id, returned_at) => api.post(`/trip-docs/n
 export const getTankerPosition     = ()  => api.get('/trip-docs/tanker-position');
 export const getTankerPositionReport = () => api.get('/trip-docs/tanker-position/report', { responseType: 'blob' });
 
+// ── Live Tracking (WheelsEye GPS) ────────────────────────────────────────────
+export const getTrackingPositions = ()  => api.get('/tracking/positions');
+export const getTrackingHistory   = (tankerNumber, p) => api.get(`/tracking/positions/${encodeURIComponent(tankerNumber)}/history`, { params: p });
+export const getTrackingStatus    = ()  => api.get('/tracking/status');
+export const pollTrackingNow      = ()  => api.post('/tracking/poll-now');
+
 // ── Day wise Tanker Utilisation ───────────────────────────────────────────────
 export const getDayUtilisation = (p) => api.get('/reports/day-utilisation', { params: p });
 export const downloadDayUtilisationExcel = (from, to, threshold) =>

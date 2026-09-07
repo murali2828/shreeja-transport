@@ -269,6 +269,20 @@ async function buildTankerPosition() {
       ORDER BY g.tanker_id, g.issued_at DESC`)).rows;
     const ntgpBy = Object.fromEntries(ntgp.map(g => [g.tanker_id, g]));
 
+    // Latest WheelsEye GPS fix per tanker (migration 038); absent → gps: null.
+    const staleMin = Math.max(1, parseInt(process.env.WHEELSEYE_STALE_MINUTES || '30', 10) || 30);
+    const gps = (await query(`
+      SELECT tanker_id, latitude, longitude, speed, ignition, gps_time,
+             (gps_time IS NULL OR gps_time < NOW() - ($1 || ' minutes')::interval) AS is_stale,
+             (COALESCE(ignition, FALSE) AND COALESCE(speed, 0) > 2) AS is_moving
+      FROM tanker_gps_latest WHERE tanker_id IS NOT NULL`, [String(staleMin)])).rows;
+    const gpsBy = Object.fromEntries(gps.map(g => [g.tanker_id, {
+      latitude: g.latitude == null ? null : Number(g.latitude),
+      longitude: g.longitude == null ? null : Number(g.longitude),
+      speed: g.speed == null ? null : Number(g.speed),
+      ignition: g.ignition, gps_time: g.gps_time, is_stale: g.is_stale, is_moving: g.is_moving,
+    }]));
+
     // The execution team only records Gate Pass (tanker OUT) and non-trip
     // gate passes (Maintenance / Without Driver) — COA and Unloading are not
     // used, so a tanker stays 'running' from the moment it goes out, rather
@@ -301,7 +315,7 @@ async function buildTankerPosition() {
         status = ntStatus; since = ntAt; detail = ntLabel;
         location = gp.delivery_point_name || location; // issuing dairy of the gate pass
       }
-      return { tanker_number: t.tanker_number, status, since, detail, trip_no, location };
+      return { tanker_number: t.tanker_number, status, since, detail, trip_no, location, gps: gpsBy[t.id] || null };
     });
 
     const locations = {};
@@ -347,14 +361,18 @@ router.get('/tanker-position/report', authenticate, async (req, res) => {
     ws.addRow([`Tanker Position — ${built.total_tankers} total, ${built.active_tankers} active — ${fmtDateDisplay(built.last_updated)}`])
       .font = { bold: true, size: 13 };
     ws.addRow([]);
-    const head = ws.addRow(['Tanker', 'Location', 'Status', 'Since', 'Detail']);
+    const head = ws.addRow(['Tanker', 'Location', 'Status', 'Since', 'Detail', 'GPS Status', 'Last GPS']);
     head.font = { bold: true };
     ws.columns.forEach(c => { c.width = 20; });
     ws.getColumn(2).width = 26; ws.getColumn(5).width = 34;
+    const fmtIn = ts => ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    const gpsStatus = g => !g ? '' : g.is_stale ? 'Stale'
+      : g.is_moving ? `Moving · ${Math.round(g.speed || 0)} km/h` : 'Stopped';
     allRows.forEach(t => ws.addRow([
       t.tanker_number, t.location, STATUS_LABEL[t.status] || t.status,
-      t.since ? new Date(t.since).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
+      fmtIn(t.since),
       t.detail || '',
+      gpsStatus(t.gps), fmtIn(t.gps?.gps_time),
     ]));
 
     res.setHeader('Content-Disposition', `attachment; filename=tanker_position_${new Date().toISOString().slice(0,10)}.xlsx`);

@@ -21,6 +21,10 @@ nano .env
 ```
 Fill in: DB_PASSWORD, JWT_SECRET, SMTP_USER, SMTP_PASS, FRONTEND_URL
 
+Optional: `WHEELSEYE_ACCESS_TOKEN` enables the GPS tanker-tracking poller (Live
+Tracking page). Keep it only in this server `.env` — see `docs/ENVIRONMENTS.md`
+("WheelsEye GPS tracking") for the related `WHEELSEYE_*` settings.
+
 ## Step 4 - Start Everything (ONE command)
 ```bash
 docker compose up -d
