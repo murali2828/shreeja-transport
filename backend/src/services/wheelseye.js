@@ -110,7 +110,11 @@ async function syncPositions(client, list) {
        bool(row.accurate), row.location || null, gpsTime]);
     out.upserted += up.rowCount;
 
-    if (gpsTime && lat != null && lng != null) {
+    // History append: skip fixes already older than the retention window —
+    // devices whose last fix is months old are re-sent on every poll and
+    // would otherwise be inserted and pruned again every hour. The latest
+    // upsert above still runs so the UI can show "Stale · N d ago".
+    if (gpsTime && lat != null && lng != null && gpsTime.getTime() > Date.now() - retentionDays() * 86400000) {
       const h = await client.query(`
         INSERT INTO tanker_gps_history
           (vehicle_number, tanker_id, latitude, longitude, speed, ignition, angle, gps_time)
@@ -124,12 +128,18 @@ async function syncPositions(client, list) {
   return out;
 }
 
-// Drop trail points older than `days`. Returns the number of rows deleted.
+// Trail retention in days (WHEELSEYE_HISTORY_DAYS, default 90, min 1) — the
+// single parser used by both the history append and the hourly prune.
+function retentionDays(days = process.env.WHEELSEYE_HISTORY_DAYS) {
+  return Math.max(1, parseInt(days, 10) || 90);
+}
+
+// Drop trail points older than the retention window. Returns rows deleted.
 async function pruneHistory(days) {
-  const d = Math.max(1, parseInt(days, 10) || 90);
+  const d = retentionDays(days);
   const r = await query(
     `DELETE FROM tanker_gps_history WHERE gps_time < NOW() - ($1 || ' days')::interval`, [String(d)]);
   return r.rowCount;
 }
 
-module.exports = { normalizeVehicle, fetchAllCurrentLoc, syncPositions, pruneHistory };
+module.exports = { normalizeVehicle, fetchAllCurrentLoc, syncPositions, pruneHistory, retentionDays };

@@ -82,6 +82,14 @@ and the GPS column on Tanker Position read from those tables only.
 - Tuning (all optional): `WHEELSEYE_POLL_SECONDS` (default 120, min 60),
   `WHEELSEYE_FETCH_ADDRESS` (`true` also pulls the reverse-geocoded address; slower),
   `WHEELSEYE_STALE_MINUTES` (default 30), `WHEELSEYE_HISTORY_DAYS` (default 90).
+- Trip playback / analysis tuning (all optional): `TRACKING_STOP_RADIUS_M` (default 150 —
+  consecutive GPS points within this radius while not moving form a stop),
+  `TRACKING_STOP_MIN_MINUTES` (default 5 — shorter stops are ignored),
+  `TRACKING_GEOFENCE_M` (default 300 — a stop this close to a planned BMCU/plant
+  counts as a visit; anything else is an "unplanned stop"). Used by
+  `GET /api/tracking/trip/:executionId` (+ `/report`) and the fleet report
+  `GET /api/tracking/report?from&to` (max 31 days). GPS history only exists from
+  the first poller run (07-09-2026); earlier trips show the planned route only.
 - Vehicles are matched to the tanker master by registration number with spaces,
   hyphens and case ignored. Vehicles that still match nothing appear under
   "Not in tanker master" on the Live Tracking page — fix the tanker number in
