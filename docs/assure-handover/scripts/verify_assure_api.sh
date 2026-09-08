@@ -32,8 +32,11 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # get <name> <path-with-query> [key]  → writes $TMP/<name>.body, echoes HTTP status
 get() {
-  local name="$1" path="$2" key="${3:-$ASSURE_API_KEY}"
-  curl -sS -o "$TMP/$name.body" -w '%{http_code}' -H "X-Assure-Key: $key" "$BASE$path" 2>/dev/null || echo 000
+  local name="$1" path="$2" key="${3-$ASSURE_API_KEY}"
+  local hdr=()
+  # A third argument of "" (explicit empty) means "send no header at all".
+  [ -n "$key" ] && hdr=(-H "X-Assure-Key: $key")
+  curl -sS -o "$TMP/$name.body" -w '%{http_code}' "${hdr[@]}" "$BASE$path" 2>/dev/null || echo 000
 }
 # py <name> <python expression over j (parsed body)> → prints result
 py() { python3 -c "import json,sys; j=json.load(open(sys.argv[1])); print($2)" "$TMP/$1.body" 2>/dev/null; }
