@@ -86,6 +86,9 @@ app.use('/api/change-requests', require('./routes/changeRequests'));
 app.use('/api/trip-docs', require('./routes/tripDocs'));
 app.use('/api/roles',      require('./routes/roles'));
 app.use('/api/tracking',   require('./routes/tracking'));
+// Shreeja Assure read-only integration API (X-Assure-Key auth, own per-IP
+// limiter inside the router) — docs/assure-handover/API_SPEC_v1.md
+app.use('/api/integrations/assure', require('./routes/integrations'));
 
 // ─── 404 for unmatched API routes ─────────────────────────────────────────────
 app.use('/api/*', (_req, res) => res.status(404).json({ error: 'API route not found' }));

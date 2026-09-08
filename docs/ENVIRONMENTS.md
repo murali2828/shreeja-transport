@@ -96,3 +96,25 @@ and the GPS column on Tanker Position read from those tables only.
   Tanker Master so it matches WheelsEye.
 - Admins can trigger an immediate poll with the "Poll now" button on the page
   (`POST /api/tracking/poll-now`); `GET /api/tracking/status` shows poller health.
+
+## Assure integration API (`/api/integrations/assure/*`)
+
+Read-only JSON feed (trips / loadings / receipts) polled by Shreeja Assure for milk
+reconciliation. Contract: `docs/assure-handover/API_SPEC_v1.md`; code:
+`backend/src/routes/integrations.js`; indexes: migration 039.
+
+- **`ASSURE_API_KEY`** enables the endpoints. Generate one with
+  `openssl rand -hex 32`, put it in the server's `.env` / `.env.qa`, restart the
+  backend, and hand the same value to the Assure team (their `TMS_API_KEY`). With no
+  key set every call answers `503 FEATURE_DISABLED`. The key is only ever compared
+  (constant-time) — never logged or returned.
+- **Rotation** without downtime: set `ASSURE_API_KEY_NEXT` to the new key and restart
+  (both keys are accepted while both are set); once Assure has switched, move the new
+  value into `ASSURE_API_KEY`, clear `_NEXT`, restart.
+- **`ASSURE_ALLOWED_IPS`** (optional, comma list): restrict callers to the Assure
+  QA/production host IPs — anything else gets `403 FORBIDDEN` even with a valid key.
+- **`TMS_GIT_SHA`** (optional): reported by `GET /ping` as `tms_version`.
+- Per-IP limit 120 requests/minute (`429 RATE_LIMITED`). Every call logs one line
+  `[assure] GET /trips key=primary ip=… rows=… status=… ms=…`.
+- Acceptance check from any machine that can reach the host:
+  `TMS_URL=https://qatms.shreejamilk.com ASSURE_API_KEY=… docs/assure-handover/scripts/verify_assure_api.sh`

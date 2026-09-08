@@ -38,32 +38,30 @@ Design choices:
     `applyExecutionData`'s ack insert). See `gaps.md`.
   - `trip_plans.updated_at` — already exists (`001_base_schema.sql:116`).
 
-## Proposed REST endpoint (not built — description only)
+## REST endpoint — IMPLEMENTED
 
-Following this codebase's existing conventions (see `backend/src/middleware/auth.js`
-for `authenticate`/`authorize`/`authorizeModule` and the route style in
-`backend/src/routes/*.js`):
+The endpoint is built and mounted at **`/api/integrations/assure/*`** on both the QA
+host (`qatms.shreejamilk.com`) and, after promotion of the `qa` branch, the production
+host (`tms.shreejamilk.com`):
 
 ```
+GET /api/integrations/assure/ping
 GET /api/integrations/assure/trips
+GET /api/integrations/assure/loadings
 GET /api/integrations/assure/receipts
 ```
-under the app's existing `/api` prefix, each:
-- Gated by `authenticate` (JWT bearer) + a new role or module permission (e.g. an
-  `authorizeModule('reports')`-style check, or a dedicated API-key auth path if Assure
-  should not need a human TMS login at all — this is a design choice for whoever
-  builds the endpoint, not decided here).
-- Filters: `from_date` / `to_date` (maps to `plan_for_date` or `execution_date`
-  range), `updated_since` (ISO timestamp — maps to `updated_at` on the underlying
-  view/table for incremental pulls).
-- Pagination: `limit` + either an offset or a keyset cursor (e.g. `after_id`) — given
-  this codebase's existing patterns (`billing.js` etc. use plain SQL with explicit
-  params, no generic pagination helper found), a keyset cursor on `id` ordered by
-  `updated_at, id` would be the safest choice for a growing table.
-- Response: rows from `assure_trips_v` / `assure_receipts_v` respectively, JSON.
 
-This is a proposal for a NEW route file (e.g. `backend/src/routes/integrations.js`) —
-no such file exists today; nothing here has been implemented.
+The contract (auth header, query parameters, envelope, every column name) is
+**`API_SPEC_v1.md`** in this folder — written by Assure, implemented verbatim in
+`backend/src/routes/integrations.js`. Auth is the shared-secret header `X-Assure-Key`
+(`ASSURE_API_KEY` / `ASSURE_API_KEY_NEXT` in the server env — see
+`docs/ENVIRONMENTS.md`), not a TMS login. The queries are derived from the reference
+SQL in `scripts/export_samples.sh`, so for the same date window the endpoints return
+exactly the rows the sample CSVs held; `scripts/verify_assure_api.sh` checks that
+plus the rest of the spec's §9 acceptance list against a live host.
+
+The proposed views in `sql/` remain unapplied — the endpoints query the tables
+directly.
 
 ## Network placement
 **Unknown from this environment.** Whether Assure would reach this endpoint over the
