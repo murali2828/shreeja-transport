@@ -17,6 +17,20 @@ const STATUS_META = {
   idle:           { label: 'Idle / Available',        color: '#6b7280', bg: 'bg-gray-50',    text: 'text-gray-600' },
 };
 const fmtTs = ts => ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+const ago = ts => {
+  if (!ts) return '—';
+  const m = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 60000));
+  if (m < 60) return `${m} min ago`;
+  if (m < 48 * 60) return `${Math.round(m / 60)} h ago`;
+  return `${Math.round(m / 1440)} d ago`;
+};
+// WheelsEye GPS cell: "Moving · 42 km/h · 3 min ago", "Stopped · 1 h ago", "Stale · 2 d ago" (amber) or —
+function GpsCell({ gps }) {
+  if (!gps) return <span className="text-gray-400">—</span>;
+  if (gps.is_stale) return <span className="text-amber-600 font-medium">Stale · {ago(gps.gps_time)}</span>;
+  if (gps.is_moving) return <span className="text-green-700">Moving · {Math.round(gps.speed || 0)} km/h · {ago(gps.gps_time)}</span>;
+  return <span className="text-gray-600">Stopped · {ago(gps.gps_time)}</span>;
+}
 
 export default function TankerPosition() {
   const [loc, setLoc]       = useState(null);   // selected location name
@@ -134,6 +148,7 @@ export default function TankerPosition() {
                   <th className="table-th">Status</th>
                   <th className="table-th">Since</th>
                   <th className="table-th">Detail</th>
+                  <th className="table-th">GPS</th>
                 </tr>
               </thead>
               <tbody>
@@ -149,6 +164,7 @@ export default function TankerPosition() {
                       </td>
                       <td className="table-td whitespace-nowrap">{fmtTs(t.since)}</td>
                       <td className="table-td text-gray-600">{t.detail || '—'}</td>
+                      <td className="table-td whitespace-nowrap"><GpsCell gps={t.gps}/></td>
                     </tr>
                   );
                 })}

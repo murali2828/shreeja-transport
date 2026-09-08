@@ -106,6 +106,7 @@ export default function Sidebar({ collapsed = false }) {
       {canExecution && (
         <NavSection label={collapsed ? '' : 'Execution'}>
           {ni('/execution',        <Play size={15}/>,        'Active Trips')}
+          {ni('/tracking',         <Navigation size={15}/>,  'Live Tracking')}
           {ni('/execution/closed', <CheckSquare size={15}/>, 'Closed Trips')}
           {ni('/execution/gate-pass', <Play size={15}/>, 'Other Gate Pass')}
           {/* Tanker Position: hardcoded admin-or-whitelist special case, left untouched */}

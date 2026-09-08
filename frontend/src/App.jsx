@@ -38,6 +38,7 @@ import ClosedTrips          from './pages/execution/ClosedTrips';
 import Approvals            from './pages/execution/Approvals';
 import NonTripGatePass      from './pages/execution/NonTripGatePass';
 import TankerPosition       from './pages/execution/TankerPosition';
+import LiveTracking         from './pages/execution/LiveTracking';
 
 // Reports
 import DailyTSReport   from './pages/reports/DailyTSReport';
@@ -144,6 +145,9 @@ function AppRoutes() {
         <Route path="execution/closed"    element={<ClosedTrips/>}/>
         <Route path="execution/gate-pass" element={<NonTripGatePass/>}/>
         <Route path="tanker-position"     element={<TankerPosition/>}/>
+        <Route path="tracking"            element={
+          <ProtectedRoute roles={['admin','planner','executor','biller','viewer']}><LiveTracking/></ProtectedRoute>
+        }/>
         <Route path="approvals"           element={<Approvals/>}/>
         <Route path="execution/:id"       element={<ExecutionForm/>}/>
         <Route path="execution/:id/acknowledge" element={<AcknowledgementForm/>}/>

@@ -1100,6 +1100,11 @@ export default function ExecutionForm() {
           };
           const today = new Date().toISOString().slice(0, 10);
           return (<>
+            <button onClick={() => navigate(`/tracking?execution=${id}`)}
+              title="Planned vs actual route, stops and waiting time on the Live Tracking map"
+              className="btn-secondary flex items-center gap-1 text-xs px-2.5 py-1.5">
+              <Navigation size={12}/> View on map
+            </button>
             {/* Tanker OUT — applies to the Gate Pass */}
             <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
                    title="Tanker OUT — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click Gate Pass.">
