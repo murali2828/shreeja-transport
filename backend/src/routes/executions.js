@@ -105,6 +105,32 @@ router.get('/', authenticate, async (req, res) => {
 // milk actually recorded (dispatch qty > 0 or RMRD > 0), and the missed list
 // split into planned-but-not-collected vs not-planned.
 // NOTE: must be registered before GET /:id.
+// Remark for a missed BMCU on a date (Active Trips → BMCUs Missed list).
+// Fixed vocabulary so the day sheet / analytics can group on it.
+const MISSED_REMARKS = ['BMCU Break down', '3 shifts planning'];
+router.put('/coverage/missed-remark', authenticate, authorizeOrModule('execution', 'admin','planner','executor','biller'), async (req, res) => {
+  const { date, bmcu_id, remark } = req.body || {};
+  if (!date || !bmcu_id) return res.status(400).json({ error: 'date and bmcu_id required' });
+  if (remark && !MISSED_REMARKS.includes(remark))
+    return res.status(400).json({ error: `remark must be one of: ${MISSED_REMARKS.join(', ')}` });
+  try {
+    if (!remark) {
+      await query('DELETE FROM bmcu_missed_remarks WHERE bmcu_id=$1 AND missed_date=$2', [bmcu_id, date]);
+      return res.json({ ok: true, remark: null });
+    }
+    await query(
+      `INSERT INTO bmcu_missed_remarks (bmcu_id, missed_date, remark, updated_by)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (bmcu_id, missed_date)
+       DO UPDATE SET remark=EXCLUDED.remark, updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
+      [bmcu_id, date, remark, req.user?.id || null]);
+    res.json({ ok: true, remark });
+  } catch (err) {
+    console.error('missed-remark error:', err);
+    res.status(500).json({ error: 'Failed to save remark' });
+  }
+});
+
 router.get('/coverage', authenticate, async (req, res) => {
   const date = req.query.date;
   if (!date) return res.status(400).json({ error: 'date required' });
@@ -203,9 +229,13 @@ router.get('/coverage', authenticate, async (req, res) => {
       WHERE b.is_active=TRUE
       ORDER BY (pl.trip_no IS NULL), b.bmcu_code`, [date]);
 
+    const remarksRes = await query(
+      'SELECT bmcu_id, remark FROM bmcu_missed_remarks WHERE missed_date=$1', [date]);
+    const remarkByBmcu = Object.fromEntries(remarksRes.rows.map(r => [r.bmcu_id, r.remark]));
     const missed = bmcusRes.rows
       .filter(b => !collected.has(b.id))
       .map(b => ({
+        bmcu_id: b.id, remark: remarkByBmcu[b.id] || null,
         bmcu_code: b.bmcu_code, bmcu_name: b.bmcu_name, district: b.district,
         planned: b.trip_no != null, trip_no: b.trip_no,
         tanker_number: b.tanker_number, exec_status: b.exec_status,

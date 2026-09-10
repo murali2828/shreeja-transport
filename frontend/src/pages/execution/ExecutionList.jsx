@@ -4,9 +4,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getPlans, getExecutions, createExecution, cancelExecution, getExecutionCoverage } from '../../api/index';
+import { getPlans, getExecutions, createExecution, cancelExecution, getExecutionCoverage, setMissedBmcuRemark } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
 import { fmtDate } from '../../utils/date';
+
+// Fixed remark vocabulary for missed BMCUs — must match MISSED_REMARKS in backend/src/routes/executions.js
+const MISSED_REMARK_OPTIONS = ['BMCU Break down', '3 shifts planning'];
 
 // Same thresholds/colours as the Trip Plans page's day utilisation card.
 const utilColor  = v => v == null ? '#9ca3af' : v >= 80 ? '#22c55e' : v >= 60 ? '#f59e0b' : '#ef4444';
@@ -18,10 +21,22 @@ const nL         = v => (parseFloat(v) || 0).toLocaleString('en-IN', { maximumFr
 // BMCUs collected, BMCUs missed (expandable).
 function CoveragePanel({ date }) {
   const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
   const { data: cov } = useQuery({
     queryKey: ['exec-coverage', date],
     queryFn:  () => getExecutionCoverage(date).then(r => r.data),
     refetchInterval: 60_000, // live tracker during the day
+  });
+  const remarkMut = useMutation({
+    mutationFn: ({ bmcu_id, remark }) => setMissedBmcuRemark({ date, bmcu_id, remark: remark || null }),
+    onMutate: async ({ bmcu_id, remark }) => {
+      // Optimistic: patch the cached row so the select doesn't snap back before refetch
+      qc.setQueryData(['exec-coverage', date], old => old && ({
+        ...old, missed: (old.missed || []).map(m => m.bmcu_id === bmcu_id ? { ...m, remark: remark || null } : m),
+      }));
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['exec-coverage', date] }),
+    onError: e => { toast.error(e.response?.data?.error || 'Could not save remark'); qc.invalidateQueries({ queryKey: ['exec-coverage', date] }); },
   });
   if (!cov) return null;
   const t = cov.trips || {};
@@ -94,6 +109,7 @@ function CoveragePanel({ date }) {
                   <th className="table-th">Name</th>
                   <th className="table-th">District</th>
                   <th className="table-th">Planned on</th>
+                  <th className="table-th">Remarks</th>
                   <th className="table-th">Trip Status</th>
                 </tr>
               </thead>
@@ -107,6 +123,14 @@ function CoveragePanel({ date }) {
                       {m.planned
                         ? <span className="text-amber-700">Trip #{m.trip_no} — {m.tanker_number || ''}</span>
                         : <span className="text-red-600 font-medium">not planned</span>}
+                    </td>
+                    <td className="table-td">
+                      <select className="input py-0.5 text-xs w-44"
+                        value={m.remark || ''}
+                        onChange={e => remarkMut.mutate({ bmcu_id: m.bmcu_id, remark: e.target.value })}>
+                        <option value="">— Select —</option>
+                        {MISSED_REMARK_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
                     </td>
                     <td className="table-td text-gray-600">{m.planned ? (m.exec_status || '').replace('_', ' ') : '—'}</td>
                   </tr>
