@@ -13,6 +13,7 @@ const express = require('express');
 const router  = express.Router();
 const { query } = require('../config/db');
 const { authenticate } = require('../middleware/auth');
+const { saleTankerSql, saleTankerNumberSql } = require('../utils/saleTanker');
 
 const KG = 1.0285;
 // Common query-filter parsing: [from, to, delivery_point_id, route_name, tanker_number]
@@ -34,12 +35,18 @@ const baseTripsCte = `
            COALESCE(te.actual_km, te.calculated_km, 0) AS km,
            COALESCE(t.per_km_rate,0) * COALESCE(te.actual_km, te.calculated_km, 0) AS trip_cost,
            rm.route_name, dp.name AS delivery_point,
-           EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id=te.id) AS has_ack
+           tp.created_by AS planner_id, pu.full_name AS planner_name,
+           COALESCE(tp.expected_total_qty, 0) AS planned_litres,
+           EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id=te.id) AS has_ack,
+           -- Sale tanker (milk sold, not delivered to a plant). Volume / TS
+           -- panels keep these trips; UTILISATION figures must skip them.
+           ${saleTankerSql('tp', 't')} AS is_sale
     FROM trip_plans tp
     JOIN trip_executions te ON te.trip_plan_id = tp.id
     LEFT JOIN tankers t          ON t.id  = tp.tanker_id
     LEFT JOIN route_masters rm   ON rm.id = tp.route_id
     LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
+    LEFT JOIN users pu           ON pu.id = tp.created_by
     WHERE tp.plan_for_date BETWEEN $1 AND $2
       AND tp.status NOT IN ('cancelled','deleted')
       AND ($3::int IS NULL OR tp.delivery_point_id = $3::int)
@@ -85,8 +92,10 @@ const baseTripsCte = `
     GROUP BY e.execution_id
   ),
   shift_ded AS (
-    -- Internal shifting: milk added to the receiving trip above must be
-    -- deducted from the trip carrying the SOURCE plant (prefer the same trip).
+    -- Internal shifting (Chilled Milk only — legacy NULL category counts as
+    -- chilled): milk added to the receiving trip above must be deducted from
+    -- the trip carrying the SOURCE plant (prefer the same trip). Raw Milk
+    -- shifting is added at the receiver only; no source-side deduction.
     SELECT tgt.execution_id,
            SUM(e.qty_litres) AS litres,
            SUM(e.qty_litres * ${KG}) AS kgs,
@@ -104,6 +113,7 @@ const baseTripsCte = `
       LIMIT 1
     ) tgt ON TRUE
     WHERE e.kind='internal_shifting' AND e.qty_litres IS NOT NULL
+      AND COALESCE(e.category,'Chilled Milk') <> 'Raw Milk'
       AND e.execution_id IN (SELECT execution_id FROM trips)
     GROUP BY tgt.execution_id
   ),
@@ -261,7 +271,8 @@ async function buildSummary(params) {
         GROUP BY pb.bmcu_id
       ),
       bm_shift_ded AS (
-        -- Internal shifting deducts from the SOURCE BMCU's RMRD.
+        -- Chilled Milk internal shifting deducts from the SOURCE BMCU's RMRD
+        -- (legacy NULL category = chilled). Raw Milk shifting never does.
         SELECT e.source_bmcu_id AS bmcu_id,
                SUM(e.qty_litres) AS litres, SUM(e.qty_litres * ${KG}) AS kgs,
                SUM(e.qty_litres * ${KG} * COALESCE(e.fat_pct,0)/100) AS kg_fat,
@@ -270,6 +281,7 @@ async function buildSummary(params) {
         JOIN trip_execution_bmcus pb
           ON pb.execution_id=e.execution_id AND pb.seq_no=e.bmcu_seq_no AND pb.is_deleted=FALSE
         WHERE e.kind='internal_shifting' AND e.qty_litres IS NOT NULL
+          AND COALESCE(e.category,'Chilled Milk') <> 'Raw Milk'
           AND e.source_bmcu_id IS NOT NULL
           AND e.execution_id IN (SELECT execution_id FROM trips)
         GROUP BY e.source_bmcu_id
@@ -491,6 +503,8 @@ router.get('/alerts', authenticate, async (req, res) => {
 // used as fallback for unacked trips), trips per active day. Includes tankers
 // with ZERO trips so unused fleet is visible. Inactive (retired/sold) tankers
 // are excluded so they don't inflate the Unused count every period.
+// Sale-tanker trips (planner flag OR "SALE…" tanker) are excluded from every
+// figure here, and the "SALE…" placeholder tanker is not a fleet vehicle.
 router.get('/utilisation', authenticate, async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
@@ -510,7 +524,7 @@ router.get('/utilisation', authenticate, async (req, res) => {
                SUM(ack_litres)  FILTER (WHERE has_ack) AS acked_litres,
                SUM(disp_litres) FILTER (WHERE NOT has_ack) AS unacked_disp_litres,
                SUM(km) AS km
-        FROM per_trip GROUP BY tanker_id
+        FROM per_trip WHERE NOT is_sale GROUP BY tanker_id
       ),
       maint AS (
         SELECT tanker_id, SUM(GREATEST(0, EXTRACT(EPOCH FROM (
@@ -534,6 +548,7 @@ router.get('/utilisation', authenticate, async (req, res) => {
       LEFT JOIN per_tanker pt ON pt.tanker_id = t.id
       LEFT JOIN maint m ON m.tanker_id = t.id
       WHERE t.is_active = TRUE
+        AND NOT ${saleTankerNumberSql('t')}
         AND ($5::text IS NULL OR t.tanker_number = $5::text)
       ORDER BY t.tanker_number`, params);
 
@@ -566,6 +581,7 @@ router.get('/utilisation', authenticate, async (req, res) => {
              SUM(km) AS km
       FROM per_trip
       WHERE route_name IS NOT NULL AND COALESCE(capacity_litres,0) > 0
+        AND NOT is_sale
       GROUP BY route_name`, params);
     const routeRows = rr.rows.map(x => ({
       route_name: x.route_name, trips: x.trips, tankers: x.tankers,
@@ -573,6 +589,39 @@ router.get('/utilisation', authenticate, async (req, res) => {
       km: rN(x.km, 1),
       fill_pct: parseFloat(x.capacity_l) > 0 ? rN(parseFloat(x.filled_l) / parseFloat(x.capacity_l) * 100, 1) : null,
     })).sort((a, b) => (a.fill_pct ?? 0) - (b.fill_pct ?? 0));
+
+    // Planner utilisation: how well each planner filled the tankers they
+    // planned. Planned fill = expected qty ÷ capacity (what the planner
+    // committed to); actual fill = ack qty (dispatch for unacked trips) ÷
+    // capacity. Sale tankers excluded, like every other utilisation figure.
+    const pr = await query(`WITH ${baseTripsCte}
+      SELECT planner_id, COALESCE(planner_name, 'Unknown') AS planner_name,
+             COUNT(*)::int AS trips,
+             COUNT(DISTINCT plan_for_date)::int AS days,
+             COUNT(DISTINCT tanker_id)::int AS tankers,
+             SUM(capacity_litres) AS capacity_l,
+             SUM(planned_litres) AS planned_l,
+             SUM(CASE WHEN has_ack THEN ack_litres ELSE disp_litres END) AS filled_l,
+             COUNT(*) FILTER (WHERE COALESCE(capacity_litres,0) > 0
+               AND (CASE WHEN has_ack THEN ack_litres ELSE disp_litres END) / capacity_litres >= 0.8)::int AS trips_80,
+             SUM(km) AS km
+      FROM per_trip
+      WHERE COALESCE(capacity_litres,0) > 0 AND NOT is_sale
+      GROUP BY planner_id, planner_name`, params);
+    const plannerRows = pr.rows.map(x => {
+      const cap = parseFloat(x.capacity_l) || 0;
+      return {
+        planner_id: x.planner_id, planner_name: x.planner_name,
+        trips: x.trips, days: x.days, tankers: x.tankers,
+        capacity_litres: rN(cap), planned_litres: rN(x.planned_l), filled_litres: rN(x.filled_l),
+        planned_fill_pct: cap > 0 ? rN(parseFloat(x.planned_l) / cap * 100, 1) : null,
+        actual_fill_pct:  cap > 0 ? rN(parseFloat(x.filled_l) / cap * 100, 1) : null,
+        trips_per_day: x.days > 0 ? rN(x.trips / x.days, 1) : null,
+        trips_80_pct: x.trips > 0 ? rN(x.trips_80 / x.trips * 100, 0) : null,
+        km: rN(x.km, 1),
+      };
+    }).sort((a, b) => (b.actual_fill_pct ?? -1) - (a.actual_fill_pct ?? -1))
+      .map((r, i) => ({ ...r, rank: i + 1 }));
 
     // Fleet KPIs (capacity-weighted fill over tankers that ran)
     const ran = rows.filter(x => x.trips > 0 && x.capacity_litres > 0);
@@ -593,6 +642,8 @@ router.get('/utilisation', authenticate, async (req, res) => {
         least_utilised: least ? { tanker_number: least.tanker_number, fill_pct: least.avg_fill_pct } : null,
       },
       routes: routeRows,
+      planners: plannerRows,
+      top_planner: plannerRows[0] || null,
       route_extremes: {
         highest: routeRows.length ? routeRows[routeRows.length - 1] : null,
         lowest:  routeRows.length ? routeRows[0] : null,

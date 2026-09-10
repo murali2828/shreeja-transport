@@ -577,11 +577,14 @@ export default function Analytics() {
       />
 
       {/* Tanker utilisation — fill % on ACK quantity */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <Kpi label="Top Planner" accent={C.gain}
+             value={util?.top_planner?.planner_name || '—'}
+             sub={util?.top_planner ? `${nf(util.top_planner.actual_fill_pct, 1)} % actual fill · ${nf(util.top_planner.trips)} trips` : ''} />
         <Kpi label="Fleet Capacity Utilisation" accent={fillColor(util?.fleet?.avg_fill_pct)}
              color={fillColor(util?.fleet?.avg_fill_pct)}
              value={util?.fleet?.avg_fill_pct != null ? `${nf(util.fleet.avg_fill_pct, 1)} %` : '—'}
-             sub="Ack qty vs capacity, trip-weighted" />
+             sub="Ack qty vs capacity, trip-weighted · sale tankers excluded" />
         <Kpi label="Most Utilised Tanker" accent={C.gain}
              value={util?.fleet?.most_utilised?.tanker_number || '—'}
              sub={util?.fleet?.most_utilised ? `${nf(util.fleet.most_utilised.fill_pct, 1)} % avg fill` : ''} />
@@ -632,6 +635,31 @@ export default function Analytics() {
         </div>
       )}
 
+      {/* Planner leaderboard — who fills the tankers best */}
+      <LeaderTable
+        title="Planner Utilisation (tanker fill % by planner · best first)"
+        accent={C.gain}
+        note="Per planner over the period · Planned fill = planned qty ÷ tanker capacity (the commitment) · Actual fill = acknowledged qty (dispatch for unacked trips) ÷ capacity · ≥80% trips = share of trips that reached 80% fill · sale tankers excluded"
+        rows={util?.planners || []}
+        defaultSort={{ key: 'actual_fill_pct', dir: 'desc' }}
+        cols={[
+          { key: 'rank', label: '#', right: true },
+          { key: 'planner_name', label: 'Planner' },
+          { key: 'trips', label: 'Trips', right: true },
+          { key: 'days', label: 'Days', right: true },
+          { key: 'trips_per_day', label: 'Trips / Day', right: true, fmt: v => nf(v, 1) },
+          { key: 'tankers', label: 'Tankers Used', right: true },
+          { key: 'capacity_litres', label: 'Capacity (L)', right: true, fmt: v => nf(v) },
+          { key: 'planned_litres', label: 'Planned (L)', right: true, fmt: v => nf(v) },
+          { key: 'filled_litres', label: 'Milk Carried (L)', right: true, fmt: v => nf(v) },
+          { key: 'planned_fill_pct', label: 'Planned Fill %', right: true,
+            fmt: v => <span style={{ color: fillColor(v), fontWeight: 600 }}>{v == null ? '—' : nf(v, 1) + ' %'}</span> },
+          { key: 'actual_fill_pct', label: 'Actual Fill %', right: true,
+            fmt: v => <span style={{ color: fillColor(v), fontWeight: 700 }}>{v == null ? '—' : nf(v, 1) + ' %'}</span> },
+          { key: 'trips_80_pct', label: '≥80% Trips', right: true, fmt: v => v == null ? '—' : nf(v) + ' %' },
+        ]}
+      />
+
       <LeaderTable
         title="Route Utilisation (fill % of tanker capacity · lowest first)"
         accent={C.amber}
@@ -654,7 +682,7 @@ export default function Analytics() {
       <LeaderTable
         title="Tanker Utilisation"
         accent={C.violet}
-        note={`Fill % = acknowledged qty ÷ capacity per trip (dispatch stands in for unacked trips) · ${nf(util?.period_days)} day period · click a tanker for its trips`}
+        note={`Fill % = acknowledged qty ÷ capacity per trip (dispatch stands in for unacked trips) · sale-tanker trips excluded · ${nf(util?.period_days)} day period · click a tanker for its trips`}
         rows={util?.tankers || []}
         defaultSort={{ key: 'avg_fill_pct', dir: 'asc' }}
         onRowClick={r => r.trips > 0 && setDrill({ type: 'tanker', value: r.tanker_number, label: `Trips of tanker ${r.tanker_number}` })}

@@ -12,6 +12,7 @@ const express = require('express');
 const router  = express.Router();
 const { pool } = require('../config/db');
 const { authenticate, authorizeOrModule } = require('../middleware/auth');
+const { saleTankerSql, saleTankerNumberSql } = require('../utils/saleTanker');
 const {
   buildDistanceMap, makeResolver, nodeKey,
   nearestNeighbourOrder, computeRouteKm, clarkeWrightSavings,
@@ -55,9 +56,11 @@ router.post('/run', authenticate, authorizeOrModule('planning', 'admin', 'planne
       return res.status(400).json({ error: `BMCUs not found: ${missingBmcus.map(b=>b.bmcu_id).join(', ')}` });
     }
 
-    // 3. Load active tankers (rate_per_km_bmcu is the maintained collection rate)
+    // 3. Load active tankers (rate_per_km_bmcu is the maintained collection rate).
+    //    The "SALE…" placeholder is not a fleet vehicle — never assign it.
     const tankerRes = await client.query(
-      'SELECT id, tanker_number, capacity_litres, per_km_rate, rate_per_km_bmcu FROM tankers WHERE is_active=TRUE ORDER BY capacity_litres DESC'
+      `SELECT id, tanker_number, capacity_litres, per_km_rate, rate_per_km_bmcu FROM tankers
+       WHERE is_active=TRUE AND NOT ${saleTankerNumberSql('tankers')} ORDER BY capacity_litres DESC`
     );
     if (!tankerRes.rows.length) return res.status(400).json({ error: 'No active tankers' });
     const tankers = tankerRes.rows;
@@ -428,8 +431,10 @@ router.get('/compare', authenticate, authorizeOrModule('planning', 'admin', 'pla
               COALESCE(SUM(expected_total_qty),0)::numeric AS total_qty,
               COALESCE(SUM(expected_km),0)::numeric        AS total_km,
               COALESCE(SUM(total_cost),0)::numeric         AS total_cost,
-              ROUND(AVG(expected_utilization_pct)::numeric,1) AS avg_utilization
-       FROM trip_plans WHERE plan_for_date=$1 AND status != 'cancelled'`, [plan_for_date]
+              ROUND((AVG(tp.expected_utilization_pct) FILTER (WHERE NOT ${saleTankerSql('tp', 't')}))::numeric,1) AS avg_utilization
+       FROM trip_plans tp
+       LEFT JOIN tankers t ON t.id = tp.tanker_id
+       WHERE tp.plan_for_date=$1 AND tp.status != 'cancelled'`, [plan_for_date]
     );
     const optimized = await pool.query(
       `SELECT result_trip_count, input_total_qty, result_total_km, result_total_cost,

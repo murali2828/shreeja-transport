@@ -14,6 +14,15 @@ const STATUS_STYLE = {
   rejected: 'bg-red-100 text-red-700',
 };
 
+// "BMCU #2 Internal Shifting (Chilled Milk)" — legacy shifting rows with no
+// category are Chilled Milk.
+const ENTRY_KIND_LABELS = { balance_milk: 'Balance Milk', new_mpp: 'New MPP', internal_shifting: 'Internal Shifting' };
+function entryRowLabel(r) {
+  if (!r) return 'BMCU #?';
+  const cat = r.kind === 'internal_shifting' ? (r.category || 'Chilled Milk') : r.category;
+  return `BMCU #${r.bmcu_seq_no} ${ENTRY_KIND_LABELS[r.kind] || r.kind || ''}${cat ? ` (${cat})` : ''}`;
+}
+
 // Field-level diff between snapshot and proposed changes (mirrors the email logic).
 function buildDiff(snapshot, changes) {
   const sections = [];
@@ -48,7 +57,7 @@ function buildDiff(snapshot, changes) {
     [{ key: 'rmrd_qty', label: 'RMRD Qty' }, { key: 'rmrd_fat_pct', label: 'RMRD Fat%' },
      { key: 'rmrd_snf_pct', label: 'RMRD SNF%' }]);
   sec('Balance / MPP / Shifting', snapshot?.entries, changes?.entries,
-    r => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`, r => `BMCU #${r?.bmcu_seq_no} ${r?.kind || ''}`,
+    r => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`, entryRowLabel,
     [{ key: 'category', label: 'Category' }, { key: 'qty_litres', label: 'Qty L' },
      { key: 'fat_pct', label: 'Fat%' }, { key: 'snf_pct', label: 'SNF%' },
      { key: 'remarks', label: 'Remarks' }]);

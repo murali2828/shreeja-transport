@@ -20,6 +20,48 @@ const DESCRIPTIONS = ['RMRD', 'Balance Milk', 'Internal Shifting'];
 const CHAMBERS     = ['FC', 'MC', 'BC'];
 const SHIFTS       = ['AM', 'PM'];
 const BALANCE_CATEGORIES = ['Left Over milk', 'Lifted milk'];
+// Internal Shifting types. Chilled Milk = today's behaviour (added at the
+// receiver, deducted from the source plant's RMRD); Raw Milk is added at the
+// receiver only. Legacy rows with no category are Chilled Milk.
+const SHIFT_TYPES = [
+  { value: 'Raw Milk',     color: '#0e7490', border: '#bae6fd', btn: 'text-cyan-700 border-cyan-300' },
+  { value: 'Chilled Milk', color: '#6b21a8', border: '#e6d6f5', btn: 'text-purple-700 border-purple-300' },
+];
+const shiftTypeOf = e => (e.category === 'Raw Milk' ? 'Raw Milk' : 'Chilled Milk');
+
+// "+ Internal Shifting" → small popover asking Raw Milk / Chilled Milk.
+function InternalShiftingAddButton({ onPick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-purple-700 border-purple-300">
+        <Plus size={9}/> Internal Shifting <span className="text-gray-400">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+          style={{ minWidth: 140 }}>
+          {SHIFT_TYPES.map(t => (
+            <button key={t.value} type="button"
+              onClick={() => { setOpen(false); onPick(t.value); }}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 select-none font-medium"
+              style={{ color: t.color }}>
+              {t.value}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ChamberDropdown({ value, onChange, disabled }) {
   const [open, setOpen] = useState(false);
@@ -440,25 +482,27 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
               );
             })()}
 
-            {/* Internal Shifting entries */}
-            {(() => {
-              const rows = entriesForBmcu.filter(e => e.kind === 'internal_shifting');
+            {/* Internal Shifting entries — one table per type (Raw / Chilled) */}
+            {SHIFT_TYPES.map(t => {
+              const rows = entriesForBmcu.filter(e => e.kind === 'internal_shifting' && shiftTypeOf(e) === t.value);
               if (!rows.length) return null;
               return (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6, tableLayout: 'fixed' }}>
+                <table key={t.value} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6, tableLayout: 'fixed' }}>
                   <colgroup>
                     <col style={{ width: '240px' }}/>
-                    <col style={{ width: '130px' }}/>
-                    <col style={{ width: '120px' }}/>
-                    <col style={{ width: '120px' }}/>
+                    <col style={{ width: '110px' }}/>
+                    <col style={{ width: '90px' }}/>
+                    <col style={{ width: '90px' }}/>
+                    <col/>
                     <col style={{ width: '32px' }}/>
                   </colgroup>
                   <thead>
-                    <tr style={{ color: '#6b21a8', borderBottom: '1px solid #e6d6f5' }}>
-                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Internal Shifting — Source Plant</th>
+                    <tr style={{ color: t.color, borderBottom: `1px solid ${t.border}` }}>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Internal Shifting — {t.value} — Source Plant</th>
                       <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Qty (L)</th>
                       <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Fat%</th>
                       <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>SNF%</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Remarks</th>
                       <th style={{ width: 28 }}></th>
                     </tr>
                   </thead>
@@ -488,6 +532,12 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                             onChange={ev => onUpdateEntry(e._key, 'snf_pct', ev.target.value)} placeholder="SNF%"/>
                         </td>
                         <td style={{ padding: '2px 4px' }}>
+                          <input type="text" maxLength={200} disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-full" value={e.remarks || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'remarks', ev.target.value)}
+                            placeholder="Remarks (reason / notes)"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
                           {!isClosed && (
                             <button onClick={() => onDeleteEntry(e._key)} className="btn-danger btn-sm p-0.5" title="Remove">
                               <Trash2 size={9}/>
@@ -499,7 +549,7 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                   </tbody>
                 </table>
               );
-            })()}
+            })}
 
             {/* Third Party Sale entries — milk sold directly to a buyer.
                 Reduces THIS BMCU's RMRD total; dispatch qty is untouched. */}
@@ -584,10 +634,8 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                   className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-amber-700 border-amber-300">
                   <Plus size={9}/> New MPP
                 </button>
-                <button onClick={() => onAddEntry('internal_shifting', row.seq_no, row.bmcu_id)}
-                  className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-purple-700 border-purple-300">
-                  <Plus size={9}/> Internal Shifting
-                </button>
+                <InternalShiftingAddButton
+                  onPick={type => onAddEntry('internal_shifting', row.seq_no, row.bmcu_id, type)}/>
                 <button onClick={() => onAddSale(row.seq_no, row.bmcu_id)}
                   className="btn-secondary btn-sm text-xs py-0.5 px-2 flex items-center gap-1 text-rose-700 border-rose-300">
                   <Plus size={9}/> Third Party Sale
@@ -796,6 +844,8 @@ export default function ExecutionForm() {
       })));
       setEntries((exec.entries || []).map((e, i) => ({
         ...e,
+        // Legacy internal-shifting rows (no category) are Chilled Milk.
+        category: e.kind === 'internal_shifting' ? shiftTypeOf(e) : e.category,
         _key: 'e' + Date.now() + i
       })));
       setThirdPartySales((exec.third_party_sales || []).map((s, i) => ({
@@ -914,12 +964,12 @@ export default function ExecutionForm() {
   const deleteShiftRow = (key) =>
     setShiftRows(prev => prev.filter(r => r._key !== key));
 
-  const addEntry = (kind, seqNo, bmcuId) =>
+  const addEntry = (kind, seqNo, bmcuId, category = null) =>
     setEntries(prev => [...prev, {
       bmcu_seq_no: seqNo,
       bmcu_id: bmcuId || null,
       kind,
-      category: null,
+      category,
       source_bmcu_id: null,
       source_bmcu_code: '',
       qty_litres: '', fat_pct: '', snf_pct: '', remarks: '',

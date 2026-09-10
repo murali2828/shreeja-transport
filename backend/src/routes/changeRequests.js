@@ -97,6 +97,16 @@ function diffRowsHtml(title, oldRows, newRows, keyFn, labelFn, fields) {
       </tr>${rows}</table>`;
 }
 
+// Row label for a Balance / MPP / Shifting entry, e.g.
+// "BMCU #2 Internal Shifting (Chilled Milk)". Legacy internal-shifting rows
+// with no category are Chilled Milk (migration 040).
+const ENTRY_KIND_LABELS = { balance_milk: 'Balance Milk', new_mpp: 'New MPP', internal_shifting: 'Internal Shifting' };
+function entryRowLabel(r) {
+  if (!r) return 'BMCU #?';
+  const cat = r.kind === 'internal_shifting' ? (r.category || 'Chilled Milk') : r.category;
+  return `BMCU #${r.bmcu_seq_no} ${ENTRY_KIND_LABELS[r.kind] || r.kind || ''}${cat ? ` (${cat})` : ''}`;
+}
+
 function buildDiffHtml(snapshot, changes) {
   const bmcuFields = [
     { key: 'milk_date', label: 'Date' }, { key: 'shift', label: 'Shift' },
@@ -134,7 +144,7 @@ function buildDiffHtml(snapshot, changes) {
     + diffRowsHtml('Shift Rows', snapshot.shift_rows, changes.shift_rows,
         r => `${r.bmcu_seq_no}|${r.milk_date || ''}|${r.shift || ''}`, r => `BMCU #${r?.bmcu_seq_no} ${r?.shift || ''}`, shiftFields)
     + diffRowsHtml('Balance / MPP / Shifting Entries', snapshot.entries, changes.entries,
-        (r, i) => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`, r => `BMCU #${r?.bmcu_seq_no} ${r?.kind || ''}`, entryFields)
+        (r, i) => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`, entryRowLabel, entryFields)
     + diffRowsHtml('Acknowledgement', snapshot.acknowledgements, changes.acknowledgements,
         r => r.chamber, r => `Chamber ${r?.chamber}`, ackFields)
     + diffRowsHtml('Third Party Sale', snapshot.third_party_sales, changes.third_party_sales,
@@ -191,7 +201,7 @@ function compactDiffHtml(snapshot, changes) {
       r => `BMCU #${r?.bmcu_seq_no} ${r?.shift || ''}`,
       [['rmrd_qty','RMRD Qty'],['rmrd_fat_pct','RMRD Fat%'],['rmrd_snf_pct','RMRD SNF%']]],
     ['Balance / MPP / Shifting Entries', snapshot.entries, changes.entries, r => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`,
-      r => `BMCU #${r?.bmcu_seq_no} ${r?.kind || ''}`,
+      entryRowLabel,
       [['category','Category'],['qty_litres','Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%']]],
     ['Acknowledgement', snapshot.acknowledgements, changes.acknowledgements, r => r.chamber,
       r => `Chamber ${r?.chamber}`,

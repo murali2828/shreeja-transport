@@ -7,6 +7,7 @@ const {
   calcKgs, calcKgFat, calcKgSnf,
   computeExecutionDistance, applyExecutionData, assertWithinCapacity,
 } = require('../services/executionData');
+const { saleTankerSql } = require('../utils/saleTanker');
 
 // Ensure the sub-entries table (balance milk / new MPP / internal shifting) exists.
 (async () => {
@@ -19,6 +20,7 @@ const {
         bmcu_id        INTEGER REFERENCES bmcus(id),
         kind           TEXT NOT NULL,            -- 'balance_milk' | 'new_mpp' | 'internal_shifting'
         category       TEXT,                     -- balance_milk: 'Balance milk' | 'Left Over milk' | 'Lifted milk'
+                                                 -- internal_shifting: 'Raw Milk' | 'Chilled Milk' (NULL = legacy, treated as Chilled Milk)
         source_bmcu_id INTEGER REFERENCES bmcus(id),
         qty_litres     NUMERIC,
         fat_pct        NUMERIC,
@@ -74,6 +76,7 @@ router.get('/', authenticate, async (req, res) => {
         tp.trip_no, tp.expected_km, tp.expected_total_qty, tp.plan_for_date,
         tp.shifts_milk, tp.driver_name, tp.loader_name,
         t.tanker_number, t.capacity_litres,
+        ${saleTankerSql('tp', 't')} AS is_sale_tanker,
         sp.name AS start_point_name, dp.name AS delivery_point_name,
         u.full_name AS executor_name,
         COALESCE(u2.user_id, u.user_id) AS entered_by_user_id
@@ -102,23 +105,94 @@ router.get('/', authenticate, async (req, res) => {
 // milk actually recorded (dispatch qty > 0 or RMRD > 0), and the missed list
 // split into planned-but-not-collected vs not-planned.
 // NOTE: must be registered before GET /:id.
+// Remark for a missed BMCU on a date (Active Trips → BMCUs Missed list).
+// Fixed vocabulary so the day sheet / analytics can group on it.
+const MISSED_REMARKS = ['BMCU Break down', '3 shifts planning'];
+router.put('/coverage/missed-remark', authenticate, authorizeOrModule('execution', 'admin','planner','executor','biller'), async (req, res) => {
+  const { date, bmcu_id, remark } = req.body || {};
+  if (!date || !bmcu_id) return res.status(400).json({ error: 'date and bmcu_id required' });
+  if (remark && !MISSED_REMARKS.includes(remark))
+    return res.status(400).json({ error: `remark must be one of: ${MISSED_REMARKS.join(', ')}` });
+  try {
+    if (!remark) {
+      await query('DELETE FROM bmcu_missed_remarks WHERE bmcu_id=$1 AND missed_date=$2', [bmcu_id, date]);
+      return res.json({ ok: true, remark: null });
+    }
+    await query(
+      `INSERT INTO bmcu_missed_remarks (bmcu_id, missed_date, remark, updated_by)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (bmcu_id, missed_date)
+       DO UPDATE SET remark=EXCLUDED.remark, updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
+      [bmcu_id, date, remark, req.user?.id || null]);
+    res.json({ ok: true, remark });
+  } catch (err) {
+    console.error('missed-remark error:', err);
+    res.status(500).json({ error: 'Failed to save remark' });
+  }
+});
+
 router.get('/coverage', authenticate, async (req, res) => {
   const date = req.query.date;
   if (!date) return res.status(400).json({ error: 'date required' });
   try {
-    // Trip counts by (latest non-cancelled) execution status.
+    // Trip counts by (latest non-cancelled) execution status, split by sale
+    // tanker (shared rule: planner flag OR "SALE…" tanker). One row per plan
+    // carries the figures the header cards need: planned qty, tanker
+    // capacity and the execution's dispatched litres.
     const tripsRes = await query(`
-      SELECT COALESCE(te.status, 'not_started') AS status, COUNT(*)::int AS n
+      SELECT COALESCE(te.status, 'not_started') AS status,
+             ${saleTankerSql('tp', 't')} AS is_sale,
+             COUNT(*)::int AS n,
+             COALESCE(SUM(tp.expected_total_qty), 0) AS planned_litres,
+             COALESCE(SUM(t.capacity_litres), 0)     AS capacity_litres,
+             COALESCE(SUM(d.litres), 0)              AS dispatched_litres,
+             COALESCE(SUM(t.capacity_litres) FILTER (WHERE COALESCE(d.litres,0) > 0), 0)
+                                                     AS dispatched_capacity_litres
       FROM trip_plans tp
+      LEFT JOIN tankers t ON t.id = tp.tanker_id
       LEFT JOIN LATERAL (
-        SELECT status FROM trip_executions x
+        SELECT id, status FROM trip_executions x
         WHERE x.trip_plan_id=tp.id AND x.status != 'cancelled'
         ORDER BY x.id DESC LIMIT 1
       ) te ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT SUM(teb.qty_litres) AS litres
+        FROM trip_execution_bmcus teb
+        WHERE teb.execution_id = te.id AND teb.is_deleted = FALSE
+      ) d ON TRUE
       WHERE tp.plan_for_date=$1 AND tp.status NOT IN ('cancelled','deleted')
-      GROUP BY 1`, [date]);
+      GROUP BY 1, 2`, [date]);
     const trips = { planned: 0, not_started: 0, in_progress: 0, saved: 0, pending_ack: 0, closed: 0 };
-    for (const r of tripsRes.rows) { trips[r.status] = r.n; trips.planned += r.n; }
+    const saleTrips = { planned: 0, not_started: 0, in_progress: 0, saved: 0, pending_ack: 0, closed: 0 };
+    // Tanker utilisation — NON-sale trips only (a sale tanker's load is sold,
+    // it never fills a fleet vehicle for the plant). One capacity per trip.
+    const util = { planned_litres: 0, capacity_litres: 0, dispatched_litres: 0, dispatched_capacity_litres: 0, trips: 0, dispatched_trips: 0 };
+    for (const r of tripsRes.rows) {
+      // `trips` = every trip of the day (sale included, as on Trip Plans);
+      // `sale_trips` = the sale-tanker subset.
+      trips[r.status] = (trips[r.status] || 0) + r.n;
+      trips.planned += r.n;
+      if (r.is_sale) {
+        saleTrips[r.status] = (saleTrips[r.status] || 0) + r.n;
+        saleTrips.planned += r.n;
+        continue;
+      }
+      util.trips += r.n;
+      util.planned_litres            += parseFloat(r.planned_litres) || 0;
+      util.capacity_litres           += parseFloat(r.capacity_litres) || 0;
+      util.dispatched_litres         += parseFloat(r.dispatched_litres) || 0;
+      util.dispatched_capacity_litres += parseFloat(r.dispatched_capacity_litres) || 0;
+    }
+    const pct = (num, den) => den > 0 ? Math.round(num / den * 1000) / 10 : null;
+    const utilisation = {
+      trips: util.trips,
+      planned_litres: Math.round(util.planned_litres),
+      capacity_litres: Math.round(util.capacity_litres),
+      planned_pct: pct(util.planned_litres, util.capacity_litres),
+      dispatched_litres: Math.round(util.dispatched_litres),
+      dispatched_capacity_litres: Math.round(util.dispatched_capacity_litres),
+      actual_pct: pct(util.dispatched_litres, util.dispatched_capacity_litres),
+    };
 
     // BMCUs with milk actually recorded on the date's executions.
     const collectedRes = await query(`
@@ -155,9 +229,13 @@ router.get('/coverage', authenticate, async (req, res) => {
       WHERE b.is_active=TRUE
       ORDER BY (pl.trip_no IS NULL), b.bmcu_code`, [date]);
 
+    const remarksRes = await query(
+      'SELECT bmcu_id, remark FROM bmcu_missed_remarks WHERE missed_date=$1', [date]);
+    const remarkByBmcu = Object.fromEntries(remarksRes.rows.map(r => [r.bmcu_id, r.remark]));
     const missed = bmcusRes.rows
       .filter(b => !collected.has(b.id))
       .map(b => ({
+        bmcu_id: b.id, remark: remarkByBmcu[b.id] || null,
         bmcu_code: b.bmcu_code, bmcu_name: b.bmcu_name, district: b.district,
         planned: b.trip_no != null, trip_no: b.trip_no,
         tanker_number: b.tanker_number, exec_status: b.exec_status,
@@ -165,7 +243,7 @@ router.get('/coverage', authenticate, async (req, res) => {
 
     const totalActive = bmcusRes.rows.length;
     res.json({
-      date, trips,
+      date, trips, sale_trips: saleTrips, utilisation,
       bmcus_collected: collected.size,
       total_active_bmcus: totalActive,
       coverage_pct: totalActive > 0 ? Math.round(collected.size / totalActive * 1000) / 10 : 0,
@@ -239,7 +317,11 @@ router.get('/:id', authenticate, async (req, res) => {
       [req.params.id]
     );
 
-    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entries.rows, third_party_sales: thirdPartySales.rows });
+    // Legacy internal-shifting rows (saved before the Raw/Chilled split) have
+    // category NULL and are Chilled Milk by definition (see migration 040).
+    const entryRows = entries.rows.map(e =>
+      e.kind === 'internal_shifting' && !e.category ? { ...e, category: 'Chilled Milk' } : e);
+    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entryRows, third_party_sales: thirdPartySales.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

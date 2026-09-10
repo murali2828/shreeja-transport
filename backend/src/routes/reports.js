@@ -18,6 +18,7 @@ const { createTransport } = require('../config/mailer');
 // ═════════════════════════════════════════════════════════════════════════════
 const { calcKgs, calcKgFat, calcKgSnf } = require('../services/executionData');
 const { fmtDateDisplay } = require('../utils/date');
+const { saleTankerSql } = require('../utils/saleTanker');
 
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 
@@ -158,9 +159,12 @@ async function buildTsReport(reportDate, basis = 'plan') {
     // RMRD adjustments from sub-entries (user rules):
     //   Left Over milk    → DEDUCT from RMRD (milk left behind at the BMCU)
     //   Lifted milk       → ADD to RMRD (extra milk lifted)
-    //   Internal shifting → ADD to the receiving trip's RMRD, and DEDUCT the same
-    //                       qty/kg fat/kg snf from the trip containing the SOURCE
-    //                       plant (milk moved out of that BMCU's RMRD)
+    //   Internal shifting → ADD to the receiving trip's RMRD. Then, by category:
+    //     Chilled Milk (default / legacy NULL): DEDUCT the same qty/kg fat/kg snf
+    //       from the trip containing the SOURCE plant (chilled stock moved out
+    //       of that BMCU's RMRD).
+    //     Raw Milk: NO source-side deduction — raw milk is not chilled stock of
+    //       the source plant, so its RMRD is untouched.
     //   New MPP           → ADD to RMRD (new MPP milk collected on the trip)
     // Map BMCU → executions of this report date (to locate the source plant's trip).
     const bm2exec = {};
@@ -182,7 +186,8 @@ async function buildTsReport(reportDate, basis = 'plan') {
     // used to leave its entries behind, and counting those orphans applied the
     // adjustment (e.g. a Left Over deduction) twice.
     const er = await query(`
-      SELECT e.execution_id, e.kind, e.category, e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id,
+      SELECT e.execution_id, e.kind, e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id, e.remarks,
+             CASE WHEN e.kind='internal_shifting' THEN COALESCE(e.category,'Chilled Milk') ELSE e.category END AS category,
              sb.bmcu_name AS source_name, rb.bmcu_name AS dest_name, tp2.trip_no AS entry_trip_no
       FROM trip_execution_bmcu_entries e
       JOIN trip_execution_bmcus b
@@ -218,15 +223,19 @@ async function buildTsReport(reportDate, basis = 'plan') {
         applyAdj(e.execution_id, 1, e.qty_litres, e.fat_pct, e.snf_pct);
         note(e.execution_id, `+${qL(e.qty_litres)} new MPP${e.dest_name ? ` ${e.dest_name}` : ''}`);
       } else if (e.kind === 'internal_shifting') {
+        const isRaw = e.category === 'Raw Milk';
         applyAdj(e.execution_id, 1, e.qty_litres, e.fat_pct, e.snf_pct); // receiving trip
-        note(e.execution_id, `+${qL(e.qty_litres)} shifted in${e.source_name ? ` from ${e.source_name}` : ''}${e.dest_name ? ` to ${e.dest_name}` : ''}`);
-        // Deduct from the trip that carries the source plant (prefer the same trip).
+        note(e.execution_id, `+${qL(e.qty_litres)} ${isRaw ? 'raw milk' : 'chilled milk'} shifted in${e.source_name ? ` from ${e.source_name}` : ''}${e.dest_name ? ` to ${e.dest_name}` : ''}${e.remarks ? ` (${e.remarks})` : ''}`);
+        // Raw Milk: added at the receiver only — nothing leaves the source
+        // plant's chilled RMRD, so no deduction anywhere.
+        if (isRaw) continue;
+        // Chilled Milk: deduct from the trip that carries the source plant (prefer the same trip).
         const srcExecs = bm2exec[e.source_bmcu_id] || [];
         const target = srcExecs.includes(e.execution_id) ? e.execution_id : srcExecs[0];
         if (target) {
           applyAdj(target, -1, e.qty_litres, e.fat_pct, e.snf_pct);
           if (target !== e.execution_id)
-            note(target, `−${qL(e.qty_litres)} shifted out${e.source_name ? ` of ${e.source_name}` : ''} to Trip #${e.entry_trip_no}`);
+            note(target, `−${qL(e.qty_litres)} chilled milk shifted out${e.source_name ? ` of ${e.source_name}` : ''} to Trip #${e.entry_trip_no}`);
         }
       }
     }
@@ -354,7 +363,7 @@ const TS_GROUPS = [
   { title: 'Difference Dispatch Vs RMRD',  fill: 'FFFEF3C7', heads: DIFF6, keys: ['dd_litres','dd_kgs','dd_kg_fat','dd_kg_snf','dd_ts','dd_pct'], diff: true },
   { title: 'Difference Ack Vs Dispatch',   fill: 'FFFFE4E6', heads: DIFF8, keys: ['da_litres','da_kgs','da_fat','da_snf','da_kg_fat','da_kg_snf','da_ts','da_pct'], diff: true },
   { title: 'Difference Ackn Vs RMRD',      fill: 'FFFDE68A', heads: DIFF8, keys: ['dr_litres','dr_kgs','dr_fat','dr_snf','dr_kg_fat','dr_kg_snf','dr_ts','dr_pct'], diff: true },
-  { title: 'Third Party Sale',             fill: 'FFF1F5F9', heads: ['Qty Kgs','Qty Ltrs','Fat%','SNF%','Fat Kg','SNF Kg'], keys: ['tps_kgs','tps_litres','tps_fat','tps_snf','tps_kg_fat','tps_kg_snf'] },
+  { title: 'Third Party Sale',             fill: 'FFF1F5F9', heads: ['Qty Ltrs','Qty Kgs','Fat%','SNF%','Fat Kg','SNF Kg'], keys: ['tps_litres','tps_kgs','tps_fat','tps_snf','tps_kg_fat','tps_kg_snf'] },
 ];
 // Cumulative start offset of each group within the numeric columns
 let _off = 0;
@@ -567,11 +576,14 @@ function monthToDate(reportDate) {
 const ddmm = iso => `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
 
 // 'Milk Shifting Day Wise' sheet — internal-shifting entries across the given
-// dates, per the sample workbook: Date, Shifted BMCU Name (source), Shifted to
-// (receiving BMCU), Shift, Qty in Ltrs/Kgs, Fat %, Snf %, Fat Kgs, Snf Kgs.
+// dates, per the sample workbook: Date, Type (Raw Milk / Chilled Milk), Shifted
+// BMCU Name (source), Shifted to (receiving BMCU), Shift, Qty in Ltrs/Kgs,
+// Fat %, Snf %, Fat Kgs, Snf Kgs — with a TOTAL row and a per-type summary.
+const SHIFT_TYPES = ['Raw Milk', 'Chilled Milk'];
 async function addMilkShiftingSheet(wb, days) {
   const r = await query(`
-    SELECT tp.plan_for_date AS date, e.qty_litres, e.fat_pct, e.snf_pct,
+    SELECT tp.plan_for_date AS date, e.qty_litres, e.fat_pct, e.snf_pct, e.remarks,
+           COALESCE(e.category, 'Chilled Milk') AS category,
            sb.bmcu_name AS source_name, rb.bmcu_name AS dest_name,
            teb.milk_date, teb.shift
     FROM trip_execution_bmcu_entries e
@@ -585,18 +597,19 @@ async function addMilkShiftingSheet(wb, days) {
       AND tp.plan_for_date = ANY($1::date[])
     ORDER BY tp.plan_for_date, sb.bmcu_name`, [days]);
 
+  const NCOLS = 12;
   const ws = wb.addWorksheet('Milk Shifting Day Wise');
-  ws.columns = [{ width: 12 }, { width: 22 }, { width: 22 }, { width: 8 },
-    { width: 12 }, { width: 12 }, { width: 8 }, { width: 8 }, { width: 11 }, { width: 11 }];
+  ws.columns = [{ width: 12 }, { width: 13 }, { width: 22 }, { width: 22 }, { width: 8 },
+    { width: 12 }, { width: 12 }, { width: 8 }, { width: 8 }, { width: 11 }, { width: 11 }, { width: 30 }];
 
-  ws.mergeCells(1, 1, 1, 10);
+  ws.mergeCells(1, 1, 1, NCOLS);
   const t = ws.getCell(1, 1);
   t.value = `Milk Shifting Report — ${days[0]} to ${days[days.length - 1]}`;
   t.font = { bold: true, size: 13, color: { argb: 'FF003A6B' } };
   ws.getRow(1).height = 22;
 
-  const HEADS = ['Date', 'Shifted BMCU Name', 'Shifted to', 'Shift',
-    'Qty in Ltrs', 'Qty in Kgs', 'Fat %', 'Snf %', 'Fat Kgs', 'Snf Kgs'];
+  const HEADS = ['Date', 'Type', 'Shifted BMCU Name', 'Shifted to', 'Shift',
+    'Qty in Ltrs', 'Qty in Kgs', 'Fat %', 'Snf %', 'Fat Kgs', 'Snf Kgs', 'Remarks'];
   HEADS.forEach((h, i) => {
     const c = ws.getCell(2, i + 1);
     c.value = h;
@@ -606,40 +619,57 @@ async function addMilkShiftingSheet(wb, days) {
     c.border = BORDER;
   });
 
-  let sumL = 0, sumKg = 0, sumFat = 0, sumSnf = 0;
+  // Numeric columns start at 'Qty in Ltrs' (0-based index 5).
+  const NUM_FROM = 5;
+  const newAcc = () => ({ n: 0, litres: 0, kgs: 0, kg_fat: 0, kg_snf: 0 });
+  const total = newAcc();
+  const byType = Object.fromEntries(SHIFT_TYPES.map(k => [k, newAcc()]));
   r.rows.forEach((e, i) => {
     const litres = parseFloat(e.qty_litres) || 0;
     const kgs    = calcKgs(litres);
     const kgFat  = calcKgFat(kgs, e.fat_pct);
     const kgSnf  = calcKgSnf(kgs, e.snf_pct);
-    sumL += litres; sumKg += kgs; sumFat += kgFat; sumSnf += kgSnf;
+    const type   = SHIFT_TYPES.includes(e.category) ? e.category : 'Chilled Milk';
+    for (const acc of [total, byType[type]]) {
+      acc.n += 1; acc.litres += litres; acc.kgs += kgs; acc.kg_fat += kgFat; acc.kg_snf += kgSnf;
+    }
     const row = ws.getRow(3 + i);
     // Guard: entries without fat/snf must write blank, not NaN — a literal
     // NaN in the XML makes the workbook unreadable by strict parsers.
     const numOrNull = v => { const n = parseFloat(v); return Number.isFinite(n) ? rN(n, 2) : null; };
-    const vals = [fmtDateDisplay(e.date), e.source_name || '', e.dest_name || '',
+    const vals = [fmtDateDisplay(e.date), type, e.source_name || '', e.dest_name || '',
       e.milk_date && e.shift ? shiftLabel(e.milk_date, e.shift) : '',
       rN(litres, 2), rN(kgs, 2), numOrNull(e.fat_pct), numOrNull(e.snf_pct),
-      numOrNull(kgFat), numOrNull(kgSnf)];
+      numOrNull(kgFat), numOrNull(kgSnf), e.remarks || ''];
+    const REMARKS_IDX = vals.length - 1;
     vals.forEach((v, ci) => {
       const c = row.getCell(ci + 1);
       c.value = v ?? '';
       c.border = BORDER;
-      if (ci >= 4) { c.numFmt = '#,##0.00'; c.alignment = { horizontal: 'right' }; }
+      if (ci >= NUM_FROM && ci < REMARKS_IDX) { c.numFmt = '#,##0.00'; c.alignment = { horizontal: 'right' }; }
+      if (ci === REMARKS_IDX) c.alignment = { wrapText: true, vertical: 'top' };
     });
   });
 
+  // TOTAL row, then one summary line per shifting type (Raw / Chilled).
+  const writeSummary = (ri, label, acc, fillArgb) => {
+    ws.mergeCells(ri, 1, ri, NUM_FROM);
+    const tl = ws.getCell(ri, 1);
+    tl.value = label;
+    tl.font = { bold: true, color: { argb: 'FF003A6B' } };
+    tl.fill = fillOf(fillArgb); tl.border = BORDER;
+    [rN(acc.litres, 2), rN(acc.kgs, 2), null, null, rN(acc.kg_fat, 2), rN(acc.kg_snf, 2)].forEach((v, i) => {
+      const c = ws.getCell(ri, NUM_FROM + 1 + i);
+      c.value = v; c.numFmt = '#,##0.00'; c.border = BORDER;
+      c.fill = fillOf(fillArgb); c.font = { bold: true };
+      c.alignment = { horizontal: 'right' };
+    });
+  };
   const tri = 3 + r.rows.length;
-  ws.mergeCells(tri, 1, tri, 4);
-  const tl = ws.getCell(tri, 1);
-  tl.value = `TOTAL — ${r.rows.length} shiftings`;
-  tl.font = { bold: true, color: { argb: 'FF003A6B' } };
-  tl.fill = fillOf('FFDBEAFE'); tl.border = BORDER;
-  [rN(sumL, 2), rN(sumKg, 2), null, null, rN(sumFat, 2), rN(sumSnf, 2)].forEach((v, i) => {
-    const c = ws.getCell(tri, 5 + i);
-    c.value = v; c.numFmt = '#,##0.00'; c.border = BORDER;
-    c.fill = fillOf('FFDBEAFE'); c.font = { bold: true };
-    c.alignment = { horizontal: 'right' };
+  writeSummary(tri, `TOTAL — ${total.n} shiftings`, total, 'FFDBEAFE');
+  SHIFT_TYPES.forEach((type, i) => {
+    const acc = byType[type];
+    writeSummary(tri + 1 + i, `  ${type} — ${acc.n} shifting${acc.n === 1 ? '' : 's'}`, acc, 'FFEFF6FF');
   });
 }
 
@@ -981,7 +1011,8 @@ router.post('/send-email', authenticate, authorizeOrModule('reports', 'admin','p
 // (per sample BMCU_Break_Up.xlsx). One block per BMCU per trip:
 //   dispatch entry (with compartment) vs RMRD shift rows + signed adjustments
 //   (Balance Milk Leftover −, Balance milk lifted +, New MPP +,
-//    Milk Shifting + at receiver / − at source plant),
+//    Chilled Milk Shifting + at receiver / − at source plant,
+//    Raw Milk Shifting + at receiver only),
 //   Gross Total per BMCU with difference = RMRD − Dispatch.
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -1048,8 +1079,9 @@ async function buildBmcuBreakup(reportDate) {
   // Entries whose parent BMCU row was deleted are excluded — they're stale
   // leftovers and would double-count adjustments.
   const er = await query(`
-    SELECT e.execution_id, e.bmcu_seq_no, e.kind, e.category,
-           e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id,
+    SELECT e.execution_id, e.bmcu_seq_no, e.kind,
+           CASE WHEN e.kind='internal_shifting' THEN COALESCE(e.category,'Chilled Milk') ELSE e.category END AS category,
+           e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id, e.remarks,
            sb.bmcu_code AS source_bmcu_code, sb.bmcu_name AS source_bmcu_name
     FROM trip_execution_bmcu_entries e
     JOIN trip_execution_bmcus pb
@@ -1157,18 +1189,22 @@ async function buildBmcuBreakup(reportDate) {
       if (b) b.rows.push({ type: 'adjustment', label: 'New MPP', shift: '',
         ...measures(e.qty_litres, e.fat_pct, e.snf_pct) });
     } else if (e.kind === 'internal_shifting') {
+      const isRaw = e.category === 'Raw Milk';
       if (b) b.rows.push({ type: 'adjustment',
-        label: `Milk Shifting${e.source_bmcu_code ? ` (from ${e.source_bmcu_code})` : ''}`,
+        label: `${isRaw ? 'Raw Milk Shifting' : 'Chilled Milk Shifting'}${e.source_bmcu_code ? ` (from ${e.source_bmcu_code})` : ''}${e.remarks ? ` — ${e.remarks}` : ''}`,
         shift: '', ...measures(e.qty_litres, e.fat_pct, e.snf_pct) });
-      // Source plant's block gets the matching deduction (prefer the same trip).
+      // Raw Milk: received at this BMCU only — the source plant's chilled RMRD
+      // is untouched, so no deduction row and no "source not on trip" note.
+      if (isRaw) continue;
+      // Chilled Milk: source plant's block gets the matching deduction (prefer the same trip).
       const cands = byBmcu[e.source_bmcu_id] || [];
       const src = cands.find(c => c.execution_id === e.execution_id) || cands[0];
       if (src) {
         src.rows.push({ type: 'adjustment',
-          label: `Milk Shifting (to ${b ? b.bmcu_code : '—'})`, shift: '',
+          label: `Chilled Milk Shifting (to ${b ? b.bmcu_code : '—'})`, shift: '',
           ...measures(-e.qty_litres, e.fat_pct, e.snf_pct) });
       } else if (e.source_bmcu_code) {
-        notes.push(`Milk Shifting source ${e.source_bmcu_code} — ${e.source_bmcu_name || ''} is not on any trip of ${reportDate}; deduction not shown.`);
+        notes.push(`Chilled Milk Shifting source ${e.source_bmcu_code} — ${e.source_bmcu_name || ''} is not on any trip of ${reportDate}; deduction not shown.`);
       }
     }
   }
@@ -1274,14 +1310,14 @@ const M6 = m => [m.litres, m.kgs, m.fat, m.snf, m.kg_fat, m.kg_snf];
 const D4 = d => [d.kgs, d.litres, d.kg_fat, d.kg_snf, d.pct];
 // Third Party Sale — trip-level (not per-BMCU), shown as extra columns after
 // the existing 24-column layout; only populated on each trip's Grand Total row.
-const TPS_HEADS = ['Sale Qty (Kgs)', 'Sale Qty (Ltrs)', 'Fat%', 'SNF%', 'Fat Kg', 'SNF Kg'];
+const TPS_HEADS = ['Sale Qty (Ltrs)', 'Sale Qty (Kgs)', 'Fat%', 'SNF%', 'Fat Kg', 'SNF Kg'];
 // Acknowledgement — trip-level (not per-BMCU, recorded per chamber for the
 // whole trip execution at the delivery point), shown between the Diff group
 // and Third Party Sale; only populated on each trip's Grand Total row.
 const ACK_COL = 25; // columns 20-24 are the 5-col Diff group
 const TPS_COL = 32; // column 31 is a blank spacer after the Ack group (25-30)
 const REMARKS_COL = TPS_COL + 6; // 38: single Remarks column right after the 6-col TPS group (32-37)
-const T6 = t => [t.kgs, t.litres, t.fat, t.snf, t.kg_fat, t.kg_snf];
+const T6 = t => [t.litres, t.kgs, t.fat, t.snf, t.kg_fat, t.kg_snf];
 
 function addBmcuBreakupSheet(wb, data) {
   const ws = wb.addWorksheet('BMCU breakup');
@@ -1614,6 +1650,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
   // the fallback Analytics → Utilisation already uses.
   const r = await query(`
     SELECT tp.trip_no, t.tanker_number, t.capacity_litres,
+           ${saleTankerSql('tp', 't')} AS is_sale_tanker,
            rm.route_name, sp.name AS starting_point, dp.name AS delivery_point,
            COALESCE(MIN(ta.ack_date), te.execution_date) AS ack_date,
            COUNT(ta.id) AS ack_count,
@@ -1634,7 +1671,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
       FROM trip_execution_bmcus teb WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE
     ) disp ON TRUE
     WHERE te.status != 'cancelled' AND tp.status NOT IN ('cancelled','deleted')
-    GROUP BY tp.id, tp.trip_no, t.tanker_number, t.capacity_litres,
+    GROUP BY tp.id, tp.trip_no, t.tanker_number, t.capacity_litres, tp.is_sale_tanker,
              rm.route_name, sp.name, dp.name, te.id, disp.litres, disp.kgs, disp.kg_fat, disp.kg_snf
     HAVING COALESCE(MIN(ta.ack_date), te.execution_date) BETWEEN $1 AND $2
     ORDER BY COALESCE(MIN(ta.ack_date), te.execution_date), tp.trip_no`, [fromDate, toDate]);
@@ -1643,9 +1680,14 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
     const litres = parseFloat(x.ack_litres) || 0;
     const kgs    = parseFloat(x.ack_kgs) || 0;
     const cap    = parseFloat(x.capacity_litres) || 0;
-    const util   = cap ? rN(litres / cap * 100) : null;
+    const isSale = !!x.is_sale_tanker;
+    // Sale tankers (milk sold, not delivered) carry no utilisation figure —
+    // the row stays for the litres, the % is blank and it is kept out of
+    // the fleet total on the page.
+    const util   = cap && !isSale ? rN(litres / cap * 100) : null;
     return {
       s_no: i + 1,
+      is_sale_tanker: isSale,
       starting_point: x.starting_point, delivery_point: x.delivery_point,
       ack_date: fmtDateDisplay(x.ack_date),
       tanker_number: x.tanker_number, route_name: x.route_name, trip_no: x.trip_no,
@@ -1656,8 +1698,9 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
       capacity: cap || null,
       utilization: util,
       remarks: [
+        isSale ? 'SALE tanker — not in utilisation' : '',
         util == null ? '' : util >= threshold ? `ABOVE ${threshold}` : `BELOW ${threshold}`,
-        parseInt(x.ack_count) === 0 ? '(dispatch qty — no ack, e.g. sold at BMCU)' : '',
+        !isSale && parseInt(x.ack_count) === 0 ? '(dispatch qty — no ack, e.g. sold at BMCU)' : '',
       ].filter(Boolean).join(' '),
     };
   });

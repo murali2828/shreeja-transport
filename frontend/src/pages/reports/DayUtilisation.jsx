@@ -26,8 +26,12 @@ export default function DayUtilisation() {
   const above = rows.filter(r => r.utilization != null && r.utilization >= threshold).length;
   const below = rows.filter(r => r.utilization != null && r.utilization < threshold).length;
   const totLitres = rows.reduce((s, r) => s + (parseFloat(r.ack_litres) || 0), 0);
-  const totCap    = rows.reduce((s, r) => s + (parseFloat(r.capacity) || 0), 0);
-  const avgUtil   = totCap ? (totLitres / totCap * 100) : null;
+  // Fleet utilisation excludes sale tankers (milk sold, not a fleet fill).
+  const fleetRows = rows.filter(r => !r.is_sale_tanker);
+  const saleCount = rows.length - fleetRows.length;
+  const fleetLitres = fleetRows.reduce((s, r) => s + (parseFloat(r.ack_litres) || 0), 0);
+  const totCap    = fleetRows.reduce((s, r) => s + (parseFloat(r.capacity) || 0), 0);
+  const avgUtil   = totCap ? (fleetLitres / totCap * 100) : null;
 
   return (
     <div className="space-y-4 w-full">
@@ -61,6 +65,11 @@ export default function DayUtilisation() {
             fleet utilisation {n2(avgUtil)}%
           </span>
         )}
+        {saleCount > 0 && (
+          <span className="px-3 py-1 rounded-full bg-violet-100 text-violet-700 font-medium" title="Sale tankers are excluded from fleet utilisation">
+            {saleCount} sale tanker{saleCount > 1 ? 's' : ''} (excluded)
+          </span>
+        )}
       </div>
 
       <div className="card overflow-hidden">
@@ -85,7 +94,10 @@ export default function DayUtilisation() {
                   <td className="table-td whitespace-nowrap">{r.starting_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.delivery_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{fmtDate(r.ack_date)}</td>
-                  <td className="table-td font-mono font-semibold text-[#005ba3] whitespace-nowrap">{r.tanker_number || '—'}</td>
+                  <td className="table-td font-mono font-semibold text-[#005ba3] whitespace-nowrap">
+                    {r.tanker_number || '—'}
+                    {r.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px] font-sans" title="Sale Tanker — milk sold, not delivered to a plant">SALE</span>}
+                  </td>
                   <td className="table-td whitespace-nowrap">{r.route_name || '—'}</td>
                   <td className="table-td text-right">{n2(r.ack_litres)}</td>
                   <td className="table-td text-right">{n2(r.ack_kgs)}</td>
@@ -99,7 +111,7 @@ export default function DayUtilisation() {
                   </td>
                   <td className="table-td text-center">
                     {r.remarks && (
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${r.remarks.startsWith('ABOVE') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${r.remarks.startsWith('ABOVE') ? 'bg-green-100 text-green-700' : r.is_sale_tanker ? 'bg-violet-100 text-violet-700' : 'bg-red-100 text-red-600'}`}>
                         {r.remarks}
                       </span>
                     )}
@@ -110,7 +122,7 @@ export default function DayUtilisation() {
             {rows.length > 0 && (
               <tfoot className="bg-blue-50 border-t font-semibold sticky bottom-0">
                 <tr>
-                  <td className="table-td text-[#003a6b]" colSpan={6}>TOTAL — {rows.length} trips</td>
+                  <td className="table-td text-[#003a6b]" colSpan={6}>TOTAL — {rows.length} trips{saleCount > 0 ? ` (utilisation on ${fleetRows.length} non-sale)` : ''}</td>
                   <td className="table-td text-right text-[#003a6b]">{n2(totLitres)}</td>
                   <td className="table-td text-right text-[#003a6b]">{n2(rows.reduce((s, r) => s + (parseFloat(r.ack_kgs) || 0), 0))}</td>
                   <td className="table-td" colSpan={2}></td>

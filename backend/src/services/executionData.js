@@ -244,11 +244,16 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     await client.query('DELETE FROM trip_execution_bmcu_entries WHERE execution_id=$1', [execId]);
     for (const e of (entries || [])) {
       const bmcuId = seqToBmcu[e.bmcu_seq_no] || e.bmcu_id || null;
+      // Internal shifting is typed 'Raw Milk' | 'Chilled Milk'; anything else
+      // (old clients, blank) is stored as Chilled Milk — the legacy behaviour.
+      const category = e.kind === 'internal_shifting'
+        ? (e.category === 'Raw Milk' ? 'Raw Milk' : 'Chilled Milk')
+        : (e.category || null);
       await client.query(
         `INSERT INTO trip_execution_bmcu_entries
            (execution_id, bmcu_seq_no, bmcu_id, kind, category, source_bmcu_id, qty_litres, fat_pct, snf_pct, remarks)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [execId, e.bmcu_seq_no, bmcuId, e.kind, e.category||null,
+        [execId, e.bmcu_seq_no, bmcuId, e.kind, category,
          e.source_bmcu_id||null, e.qty_litres||null, e.fat_pct||null, e.snf_pct||null,
          (e.remarks || '').trim() || null]
       );
