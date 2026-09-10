@@ -127,13 +127,13 @@ export default function TripPlanList() {
           <th className="table-th w-10">Trip</th>
           <th className="table-th">Tanker</th>
           <th className="table-th">Route</th>
+          <th className="table-th">Starting Point</th>
           <th className="table-th">Delivery Point</th>
           <th className="table-th">Shift</th>
-          <th className="table-th">Driver</th>
+          <th className="table-th">Driver/Helper</th>
           <th className="table-th text-right">Qty (L)</th>
           <th className="table-th text-right">KM</th>
           <th className="table-th text-right">Cost</th>
-          <th className="table-th text-right">₹/L</th>
           <th className="table-th text-center">Util%</th>
           <th className="table-th">Status</th>
           {!dimmed && <th className="table-th w-20">Actions</th>}
@@ -150,6 +150,7 @@ export default function TripPlanList() {
             <td className="table-td font-bold text-[#0078d4]">#{p.trip_no}</td>
             <td className="table-td font-mono text-xs">{p.tanker_number}</td>
             <td className="table-td text-gray-600 text-xs">{p.route_name || '—'}</td>
+            <td className="table-td text-xs">{p.start_point_name || '—'}</td>
             <td className="table-td text-xs">{p.delivery_point_name || '—'}</td>
             <td className="table-td">{p.shifts_milk || '—'}</td>
             <td className="table-td text-xs">{p.driver_name || '—'}</td>
@@ -158,7 +159,6 @@ export default function TripPlanList() {
             <td className="table-td text-right text-green-700 font-medium">
               ₹{parseFloat(p.total_cost||0).toLocaleString('en-IN',{maximumFractionDigits:0})}
             </td>
-            <td className="table-td text-right text-xs">{parseFloat(p.per_liter_cost||0).toFixed(4)}</td>
             <td className="table-td text-center text-xs">
               <span className={`font-medium ${parseFloat(p.expected_utilization_pct||0)>=80?'text-green-600':parseFloat(p.expected_utilization_pct||0)>=60?'text-amber-600':'text-red-500'}`}>
                 {parseFloat(p.expected_utilization_pct||0).toFixed(0)}%
