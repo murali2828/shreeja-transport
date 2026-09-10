@@ -19,6 +19,7 @@ const {
         bmcu_id        INTEGER REFERENCES bmcus(id),
         kind           TEXT NOT NULL,            -- 'balance_milk' | 'new_mpp' | 'internal_shifting'
         category       TEXT,                     -- balance_milk: 'Balance milk' | 'Left Over milk' | 'Lifted milk'
+                                                 -- internal_shifting: 'Raw Milk' | 'Chilled Milk' (NULL = legacy, treated as Chilled Milk)
         source_bmcu_id INTEGER REFERENCES bmcus(id),
         qty_litres     NUMERIC,
         fat_pct        NUMERIC,
@@ -239,7 +240,11 @@ router.get('/:id', authenticate, async (req, res) => {
       [req.params.id]
     );
 
-    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entries.rows, third_party_sales: thirdPartySales.rows });
+    // Legacy internal-shifting rows (saved before the Raw/Chilled split) have
+    // category NULL and are Chilled Milk by definition (see migration 040).
+    const entryRows = entries.rows.map(e =>
+      e.kind === 'internal_shifting' && !e.category ? { ...e, category: 'Chilled Milk' } : e);
+    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entryRows, third_party_sales: thirdPartySales.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

@@ -85,8 +85,10 @@ const baseTripsCte = `
     GROUP BY e.execution_id
   ),
   shift_ded AS (
-    -- Internal shifting: milk added to the receiving trip above must be
-    -- deducted from the trip carrying the SOURCE plant (prefer the same trip).
+    -- Internal shifting (Chilled Milk only — legacy NULL category counts as
+    -- chilled): milk added to the receiving trip above must be deducted from
+    -- the trip carrying the SOURCE plant (prefer the same trip). Raw Milk
+    -- shifting is added at the receiver only; no source-side deduction.
     SELECT tgt.execution_id,
            SUM(e.qty_litres) AS litres,
            SUM(e.qty_litres * ${KG}) AS kgs,
@@ -104,6 +106,7 @@ const baseTripsCte = `
       LIMIT 1
     ) tgt ON TRUE
     WHERE e.kind='internal_shifting' AND e.qty_litres IS NOT NULL
+      AND COALESCE(e.category,'Chilled Milk') <> 'Raw Milk'
       AND e.execution_id IN (SELECT execution_id FROM trips)
     GROUP BY tgt.execution_id
   ),
@@ -261,7 +264,8 @@ async function buildSummary(params) {
         GROUP BY pb.bmcu_id
       ),
       bm_shift_ded AS (
-        -- Internal shifting deducts from the SOURCE BMCU's RMRD.
+        -- Chilled Milk internal shifting deducts from the SOURCE BMCU's RMRD
+        -- (legacy NULL category = chilled). Raw Milk shifting never does.
         SELECT e.source_bmcu_id AS bmcu_id,
                SUM(e.qty_litres) AS litres, SUM(e.qty_litres * ${KG}) AS kgs,
                SUM(e.qty_litres * ${KG} * COALESCE(e.fat_pct,0)/100) AS kg_fat,
@@ -270,6 +274,7 @@ async function buildSummary(params) {
         JOIN trip_execution_bmcus pb
           ON pb.execution_id=e.execution_id AND pb.seq_no=e.bmcu_seq_no AND pb.is_deleted=FALSE
         WHERE e.kind='internal_shifting' AND e.qty_litres IS NOT NULL
+          AND COALESCE(e.category,'Chilled Milk') <> 'Raw Milk'
           AND e.source_bmcu_id IS NOT NULL
           AND e.execution_id IN (SELECT execution_id FROM trips)
         GROUP BY e.source_bmcu_id
