@@ -566,6 +566,7 @@ router.get('/utilisation', authenticate, async (req, res) => {
         maintenance_days: rN(x.maintenance_days, 1),
         trips_per_active_day: x.active_days > 0 ? rN(x.trips / x.active_days, 2) : null,
         ack_litres: rN(x.acked_litres), disp_litres: rN(x.disp_litres), km: rN(x.km, 1),
+        filled_litres: rN(filledL), capacity_offered_litres: rN(cap * x.trips),
         avg_fill_pct: fillPct,
       };
     });
@@ -623,9 +624,15 @@ router.get('/utilisation', authenticate, async (req, res) => {
     }).sort((a, b) => (b.actual_fill_pct ?? -1) - (a.actual_fill_pct ?? -1))
       .map((r, i) => ({ ...r, rank: i + 1 }));
 
-    // Fleet KPIs (capacity-weighted fill over tankers that ran)
+    // Fleet KPIs. Headline fill is LITRE-weighted (Σ milk carried ÷ Σ capacity
+    // offered, one capacity per trip) — the same basis as the planner
+    // leaderboard, so the two agree. The trip-weighted mean of per-tanker
+    // fill % is kept as a secondary figure ("how full is a typical trip").
     const ran = rows.filter(x => x.trips > 0 && x.capacity_litres > 0);
-    const fleetFill = ran.length
+    const fleetFilled = ran.reduce((s2, x) => s2 + x.filled_litres, 0);
+    const fleetCap    = ran.reduce((s2, x) => s2 + x.capacity_offered_litres, 0);
+    const fleetFill   = fleetCap > 0 ? rN(fleetFilled / fleetCap * 100, 1) : null;
+    const fleetFillTripWeighted = ran.length
       ? rN(ran.reduce((s2, x) => s2 + (x.avg_fill_pct ?? 0) * x.trips, 0)
            / ran.reduce((s2, x) => s2 + x.trips, 0), 1)
       : null;
@@ -638,6 +645,8 @@ router.get('/utilisation', authenticate, async (req, res) => {
         tankers: rows.length, ran: ran.length,
         zero_trip: rows.filter(x => x.trips === 0).length,
         avg_fill_pct: fleetFill,
+        trip_weighted_fill_pct: fleetFillTripWeighted,
+        filled_litres: rN(fleetFilled), capacity_offered_litres: rN(fleetCap),
         most_utilised: most ? { tanker_number: most.tanker_number, fill_pct: most.avg_fill_pct } : null,
         least_utilised: least ? { tanker_number: least.tanker_number, fill_pct: least.avg_fill_pct } : null,
       },

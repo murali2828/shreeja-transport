@@ -584,7 +584,9 @@ export default function Analytics() {
         <Kpi label="Fleet Capacity Utilisation" accent={fillColor(util?.fleet?.avg_fill_pct)}
              color={fillColor(util?.fleet?.avg_fill_pct)}
              value={util?.fleet?.avg_fill_pct != null ? `${nf(util.fleet.avg_fill_pct, 1)} %` : '—'}
-             sub="Ack qty vs capacity, trip-weighted · sale tankers excluded" />
+             sub={util?.fleet?.avg_fill_pct != null
+               ? `${nf(util.fleet.filled_litres)} L carried of ${nf(util.fleet.capacity_offered_litres)} L offered · trip-weighted ${nf(util.fleet.trip_weighted_fill_pct, 1)} % · sale tankers excluded`
+               : 'Milk carried ÷ capacity offered · sale tankers excluded'} />
         <Kpi label="Most Utilised Tanker" accent={C.gain}
              value={util?.fleet?.most_utilised?.tanker_number || '—'}
              sub={util?.fleet?.most_utilised ? `${nf(util.fleet.most_utilised.fill_pct, 1)} % avg fill` : ''} />
