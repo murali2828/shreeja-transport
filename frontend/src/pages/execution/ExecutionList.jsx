@@ -229,6 +229,7 @@ export default function ExecutionList() {
               <tr>
                 <th className="table-th">Trip</th>
                 <th className="table-th">Tanker</th>
+                <th className="table-th">Starting Point</th>
                 <th className="table-th">Delivery Point</th>
                 <th className="table-th">Route</th>
                 <th className="table-th">Shift</th>
@@ -241,10 +242,10 @@ export default function ExecutionList() {
             </thead>
             <tbody>
               {loadingPlans && (
-                <tr><td colSpan={9} className="table-td text-center py-10 text-gray-400">Loading…</td></tr>
+                <tr><td colSpan={11} className="table-td text-center py-10 text-gray-400">Loading…</td></tr>
               )}
               {!loadingPlans && visiblePlans.length === 0 && (
-                <tr><td colSpan={9} className="table-td text-center py-10 text-gray-400">
+                <tr><td colSpan={11} className="table-td text-center py-10 text-gray-400">
                   No published plans for {fmtDate(date)}
                 </td></tr>
               )}
@@ -257,6 +258,7 @@ export default function ExecutionList() {
                       {p.tanker_number}
                       {p.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px] font-sans" title="Sale Tanker — milk sold, not delivered to a plant">SALE</span>}
                     </td>
+                    <td className="table-td text-xs">{p.start_point_name || '—'}</td>
                     <td className="table-td text-xs">{p.delivery_point_name || '—'}</td>
                     <td className="table-td text-xs text-gray-600">{p.route_name || '—'}</td>
                     <td className="table-td">{p.shifts_milk || '—'}</td>
