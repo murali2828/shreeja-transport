@@ -591,7 +591,7 @@ export default function Analytics() {
         <Kpi label="Unused Tankers" accent={util?.fleet?.zero_trip ? C.loss : C.gain}
              color={util?.fleet?.zero_trip ? C.loss : C.gain}
              value={nf(util?.fleet?.zero_trip)}
-             sub={`of ${nf(util?.fleet?.tankers)} tankers — zero trips this period · click to list`}
+             sub={`of ${nf(util?.fleet?.tankers)} active tankers — zero trips this period · click to list`}
              active={showUnused}
              onClick={() => setShowUnused(v => !v)} />
         <Kpi label="Highest Utilised Route" accent={C.gain}
@@ -614,7 +614,7 @@ export default function Analytics() {
             <button className="text-gray-400 hover:text-gray-700" onClick={() => setShowUnused(false)}><X size={14} /></button>
           </div>
           <div className="text-[11px] text-gray-400 mt-0.5 mb-2">
-            Tankers in Tanker Master with no trip planned for this period · maintenance days from gate passes
+            Active tankers in Tanker Master with no trip planned for this period · inactive tankers are not counted · maintenance days from gate passes
           </div>
           {unusedTankers.length === 0
             ? <div className="text-xs text-gray-400">Every tanker ran at least one trip in this period.</div>
