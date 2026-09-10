@@ -112,6 +112,13 @@ export default function TripPlanList() {
   const activePlans = plans.filter(p => p.status !== 'deleted');
   const totalQty  = activePlans.reduce((s, p) => s + parseFloat(p.expected_total_qty || 0), 0);
   const totalCost = activePlans.reduce((s, p) => s + parseFloat(p.total_cost || 0), 0);
+  // Day-level tanker utilisation: planned qty ÷ capacity of the tankers planned
+  // (each trip counts its tanker's capacity once), trip-weighted.
+  const totalCap  = activePlans.reduce((s, p) => s + parseFloat(p.capacity_litres || 0), 0);
+  const dayUtilPct = totalCap > 0 ? (totalQty / totalCap) * 100 : null;
+  const planners = [...new Set(activePlans.map(p => p.planner_name).filter(Boolean))];
+  const utilColor = v => v == null ? 'text-gray-400' : v >= 80 ? 'text-green-600' : v >= 60 ? 'text-amber-600' : 'text-red-500';
+  const utilBorder = v => v == null ? 'border-gray-200' : v >= 80 ? 'border-green-500' : v >= 60 ? 'border-amber-400' : 'border-red-400';
 
   const statusBadge = (s) => ({
     draft:     'bg-amber-100 text-amber-700',
@@ -247,19 +254,39 @@ export default function TripPlanList() {
           </select>
         </div>
         {activePlans.length > 0 && (
-          <div className="ml-auto text-xs text-gray-500 text-right">
-            <div>Total Qty: <strong className="text-[#005ba3]">{totalQty.toLocaleString()} L</strong></div>
-            <div>Total Cost: <strong className="text-green-700">₹{totalCost.toLocaleString('en-IN',{maximumFractionDigits:0})}</strong></div>
+          <div className="ml-auto flex flex-wrap items-center gap-4 text-xs text-gray-500">
+            <div className="text-right">
+              <div>Planner: <strong className="text-gray-800">{planners.length ? planners.join(', ') : '—'}</strong></div>
+              <div>Tanker Utilisation: <strong className={utilColor(dayUtilPct)}>{dayUtilPct == null ? '—' : `${dayUtilPct.toFixed(1)} %`}</strong>
+                <span className="text-gray-400"> ({totalQty.toLocaleString()} L of {totalCap.toLocaleString()} L capacity)</span></div>
+            </div>
+            <div className="text-right">
+              <div>Total Qty: <strong className="text-[#005ba3]">{totalQty.toLocaleString()} L</strong></div>
+              <div>Total Cost: <strong className="text-green-700">₹{totalCost.toLocaleString('en-IN',{maximumFractionDigits:0})}</strong></div>
+            </div>
           </div>
         )}
       </div>
 
       {/* Coverage summary */}
       {coverage && dateFilter && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <div className="card p-4 text-center border-l-4 border-[#005ba3]">
             <div className="text-2xl font-bold text-[#005ba3]">{coverage.total_plans}</div>
             <div className="text-xs text-gray-500 mt-0.5">Trips Planned</div>
+          </div>
+          <div className="card p-4 text-center border-l-4 border-[#8ec9ef]">
+            <div className="text-base font-bold text-gray-800 leading-tight truncate" title={planners.join(', ')}>
+              {planners.length ? planners.join(', ') : '—'}
+            </div>
+            <div className="text-xs text-gray-500 mt-0.5">Planner{planners.length > 1 ? 's' : ''}</div>
+          </div>
+          <div className={`card p-4 text-center border-l-4 ${utilBorder(dayUtilPct)}`}>
+            <div className={`text-2xl font-bold ${utilColor(dayUtilPct)}`}>
+              {dayUtilPct == null ? '—' : `${dayUtilPct.toFixed(1)}%`}
+            </div>
+            <div className="text-xs text-gray-500 mt-0.5">Tanker Utilisation</div>
+            <div className="text-xs text-gray-400">{totalQty.toLocaleString()} L of {totalCap.toLocaleString()} L</div>
           </div>
           <div className="card p-4 text-center border-l-4 border-green-500">
             <div className="text-2xl font-bold text-green-600">{coverage.bmcus_covered}</div>
