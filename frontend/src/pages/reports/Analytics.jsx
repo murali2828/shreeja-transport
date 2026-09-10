@@ -82,11 +82,14 @@ const fillColor = pct => pct == null ? C.neutral : pct >= 80 ? C.gain : pct >= 6
 // Freshness bands (avg shifts lifted per collection): <=1.5 green, <=2.5 amber, worse red
 const shiftsColor = v => v == null ? C.neutral : v <= 1.5 ? C.gain : v <= 2.5 ? AMBER : C.loss;
 
-function Kpi({ label, value, sub, color, accent, idx = 0 }) {
+function Kpi({ label, value, sub, color, accent, idx = 0, onClick, active }) {
   const a = accent || C.teal;
   return (
-    <div className="rounded-xl shadow-sm overflow-hidden border az-card az-rise"
-         style={{ background: '#ffffff', borderColor: a + '55',
+    <div className={`rounded-xl shadow-sm overflow-hidden border az-card az-rise ${onClick ? 'cursor-pointer hover:shadow-md' : ''}`}
+         onClick={onClick}
+         title={onClick ? 'Click to view the list' : undefined}
+         style={{ background: '#ffffff', borderColor: active ? a : a + '55',
+                  boxShadow: active ? `0 0 0 2px ${a}55` : undefined,
                   animationDelay: `${Math.min(idx * 60, 420)}ms` }}>
       <div className="px-3 py-1.5 text-xs font-bold text-white" style={{ background: a }}>
         {label}
@@ -379,6 +382,12 @@ export default function Analytics() {
       route_name: route || undefined, tanker_number: tanker || undefined } }).then(r => r.data),
     enabled: !!from && !!to,
   });
+  // Unused Tankers KPI → expandable list of the zero-trip tankers behind the count
+  const [showUnused, setShowUnused] = useState(false);
+  const unusedTankers = useMemo(
+    () => (util?.tankers || []).filter(t => t.trips === 0)
+            .sort((a, b) => a.tanker_number.localeCompare(b.tanker_number)),
+    [util]);
 
   const { data: fresh2 } = useQuery({
     queryKey: ['analytics-freshness', from, to, dp, route, tanker],
@@ -582,7 +591,9 @@ export default function Analytics() {
         <Kpi label="Unused Tankers" accent={util?.fleet?.zero_trip ? C.loss : C.gain}
              color={util?.fleet?.zero_trip ? C.loss : C.gain}
              value={nf(util?.fleet?.zero_trip)}
-             sub={`of ${nf(util?.fleet?.tankers)} tankers — zero trips this period`} />
+             sub={`of ${nf(util?.fleet?.tankers)} tankers — zero trips this period · click to list`}
+             active={showUnused}
+             onClick={() => setShowUnused(v => !v)} />
         <Kpi label="Highest Utilised Route" accent={C.gain}
              value={util?.route_extremes?.highest?.route_name || '—'}
              sub={util?.route_extremes?.highest ? `${nf(util.route_extremes.highest.fill_pct, 1)} % fill · ${nf(util.route_extremes.highest.trips)} trips` : ''} />
@@ -591,6 +602,35 @@ export default function Analytics() {
              value={util?.route_extremes?.lowest?.route_name || '—'}
              sub={util?.route_extremes?.lowest ? `${nf(util.route_extremes.lowest.fill_pct, 1)} % fill · ${nf(util.route_extremes.lowest.trips)} trips` : ''} />
       </div>
+
+      {showUnused && (
+        <div className="bg-white rounded-xl shadow-sm p-4 border az-panel az-rise"
+             style={{ borderColor: C.loss + '2e', borderLeft: `4px solid ${C.loss}` }}>
+          <div className="font-semibold text-sm flex items-center justify-between" style={{ color: C.ink }}>
+            <span className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full" style={{ background: C.loss }} />
+              Unused Tankers — zero trips {from} to {to}
+            </span>
+            <button className="text-gray-400 hover:text-gray-700" onClick={() => setShowUnused(false)}><X size={14} /></button>
+          </div>
+          <div className="text-[11px] text-gray-400 mt-0.5 mb-2">
+            Tankers in Tanker Master with no trip planned for this period · maintenance days from gate passes
+          </div>
+          {unusedTankers.length === 0
+            ? <div className="text-xs text-gray-400">Every tanker ran at least one trip in this period.</div>
+            : <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                {unusedTankers.map(t => (
+                  <div key={t.tanker_number} className="rounded-lg border px-3 py-2 text-xs" style={{ borderColor: C.loss + '44' }}>
+                    <div className="font-mono font-bold text-sm" style={{ color: C.loss }}>{t.tanker_number}</div>
+                    <div className="text-gray-500">
+                      {nf(t.capacity_litres)} L
+                      {t.maintenance_days > 0 && <span className="ml-2 text-amber-600">· maint {nf(t.maintenance_days, 1)} d</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>}
+        </div>
+      )}
 
       <LeaderTable
         title="Route Utilisation (fill % of tanker capacity · lowest first)"
