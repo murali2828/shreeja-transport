@@ -6,6 +6,7 @@ const ExcelJS      = require('exceljs');
 const nodemailer   = require('nodemailer');
 const { pool, query } = require('../config/db');
 const { authenticate, authorizeOrModule } = require('../middleware/auth');
+const { saleTankerSql } = require('../utils/saleTanker');
 
 const { createTransport } = require('../config/mailer');
 
@@ -66,9 +67,12 @@ async function calcCost(client, tankerId, expectedKm, expectedTotalQty) {
 router.get('/', authenticate, async (req, res) => {
   try {
     const { plan_for_date, status } = req.query;
+    // is_sale_tanker is overwritten with the shared rule (flag OR "SALE…"
+    // tanker) — node-postgres keeps the LAST column of a duplicate name.
     let sql = `
       SELECT tp.*,
         t.tanker_number, t.capacity_litres, t.per_km_rate,
+        ${saleTankerSql('tp', 't')} AS is_sale_tanker,
         sp.name AS start_point_name,
         dp.name AS delivery_point_name,
         rm.route_name,
@@ -98,9 +102,13 @@ router.get('/coverage', authenticate, async (req, res) => {
     const { plan_for_date } = req.query;
     if (!plan_for_date) return res.status(400).json({ error: 'plan_for_date required' });
 
-    // Total non-deleted plans for date
+    // Total non-deleted plans for date (+ how many are sale tankers)
     const plansRes = await query(
-      `SELECT COUNT(*) AS total_plans FROM trip_plans WHERE plan_for_date=$1 AND status != 'deleted'`,
+      `SELECT COUNT(*) AS total_plans,
+              COUNT(*) FILTER (WHERE ${saleTankerSql('tp', 't')}) AS sale_plans
+       FROM trip_plans tp
+       LEFT JOIN tankers t ON t.id = tp.tanker_id
+       WHERE tp.plan_for_date=$1 AND tp.status != 'deleted'`,
       [plan_for_date]
     );
 
@@ -133,6 +141,7 @@ router.get('/coverage', authenticate, async (req, res) => {
 
     res.json({
       total_plans: parseInt(plansRes.rows[0].total_plans),
+      sale_plans: parseInt(plansRes.rows[0].sale_plans) || 0,
       bmcus_covered: parseInt(coveredRes.rows[0].covered_count),
       bmcus_missed: missedRes.rows.length,
       total_active_bmcus: totalActiveBmcus,

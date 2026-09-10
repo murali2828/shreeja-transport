@@ -18,6 +18,7 @@ const { createTransport } = require('../config/mailer');
 // ═════════════════════════════════════════════════════════════════════════════
 const { calcKgs, calcKgFat, calcKgSnf } = require('../services/executionData');
 const { fmtDateDisplay } = require('../utils/date');
+const { saleTankerSql } = require('../utils/saleTanker');
 
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 
@@ -1649,6 +1650,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
   // the fallback Analytics → Utilisation already uses.
   const r = await query(`
     SELECT tp.trip_no, t.tanker_number, t.capacity_litres,
+           ${saleTankerSql('tp', 't')} AS is_sale_tanker,
            rm.route_name, sp.name AS starting_point, dp.name AS delivery_point,
            COALESCE(MIN(ta.ack_date), te.execution_date) AS ack_date,
            COUNT(ta.id) AS ack_count,
@@ -1669,7 +1671,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
       FROM trip_execution_bmcus teb WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE
     ) disp ON TRUE
     WHERE te.status != 'cancelled' AND tp.status NOT IN ('cancelled','deleted')
-    GROUP BY tp.id, tp.trip_no, t.tanker_number, t.capacity_litres,
+    GROUP BY tp.id, tp.trip_no, t.tanker_number, t.capacity_litres, tp.is_sale_tanker,
              rm.route_name, sp.name, dp.name, te.id, disp.litres, disp.kgs, disp.kg_fat, disp.kg_snf
     HAVING COALESCE(MIN(ta.ack_date), te.execution_date) BETWEEN $1 AND $2
     ORDER BY COALESCE(MIN(ta.ack_date), te.execution_date), tp.trip_no`, [fromDate, toDate]);
@@ -1678,9 +1680,14 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
     const litres = parseFloat(x.ack_litres) || 0;
     const kgs    = parseFloat(x.ack_kgs) || 0;
     const cap    = parseFloat(x.capacity_litres) || 0;
-    const util   = cap ? rN(litres / cap * 100) : null;
+    const isSale = !!x.is_sale_tanker;
+    // Sale tankers (milk sold, not delivered) carry no utilisation figure —
+    // the row stays for the litres, the % is blank and it is kept out of
+    // the fleet total on the page.
+    const util   = cap && !isSale ? rN(litres / cap * 100) : null;
     return {
       s_no: i + 1,
+      is_sale_tanker: isSale,
       starting_point: x.starting_point, delivery_point: x.delivery_point,
       ack_date: fmtDateDisplay(x.ack_date),
       tanker_number: x.tanker_number, route_name: x.route_name, trip_no: x.trip_no,
@@ -1691,8 +1698,9 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
       capacity: cap || null,
       utilization: util,
       remarks: [
+        isSale ? 'SALE tanker — not in utilisation' : '',
         util == null ? '' : util >= threshold ? `ABOVE ${threshold}` : `BELOW ${threshold}`,
-        parseInt(x.ack_count) === 0 ? '(dispatch qty — no ack, e.g. sold at BMCU)' : '',
+        !isSale && parseInt(x.ack_count) === 0 ? '(dispatch qty — no ack, e.g. sold at BMCU)' : '',
       ].filter(Boolean).join(' '),
     };
   });

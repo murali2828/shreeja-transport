@@ -6,8 +6,16 @@ import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight, MapPin } from
 import toast from 'react-hot-toast';
 import { getPlans, getExecutions, createExecution, cancelExecution, getExecutionCoverage } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
+import { fmtDate } from '../../utils/date';
 
-// Coverage panel: trips status split, BMCUs collected, BMCUs missed (expandable).
+// Same thresholds/colours as the Trip Plans page's day utilisation card.
+const utilColor  = v => v == null ? '#9ca3af' : v >= 80 ? '#22c55e' : v >= 60 ? '#f59e0b' : '#ef4444';
+const utilText   = v => v == null ? 'text-gray-400' : v >= 80 ? 'text-green-600' : v >= 60 ? 'text-amber-600' : 'text-red-500';
+const pctStr     = v => v == null ? '—' : `${parseFloat(v).toFixed(1)}%`;
+const nL         = v => (parseFloat(v) || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+
+// Coverage panel: trips status split, sale tankers, tanker utilisation,
+// BMCUs collected, BMCUs missed (expandable).
 function CoveragePanel({ date }) {
   const [open, setOpen] = useState(false);
   const { data: cov } = useQuery({
@@ -17,17 +25,41 @@ function CoveragePanel({ date }) {
   });
   if (!cov) return null;
   const t = cov.trips || {};
+  const s = cov.sale_trips || {};
+  const u = cov.utilisation || {};
   const missedCount = (cov.missed || []).length;
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         <div className="card p-4 text-center border-2" style={{ borderColor: '#3b82f6' }}>
           <div className="text-3xl font-bold text-blue-600">{t.planned || 0}</div>
           <div className="text-sm font-medium text-gray-700">Trips Planned</div>
           <div className="text-xs text-gray-500 mt-0.5">
             {t.in_progress || 0} in progress · {t.saved || 0} saved · {t.pending_ack || 0} pending ack · {t.closed || 0} closed
             {t.not_started ? ` · ${t.not_started} not started` : ''}
+          </div>
+        </div>
+        <div className="card p-4 text-center border-2" style={{ borderColor: s.planned ? '#7c3aed' : '#d1d5db' }}
+          title="Sale tankers — milk sold rather than delivered to a plant (planner flag or SALE… tanker). Included in Trips Planned, excluded from Tanker Utilisation.">
+          <div className={`text-3xl font-bold ${s.planned ? 'text-violet-700' : 'text-gray-400'}`}>{s.planned || 0}</div>
+          <div className="text-sm font-medium text-gray-700">Sale Tankers</div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            {s.planned
+              ? `${(s.in_progress || 0) + (s.saved || 0) + (s.pending_ack || 0)} in progress · ${s.closed || 0} closed${s.not_started ? ` · ${s.not_started} not started` : ''}`
+              : `none on ${fmtDate(date)}`}
+          </div>
+        </div>
+        <div className="card p-4 text-center border-2" style={{ borderColor: utilColor(u.planned_pct) }}
+          title="Planned: Σ expected qty ÷ Σ tanker capacity over the day's non-sale trips (one capacity per trip). Actual: Σ dispatched litres ÷ Σ capacity of non-sale trips that have dispatch data.">
+          <div className={`text-3xl font-bold ${utilText(u.planned_pct)}`}>{pctStr(u.planned_pct)}</div>
+          <div className="text-sm font-medium text-gray-700">Tanker Utilisation</div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            planned {nL(u.planned_litres)} L of {nL(u.capacity_litres)} L
+            {u.actual_pct != null && (
+              <> · actual <span className={`font-medium ${utilText(u.actual_pct)}`}>{pctStr(u.actual_pct)}</span> ({nL(u.dispatched_litres)} L)</>
+            )}
+            {s.planned ? ' · sale excl.' : ''}
           </div>
         </div>
         <div className="card p-4 text-center border-2" style={{ borderColor: '#22c55e' }}>
@@ -189,7 +221,7 @@ export default function ExecutionList() {
               )}
               {!loadingPlans && visiblePlans.length === 0 && (
                 <tr><td colSpan={9} className="table-td text-center py-10 text-gray-400">
-                  No published plans for {date}
+                  No published plans for {fmtDate(date)}
                 </td></tr>
               )}
               {visiblePlans.map(p => {
@@ -197,7 +229,10 @@ export default function ExecutionList() {
                 return (
                   <tr key={p.id} className="hover:bg-gray-50 border-b border-gray-50">
                     <td className="table-td font-bold text-[#0078d4]">#{p.trip_no}</td>
-                    <td className="table-td font-mono text-xs">{p.tanker_number}</td>
+                    <td className="table-td font-mono text-xs">
+                      {p.tanker_number}
+                      {p.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px] font-sans" title="Sale Tanker — milk sold, not delivered to a plant">SALE</span>}
+                    </td>
                     <td className="table-td text-xs">{p.delivery_point_name || '—'}</td>
                     <td className="table-td text-xs text-gray-600">{p.route_name || '—'}</td>
                     <td className="table-td">{p.shifts_milk || '—'}</td>

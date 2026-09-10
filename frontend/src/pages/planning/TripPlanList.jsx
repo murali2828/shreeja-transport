@@ -113,9 +113,14 @@ export default function TripPlanList() {
   const totalQty  = activePlans.reduce((s, p) => s + parseFloat(p.expected_total_qty || 0), 0);
   const totalCost = activePlans.reduce((s, p) => s + parseFloat(p.total_cost || 0), 0);
   // Day-level tanker utilisation: planned qty ÷ capacity of the tankers planned
-  // (each trip counts its tanker's capacity once), trip-weighted.
-  const totalCap  = activePlans.reduce((s, p) => s + parseFloat(p.capacity_litres || 0), 0);
-  const dayUtilPct = totalCap > 0 ? (totalQty / totalCap) * 100 : null;
+  // (each trip counts its tanker's capacity once), trip-weighted. Sale
+  // tankers (API's is_sale_tanker = planner flag OR "SALE…" tanker) are
+  // excluded — their milk is sold, not a fleet fill.
+  const fleetPlans = activePlans.filter(p => !p.is_sale_tanker);
+  const salePlans  = activePlans.length - fleetPlans.length;
+  const fleetQty  = fleetPlans.reduce((s, p) => s + parseFloat(p.expected_total_qty || 0), 0);
+  const totalCap  = fleetPlans.reduce((s, p) => s + parseFloat(p.capacity_litres || 0), 0);
+  const dayUtilPct = totalCap > 0 ? (fleetQty / totalCap) * 100 : null;
   const planners = [...new Set(activePlans.map(p => p.planner_name).filter(Boolean))];
   const utilColor = v => v == null ? 'text-gray-400' : v >= 80 ? 'text-green-600' : v >= 60 ? 'text-amber-600' : 'text-red-500';
   const utilBorder = v => v == null ? 'border-gray-200' : v >= 80 ? 'border-green-500' : v >= 60 ? 'border-amber-400' : 'border-red-400';
@@ -155,7 +160,10 @@ export default function TripPlanList() {
         {rows.map(p => (
           <tr key={p.id} className="hover:bg-gray-50 border-b border-gray-50">
             <td className="table-td font-bold text-[#0078d4]">#{p.trip_no}</td>
-            <td className="table-td font-mono text-xs">{p.tanker_number}</td>
+            <td className="table-td font-mono text-xs">
+              {p.tanker_number}
+              {p.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px] font-sans" title="Sale Tanker — milk sold, not delivered to a plant">SALE</span>}
+            </td>
             <td className="table-td text-gray-600 text-xs">{p.route_name || '—'}</td>
             <td className="table-td text-xs">{p.start_point_name || '—'}</td>
             <td className="table-td text-xs">{p.delivery_point_name || '—'}</td>
@@ -167,9 +175,11 @@ export default function TripPlanList() {
               ₹{parseFloat(p.total_cost||0).toLocaleString('en-IN',{maximumFractionDigits:0})}
             </td>
             <td className="table-td text-center text-xs">
-              <span className={`font-medium ${parseFloat(p.expected_utilization_pct||0)>=80?'text-green-600':parseFloat(p.expected_utilization_pct||0)>=60?'text-amber-600':'text-red-500'}`}>
-                {parseFloat(p.expected_utilization_pct||0).toFixed(0)}%
-              </span>
+              {p.is_sale_tanker ? <span className="text-gray-400" title="Sale tanker — no utilisation">—</span> : (
+                <span className={`font-medium ${parseFloat(p.expected_utilization_pct||0)>=80?'text-green-600':parseFloat(p.expected_utilization_pct||0)>=60?'text-amber-600':'text-red-500'}`}>
+                  {parseFloat(p.expected_utilization_pct||0).toFixed(0)}%
+                </span>
+              )}
             </td>
             <td className="table-td">
               <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge(p.status)}`}>
@@ -258,7 +268,8 @@ export default function TripPlanList() {
             <div className="text-right">
               <div>Planner: <strong className="text-gray-800">{planners.length ? planners.join(', ') : '—'}</strong></div>
               <div>Tanker Utilisation: <strong className={utilColor(dayUtilPct)}>{dayUtilPct == null ? '—' : `${dayUtilPct.toFixed(1)} %`}</strong>
-                <span className="text-gray-400"> ({totalQty.toLocaleString()} L of {totalCap.toLocaleString()} L capacity)</span></div>
+                <span className="text-gray-400"> ({fleetQty.toLocaleString()} L of {totalCap.toLocaleString()} L capacity{salePlans > 0 ? ', excl. sale' : ''})</span></div>
+              <div>Sale tankers: <strong className={salePlans > 0 ? 'text-violet-700' : 'text-gray-800'}>{salePlans}</strong></div>
             </div>
             <div className="text-right">
               <div>Total Qty: <strong className="text-[#005ba3]">{totalQty.toLocaleString()} L</strong></div>
@@ -286,7 +297,7 @@ export default function TripPlanList() {
               {dayUtilPct == null ? '—' : `${dayUtilPct.toFixed(1)}%`}
             </div>
             <div className="text-xs text-gray-500 mt-0.5">Tanker Utilisation</div>
-            <div className="text-xs text-gray-400">{totalQty.toLocaleString()} L of {totalCap.toLocaleString()} L</div>
+            <div className="text-xs text-gray-400">{fleetQty.toLocaleString()} L of {totalCap.toLocaleString()} L{salePlans > 0 ? ` · ${salePlans} sale excl.` : ''}</div>
           </div>
           <div className="card p-4 text-center border-l-4 border-green-500">
             <div className="text-2xl font-bold text-green-600">{coverage.bmcus_covered}</div>

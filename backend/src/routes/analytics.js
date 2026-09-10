@@ -13,6 +13,7 @@ const express = require('express');
 const router  = express.Router();
 const { query } = require('../config/db');
 const { authenticate } = require('../middleware/auth');
+const { saleTankerSql, saleTankerNumberSql } = require('../utils/saleTanker');
 
 const KG = 1.0285;
 // Common query-filter parsing: [from, to, delivery_point_id, route_name, tanker_number]
@@ -34,7 +35,10 @@ const baseTripsCte = `
            COALESCE(te.actual_km, te.calculated_km, 0) AS km,
            COALESCE(t.per_km_rate,0) * COALESCE(te.actual_km, te.calculated_km, 0) AS trip_cost,
            rm.route_name, dp.name AS delivery_point,
-           EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id=te.id) AS has_ack
+           EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id=te.id) AS has_ack,
+           -- Sale tanker (milk sold, not delivered to a plant). Volume / TS
+           -- panels keep these trips; UTILISATION figures must skip them.
+           ${saleTankerSql('tp', 't')} AS is_sale
     FROM trip_plans tp
     JOIN trip_executions te ON te.trip_plan_id = tp.id
     LEFT JOIN tankers t          ON t.id  = tp.tanker_id
@@ -496,6 +500,8 @@ router.get('/alerts', authenticate, async (req, res) => {
 // used as fallback for unacked trips), trips per active day. Includes tankers
 // with ZERO trips so unused fleet is visible. Inactive (retired/sold) tankers
 // are excluded so they don't inflate the Unused count every period.
+// Sale-tanker trips (planner flag OR "SALE…" tanker) are excluded from every
+// figure here, and the "SALE…" placeholder tanker is not a fleet vehicle.
 router.get('/utilisation', authenticate, async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
@@ -515,7 +521,7 @@ router.get('/utilisation', authenticate, async (req, res) => {
                SUM(ack_litres)  FILTER (WHERE has_ack) AS acked_litres,
                SUM(disp_litres) FILTER (WHERE NOT has_ack) AS unacked_disp_litres,
                SUM(km) AS km
-        FROM per_trip GROUP BY tanker_id
+        FROM per_trip WHERE NOT is_sale GROUP BY tanker_id
       ),
       maint AS (
         SELECT tanker_id, SUM(GREATEST(0, EXTRACT(EPOCH FROM (
@@ -539,6 +545,7 @@ router.get('/utilisation', authenticate, async (req, res) => {
       LEFT JOIN per_tanker pt ON pt.tanker_id = t.id
       LEFT JOIN maint m ON m.tanker_id = t.id
       WHERE t.is_active = TRUE
+        AND NOT ${saleTankerNumberSql('t')}
         AND ($5::text IS NULL OR t.tanker_number = $5::text)
       ORDER BY t.tanker_number`, params);
 
@@ -571,6 +578,7 @@ router.get('/utilisation', authenticate, async (req, res) => {
              SUM(km) AS km
       FROM per_trip
       WHERE route_name IS NOT NULL AND COALESCE(capacity_litres,0) > 0
+        AND NOT is_sale
       GROUP BY route_name`, params);
     const routeRows = rr.rows.map(x => ({
       route_name: x.route_name, trips: x.trips, tankers: x.tankers,
