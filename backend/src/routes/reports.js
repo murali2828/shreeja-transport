@@ -185,7 +185,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
     // used to leave its entries behind, and counting those orphans applied the
     // adjustment (e.g. a Left Over deduction) twice.
     const er = await query(`
-      SELECT e.execution_id, e.kind, e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id,
+      SELECT e.execution_id, e.kind, e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id, e.remarks,
              CASE WHEN e.kind='internal_shifting' THEN COALESCE(e.category,'Chilled Milk') ELSE e.category END AS category,
              sb.bmcu_name AS source_name, rb.bmcu_name AS dest_name, tp2.trip_no AS entry_trip_no
       FROM trip_execution_bmcu_entries e
@@ -224,7 +224,7 @@ async function buildTsReport(reportDate, basis = 'plan') {
       } else if (e.kind === 'internal_shifting') {
         const isRaw = e.category === 'Raw Milk';
         applyAdj(e.execution_id, 1, e.qty_litres, e.fat_pct, e.snf_pct); // receiving trip
-        note(e.execution_id, `+${qL(e.qty_litres)} ${isRaw ? 'raw milk' : 'chilled milk'} shifted in${e.source_name ? ` from ${e.source_name}` : ''}${e.dest_name ? ` to ${e.dest_name}` : ''}`);
+        note(e.execution_id, `+${qL(e.qty_litres)} ${isRaw ? 'raw milk' : 'chilled milk'} shifted in${e.source_name ? ` from ${e.source_name}` : ''}${e.dest_name ? ` to ${e.dest_name}` : ''}${e.remarks ? ` (${e.remarks})` : ''}`);
         // Raw Milk: added at the receiver only — nothing leaves the source
         // plant's chilled RMRD, so no deduction anywhere.
         if (isRaw) continue;
@@ -581,7 +581,7 @@ const ddmm = iso => `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
 const SHIFT_TYPES = ['Raw Milk', 'Chilled Milk'];
 async function addMilkShiftingSheet(wb, days) {
   const r = await query(`
-    SELECT tp.plan_for_date AS date, e.qty_litres, e.fat_pct, e.snf_pct,
+    SELECT tp.plan_for_date AS date, e.qty_litres, e.fat_pct, e.snf_pct, e.remarks,
            COALESCE(e.category, 'Chilled Milk') AS category,
            sb.bmcu_name AS source_name, rb.bmcu_name AS dest_name,
            teb.milk_date, teb.shift
@@ -596,10 +596,10 @@ async function addMilkShiftingSheet(wb, days) {
       AND tp.plan_for_date = ANY($1::date[])
     ORDER BY tp.plan_for_date, sb.bmcu_name`, [days]);
 
-  const NCOLS = 11;
+  const NCOLS = 12;
   const ws = wb.addWorksheet('Milk Shifting Day Wise');
   ws.columns = [{ width: 12 }, { width: 13 }, { width: 22 }, { width: 22 }, { width: 8 },
-    { width: 12 }, { width: 12 }, { width: 8 }, { width: 8 }, { width: 11 }, { width: 11 }];
+    { width: 12 }, { width: 12 }, { width: 8 }, { width: 8 }, { width: 11 }, { width: 11 }, { width: 30 }];
 
   ws.mergeCells(1, 1, 1, NCOLS);
   const t = ws.getCell(1, 1);
@@ -608,7 +608,7 @@ async function addMilkShiftingSheet(wb, days) {
   ws.getRow(1).height = 22;
 
   const HEADS = ['Date', 'Type', 'Shifted BMCU Name', 'Shifted to', 'Shift',
-    'Qty in Ltrs', 'Qty in Kgs', 'Fat %', 'Snf %', 'Fat Kgs', 'Snf Kgs'];
+    'Qty in Ltrs', 'Qty in Kgs', 'Fat %', 'Snf %', 'Fat Kgs', 'Snf Kgs', 'Remarks'];
   HEADS.forEach((h, i) => {
     const c = ws.getCell(2, i + 1);
     c.value = h;
@@ -639,12 +639,14 @@ async function addMilkShiftingSheet(wb, days) {
     const vals = [fmtDateDisplay(e.date), type, e.source_name || '', e.dest_name || '',
       e.milk_date && e.shift ? shiftLabel(e.milk_date, e.shift) : '',
       rN(litres, 2), rN(kgs, 2), numOrNull(e.fat_pct), numOrNull(e.snf_pct),
-      numOrNull(kgFat), numOrNull(kgSnf)];
+      numOrNull(kgFat), numOrNull(kgSnf), e.remarks || ''];
+    const REMARKS_IDX = vals.length - 1;
     vals.forEach((v, ci) => {
       const c = row.getCell(ci + 1);
       c.value = v ?? '';
       c.border = BORDER;
-      if (ci >= NUM_FROM) { c.numFmt = '#,##0.00'; c.alignment = { horizontal: 'right' }; }
+      if (ci >= NUM_FROM && ci < REMARKS_IDX) { c.numFmt = '#,##0.00'; c.alignment = { horizontal: 'right' }; }
+      if (ci === REMARKS_IDX) c.alignment = { wrapText: true, vertical: 'top' };
     });
   });
 
@@ -1078,7 +1080,7 @@ async function buildBmcuBreakup(reportDate) {
   const er = await query(`
     SELECT e.execution_id, e.bmcu_seq_no, e.kind,
            CASE WHEN e.kind='internal_shifting' THEN COALESCE(e.category,'Chilled Milk') ELSE e.category END AS category,
-           e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id,
+           e.qty_litres, e.fat_pct, e.snf_pct, e.source_bmcu_id, e.remarks,
            sb.bmcu_code AS source_bmcu_code, sb.bmcu_name AS source_bmcu_name
     FROM trip_execution_bmcu_entries e
     JOIN trip_execution_bmcus pb
@@ -1188,7 +1190,7 @@ async function buildBmcuBreakup(reportDate) {
     } else if (e.kind === 'internal_shifting') {
       const isRaw = e.category === 'Raw Milk';
       if (b) b.rows.push({ type: 'adjustment',
-        label: `${isRaw ? 'Raw Milk Shifting' : 'Chilled Milk Shifting'}${e.source_bmcu_code ? ` (from ${e.source_bmcu_code})` : ''}`,
+        label: `${isRaw ? 'Raw Milk Shifting' : 'Chilled Milk Shifting'}${e.source_bmcu_code ? ` (from ${e.source_bmcu_code})` : ''}${e.remarks ? ` — ${e.remarks}` : ''}`,
         shift: '', ...measures(e.qty_litres, e.fat_pct, e.snf_pct) });
       // Raw Milk: received at this BMCU only — the source plant's chilled RMRD
       // is untouched, so no deduction row and no "source not on trip" note.

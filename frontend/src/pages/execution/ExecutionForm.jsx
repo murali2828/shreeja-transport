@@ -490,9 +490,10 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                 <table key={t.value} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, marginTop: 6, tableLayout: 'fixed' }}>
                   <colgroup>
                     <col style={{ width: '240px' }}/>
-                    <col style={{ width: '130px' }}/>
-                    <col style={{ width: '120px' }}/>
-                    <col style={{ width: '120px' }}/>
+                    <col style={{ width: '110px' }}/>
+                    <col style={{ width: '90px' }}/>
+                    <col style={{ width: '90px' }}/>
+                    <col/>
                     <col style={{ width: '32px' }}/>
                   </colgroup>
                   <thead>
@@ -501,6 +502,7 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                       <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Qty (L)</th>
                       <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Fat%</th>
                       <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>SNF%</th>
+                      <th style={{ textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}>Remarks</th>
                       <th style={{ width: 28 }}></th>
                     </tr>
                   </thead>
@@ -528,6 +530,12 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
                           <input type="number" min="0" step="0.001" disabled={isClosed}
                             className="input py-0 px-1 text-xs w-16" value={e.snf_pct || ''}
                             onChange={ev => onUpdateEntry(e._key, 'snf_pct', ev.target.value)} placeholder="SNF%"/>
+                        </td>
+                        <td style={{ padding: '2px 4px' }}>
+                          <input type="text" maxLength={200} disabled={isClosed}
+                            className="input py-0 px-1 text-xs w-full" value={e.remarks || ''}
+                            onChange={ev => onUpdateEntry(e._key, 'remarks', ev.target.value)}
+                            placeholder="Remarks (reason / notes)"/>
                         </td>
                         <td style={{ padding: '2px 4px' }}>
                           {!isClosed && (
