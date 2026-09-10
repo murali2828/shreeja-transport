@@ -489,7 +489,8 @@ router.get('/alerts', authenticate, async (req, res) => {
 // Per tanker over the range: trips, active days, idle days, maintenance days,
 // capacity fill % (ACK quantity vs capacity on acknowledged trips — dispatch
 // used as fallback for unacked trips), trips per active day. Includes tankers
-// with ZERO trips so unused fleet is visible.
+// with ZERO trips so unused fleet is visible. Inactive (retired/sold) tankers
+// are excluded so they don't inflate the Unused count every period.
 router.get('/utilisation', authenticate, async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
@@ -532,7 +533,8 @@ router.get('/utilisation', authenticate, async (req, res) => {
       FROM tankers t
       LEFT JOIN per_tanker pt ON pt.tanker_id = t.id
       LEFT JOIN maint m ON m.tanker_id = t.id
-      WHERE ($5::text IS NULL OR t.tanker_number = $5::text)
+      WHERE t.is_active = TRUE
+        AND ($5::text IS NULL OR t.tanker_number = $5::text)
       ORDER BY t.tanker_number`, params);
 
     const rows = r.rows.map(x => {
