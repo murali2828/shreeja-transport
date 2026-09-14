@@ -53,3 +53,7 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# backup/restore (deploy/backup.sh) — secrets and restored material
+deploy/backup.env
+restored-config/
