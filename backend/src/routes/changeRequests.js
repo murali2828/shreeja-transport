@@ -40,7 +40,13 @@ function isApprover(reqUser, approver) {
 
 // ─── Snapshot of the execution's current data (same shape as the save payload) ─
 async function snapshotExecution(db, execId) {
-  const exec = await db.query('SELECT id, actual_km, dc_number, total_qty_litres, total_qty_kgs, start_point_id, delivery_point_id FROM trip_executions WHERE id=$1', [execId]);
+  // Starting / delivery point live on the trip plan (the execution save
+  // writes them there — see executionData.applyExecutionData).
+  const exec = await db.query(`
+    SELECT te.id, te.actual_km, te.dc_number, te.total_qty_litres, te.total_qty_kgs,
+           tp.start_point_id, tp.delivery_point_id
+    FROM trip_executions te JOIN trip_plans tp ON tp.id = te.trip_plan_id
+    WHERE te.id=$1`, [execId]);
   const bmcus = await db.query(`
     SELECT teb.*, b.bmcu_code, b.bmcu_name
     FROM trip_execution_bmcus teb JOIN bmcus b ON b.id=teb.bmcu_id
