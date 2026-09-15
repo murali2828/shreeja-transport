@@ -40,7 +40,7 @@ function isApprover(reqUser, approver) {
 
 // ─── Snapshot of the execution's current data (same shape as the save payload) ─
 async function snapshotExecution(db, execId) {
-  const exec = await db.query('SELECT id, actual_km, dc_number, total_qty_litres, total_qty_kgs FROM trip_executions WHERE id=$1', [execId]);
+  const exec = await db.query('SELECT id, actual_km, dc_number, total_qty_litres, total_qty_kgs, start_point_id, delivery_point_id FROM trip_executions WHERE id=$1', [execId]);
   const bmcus = await db.query(`
     SELECT teb.*, b.bmcu_code, b.bmcu_name
     FROM trip_execution_bmcus teb JOIN bmcus b ON b.id=teb.bmcu_id
@@ -55,6 +55,8 @@ async function snapshotExecution(db, execId) {
     'SELECT * FROM trip_third_party_sales WHERE execution_id=$1 ORDER BY id', [execId]);
   return {
     actual_km: exec.rows[0]?.actual_km,
+    start_point_id: exec.rows[0]?.start_point_id ?? null,
+    delivery_point_id: exec.rows[0]?.delivery_point_id ?? null,
     bmcus: bmcus.rows, shift_rows: shifts.rows,
     entries: entries.rows, acknowledgements: acks.rows,
     third_party_sales: thirdPartySales.rows,
@@ -65,37 +67,23 @@ async function snapshotExecution(db, execId) {
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const cell = (v) => v === null || v === undefined || v === '' ? '—' : esc(v);
 
-function diffRowsHtml(title, oldRows, newRows, keyFn, labelFn, fields) {
-  const oldBy = new Map((oldRows || []).map(r => [keyFn(r), r]));
-  const newBy = new Map((newRows || []).map(r => [keyFn(r), r]));
-  const keys = [...new Set([...oldBy.keys(), ...newBy.keys()])];
-  let rows = '';
-  for (const k of keys) {
-    const o = oldBy.get(k), n = newBy.get(k);
-    for (const f of fields) {
-      const ov = o ? o[f.key] : undefined;
-      const nv = n ? n[f.key] : undefined;
-      const oNum = parseFloat(ov), nNum = parseFloat(nv);
-      const same = (ov ?? '') === (nv ?? '') || (Number.isFinite(oNum) && Number.isFinite(nNum) && oNum === nNum);
-      if (same) continue;
-      rows += `<tr>
-        <td style="padding:4px 8px;border:1px solid #e5e7eb;">${esc(labelFn(o || n))}</td>
-        <td style="padding:4px 8px;border:1px solid #e5e7eb;">${esc(f.label)}</td>
-        <td style="padding:4px 8px;border:1px solid #e5e7eb;color:#6b7280;">${cell(ov)}</td>
-        <td style="padding:4px 8px;border:1px solid #e5e7eb;background:#fef3c7;font-weight:600;">${cell(nv)}</td>
-      </tr>`;
-    }
-  }
-  if (!rows) return '';
-  return `<h3 style="font-family:sans-serif;font-size:14px;margin:16px 0 6px;">${esc(title)}</h3>
-    <table style="border-collapse:collapse;font-family:sans-serif;font-size:12px;">
-      <tr style="background:#f3f4f6;">
-        <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Row</th>
-        <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Field</th>
-        <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Current</th>
-        <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Proposed</th>
-      </tr>${rows}</table>`;
-}
+// ─── One diff engine for both emails and the "nothing changed" guard ─────────
+// Returns [{ section, row, field, old, new }] — every editable field of the
+// save payload is compared, so a change that reaches the database is never
+// silent in the notification (CR #215: a BMCU code swap showed as "no
+// differences" because only quantities were compared).
+const sameVal = (ov, nv) => {
+  const a = ov ?? '', b = nv ?? '';
+  if (a === b) return true;
+  const an = parseFloat(a), bn = parseFloat(b);
+  if (Number.isFinite(an) && Number.isFinite(bn) && String(a).trim() !== '' && String(b).trim() !== '' && an === bn) return true;
+  // blank on one side and zero on the other: the form sends '' where the DB stores 0.00
+  if ((String(a).trim() === '' && bn === 0) || (String(b).trim() === '' && an === 0)) return true;
+  // dates: DATE columns arrive as 'YYYY-MM-DD' or ISO timestamps; compare the day
+  const ad = String(a).match(/^\d{4}-\d{2}-\d{2}/), bd = String(b).match(/^\d{4}-\d{2}-\d{2}/);
+  if (ad && bd && ad[0] === bd[0]) return true;
+  return false;
+};
 
 // Row label for a Balance / MPP / Shifting entry, e.g.
 // "BMCU #2 Internal Shifting (Chilled Milk)". Legacy internal-shifting rows
@@ -107,49 +95,93 @@ function entryRowLabel(r) {
   return `BMCU #${r.bmcu_seq_no} ${ENTRY_KIND_LABELS[r.kind] || r.kind || ''}${cat ? ` (${cat})` : ''}`;
 }
 
-function buildDiffHtml(snapshot, changes) {
-  const bmcuFields = [
-    { key: 'milk_date', label: 'Date' }, { key: 'shift', label: 'Shift' },
-    { key: 'qty_litres', label: 'Dispatch Qty L' }, { key: 'fat_pct', label: 'Fat%' },
-    { key: 'snf_pct', label: 'SNF%' }, { key: 'chamber', label: 'Chamber' },
-    { key: 'description', label: 'Description' },
-  ];
-  const shiftFields = [
-    { key: 'milk_date', label: 'Date' }, { key: 'shift', label: 'Shift' },
-    { key: 'rmrd_qty', label: 'RMRD Qty' }, { key: 'rmrd_fat_pct', label: 'RMRD Fat%' },
-    { key: 'rmrd_snf_pct', label: 'RMRD SNF%' },
-  ];
-  const entryFields = [
-    { key: 'category', label: 'Category' }, { key: 'qty_litres', label: 'Qty L' },
-    { key: 'fat_pct', label: 'Fat%' }, { key: 'snf_pct', label: 'SNF%' },
-    { key: 'remarks', label: 'Remarks' },
-  ];
-  const ackFields = [
-    { key: 'qty_litres', label: 'Qty Litres' }, { key: 'fat_pct', label: 'Fat%' },
-    { key: 'snf_pct', label: 'SNF%' }, { key: 'temperature', label: 'Temp' },
-    { key: 'description', label: 'Description' },
-  ];
-  const tpsFields = [
-    { key: 'qty_litres', label: 'Sale Qty L' }, { key: 'fat_pct', label: 'Fat%' },
-    { key: 'snf_pct', label: 'SNF%' }, { key: 'customer_name', label: 'Customer Name' },
-    { key: 'remarks', label: 'Remarks' },
-  ];
+// names: { points: Map<id,name>, bmcus: Map<id,code> } for readable values
+async function lookupNames() {
+  const names = { start: new Map(), delivery: new Map(), bmcus: new Map() };
+  try {
+    const [sp, dp, bm] = await Promise.all([
+      query('SELECT id, name FROM starting_points'),
+      query('SELECT id, name FROM delivery_points'),
+      query('SELECT id, bmcu_code, bmcu_name FROM bmcus'),
+    ]);
+    sp.rows.forEach(r => names.start.set(String(r.id), r.name));
+    dp.rows.forEach(r => names.delivery.set(String(r.id), r.name));
+    bm.rows.forEach(r => names.bmcus.set(String(r.id), `${r.bmcu_code} ${r.bmcu_name || ''}`.trim()));
+  } catch (e) { console.error('[changeRequests] name lookup failed:', e.message); }
+  return names;
+}
 
-  const kmDiff = (parseFloat(snapshot.actual_km) || 0) !== (parseFloat(changes.actual_km) || 0)
-    ? `<p style="font-family:sans-serif;font-size:13px;">Actual KM: <s>${cell(snapshot.actual_km)}</s> → <b style="background:#fef3c7;">${cell(changes.actual_km)}</b></p>` : '';
+function changeDiff(snapshot, changes, names = { start: new Map(), delivery: new Map(), bmcus: new Map() }) {
+  const out = [];
+  const push = (section, row, field, o, n) => out.push({ section, row, field, old: o, new: n });
+  const nm = (map, v) => v == null || v === '' ? '' : (map.get(String(v)) || String(v));
 
-  return kmDiff
-    + diffRowsHtml('BMCU Data Entry', snapshot.bmcus, changes.bmcus,
-        r => `${r.seq_no}`, r => `#${r?.seq_no} ${r?.bmcu_code || r?.bmcu_id || ''}`, bmcuFields)
-    + diffRowsHtml('Shift Rows', snapshot.shift_rows, changes.shift_rows,
-        r => `${r.bmcu_seq_no}|${r.milk_date || ''}|${r.shift || ''}`, r => `BMCU #${r?.bmcu_seq_no} ${r?.shift || ''}`, shiftFields)
-    + diffRowsHtml('Balance / MPP / Shifting Entries', snapshot.entries, changes.entries,
-        (r, i) => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`, entryRowLabel, entryFields)
-    + diffRowsHtml('Acknowledgement', snapshot.acknowledgements, changes.acknowledgements,
-        r => r.chamber, r => `Chamber ${r?.chamber}`, ackFields)
-    + diffRowsHtml('Third Party Sale', snapshot.third_party_sales, changes.third_party_sales,
-        (r, i) => `${r.id ?? i}`, r => `${r?.customer_name || 'Sale'}`, tpsFields)
-    || '<p style="font-family:sans-serif;font-size:13px;color:#6b7280;">(No field-level differences detected — review in the portal.)</p>';
+  // Trip-level scalars
+  if (!sameVal(snapshot.actual_km, changes.actual_km)) push('Trip', '', 'Actual KM', snapshot.actual_km, changes.actual_km);
+  if ('start_point_id' in changes && !sameVal(snapshot.start_point_id, changes.start_point_id))
+    push('Trip', '', 'Starting Point', nm(names.start, snapshot.start_point_id), nm(names.start, changes.start_point_id));
+  if ('delivery_point_id' in changes && !sameVal(snapshot.delivery_point_id, changes.delivery_point_id))
+    push('Trip', '', 'Delivery Point', nm(names.delivery, snapshot.delivery_point_id), nm(names.delivery, changes.delivery_point_id));
+
+  const live = rows => (rows || []).filter(r => r && !r.is_deleted);
+  const SECTIONS = [
+    ['BMCU Data Entry', live(snapshot.bmcus), live(changes.bmcus), r => `${r.seq_no}`,
+      r => `#${r?.seq_no}`,
+      [['bmcu_code','BMCU', (v, r) => v || nm(names.bmcus, r?.bmcu_id)],
+       ['milk_date','Date'],['shift','Shift'],['qty_litres','Dispatch Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%'],
+       ['chamber','Chamber'],['description','Description'],['rmrd_qty','RMRD Qty'],
+       ['dps_qty_litres','DPS Qty L'],['dps_fat_pct','DPS Fat%'],['dps_snf_pct','DPS SNF%']]],
+    ['Shift Rows', snapshot.shift_rows, changes.shift_rows, r => `${r.bmcu_seq_no}|${String(r.milk_date || '').slice(0,10)}|${r.shift || ''}`,
+      r => `BMCU #${r?.bmcu_seq_no} ${r?.milk_date ? fmtDateDisplay(r.milk_date) : ''} ${r?.shift || ''}`.trim(),
+      [['rmrd_qty','RMRD Qty'],['rmrd_fat_pct','RMRD Fat%'],['rmrd_snf_pct','RMRD SNF%']]],
+    ['Balance / MPP / Shifting Entries', snapshot.entries, changes.entries, r => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`,
+      entryRowLabel,
+      [['source_bmcu_id','Source Plant', v => nm(names.bmcus, v)],['qty_litres','Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%'],['remarks','Remarks']]],
+    ['Acknowledgement', snapshot.acknowledgements, changes.acknowledgements, r => r.chamber,
+      r => `Chamber ${r?.chamber}`,
+      [['ack_date','Ack Date', v => v ? fmtDateDisplay(v) : ''],['qty_litres','Qty Litres'],['qty_kgs','Qty Kgs'],['fat_pct','Fat%'],['snf_pct','SNF%'],['temperature','Temp'],['description','Description']]],
+    ['Third Party Sale', snapshot.third_party_sales, changes.third_party_sales, (r, i) => `${r.id ?? `new${i}`}`,
+      r => `${r?.customer_name || 'Sale'}`,
+      [['customer_name','Customer Name'],['qty_litres','Sale Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%'],['remarks','Remarks']]],
+  ];
+  for (const [section, oldRows, newRows, keyFn, labelFn, fields] of SECTIONS) {
+    const oldBy = new Map((oldRows || []).map((r, i) => [keyFn(r, i), r]));
+    const newBy = new Map((newRows || []).map((r, i) => [keyFn(r, i), r]));
+    for (const k of new Set([...oldBy.keys(), ...newBy.keys()])) {
+      const o = oldBy.get(k), n = newBy.get(k);
+      if (!o || !n) {
+        const r = o || n;
+        const summary = fields.slice(0, 4).map(([key, label, fmt]) => `${label}: ${(fmt ? fmt(r[key], r) : r[key]) ?? '—'}`).join(', ');
+        push(section, labelFn(r), o ? 'row removed' : 'row added', o ? summary : '', n ? summary : '');
+        continue;
+      }
+      for (const [key, label, fmt] of fields) {
+        if (!(key in o) && !(key in n)) continue;
+        const ov = fmt ? fmt(o[key], o) : o[key], nv = fmt ? fmt(n[key], n) : n[key];
+        if (sameVal(ov, nv)) continue;
+        push(section, labelFn(o), label, ov, nv);
+      }
+    }
+  }
+  return out;
+}
+
+function diffTableHtml(rows, { oldHead = 'Current', newHead = 'Proposed' } = {}) {
+  const td = (v, extra = '') => `<td style="padding:4px 8px;border:1px solid #e5e7eb;${extra}">${v}</td>`;
+  const body = rows.map(r => `<tr>${td(esc(r.section))}${td(esc(r.row ? `${r.row} — ${r.field}` : r.field))}${td(cell(r.old), 'color:#6b7280;')}${td(cell(r.new), 'background:#fef3c7;font-weight:600;')}</tr>`).join('');
+  return `<table style="border-collapse:collapse;font-family:sans-serif;font-size:12px;">
+    <tr style="background:#f3f4f6;">
+      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Section</th>
+      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Row / Field</th>
+      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">${oldHead}</th>
+      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">${newHead}</th>
+    </tr>${body}</table>`;
+}
+
+async function buildDiffHtml(snapshot, changes) {
+  const rows = changeDiff(snapshot, changes, await lookupNames());
+  if (!rows.length) return '<p style="font-family:sans-serif;font-size:13px;color:#6b7280;">(No field-level differences detected — review in the portal.)</p>';
+  return diffTableHtml(rows);
 }
 
 async function sendApprovalEmail(cr, execInfo, approver) {
@@ -168,7 +200,7 @@ async function sendApprovalEmail(cr, execInfo, approver) {
       (${esc(fmtDateDisplay(execInfo.execution_date))}).<br/>
       Reason: <i>${esc(cr.reason || '—')}</i>
     </p>
-    ${buildDiffHtml(cr.snapshot, cr.changes)}
+    ${await buildDiffHtml(cr.snapshot, cr.changes)}
     <p style="margin:20px 0;">
       <a href="${approveUrl}" style="font-family:sans-serif;background:#16a34a;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:600;">✔ APPROVE</a>
       &nbsp;&nbsp;
@@ -190,59 +222,6 @@ async function sendApprovalEmail(cr, execInfo, approver) {
   });
 }
 
-// Compact diff for the stakeholder FYI email: only genuinely changed fields
-// (rows present on both sides); added/removed rows collapse to one summary line.
-function compactDiffHtml(snapshot, changes) {
-  const SECTIONS = [
-    ['BMCU Data Entry', snapshot.bmcus, changes.bmcus, r => `${r.seq_no}`,
-      r => `#${r?.seq_no} ${r?.bmcu_code || r?.bmcu_id || ''}`,
-      [['qty_litres','Dispatch Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%'],['chamber','Chamber'],['milk_date','Date'],['shift','Shift']]],
-    ['Shift Rows', snapshot.shift_rows, changes.shift_rows, r => `${r.bmcu_seq_no}|${r.shift || ''}`,
-      r => `BMCU #${r?.bmcu_seq_no} ${r?.shift || ''}`,
-      [['rmrd_qty','RMRD Qty'],['rmrd_fat_pct','RMRD Fat%'],['rmrd_snf_pct','RMRD SNF%']]],
-    ['Balance / MPP / Shifting Entries', snapshot.entries, changes.entries, r => `${r.bmcu_seq_no}|${r.kind}|${r.category || ''}`,
-      entryRowLabel,
-      [['category','Category'],['qty_litres','Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%']]],
-    ['Acknowledgement', snapshot.acknowledgements, changes.acknowledgements, r => r.chamber,
-      r => `Chamber ${r?.chamber}`,
-      [['qty_litres','Qty Litres'],['fat_pct','Fat%'],['snf_pct','SNF%'],['temperature','Temp']]],
-    ['Third Party Sale', snapshot.third_party_sales, changes.third_party_sales, (r, i) => `${r.id ?? i}`,
-      r => `${r?.customer_name || 'Sale'}`,
-      [['qty_litres','Sale Qty L'],['fat_pct','Fat%'],['snf_pct','SNF%'],['customer_name','Customer Name']]],
-  ];
-  const td = (v, extra = '') => `<td style="padding:4px 8px;border:1px solid #e5e7eb;${extra}">${v}</td>`;
-  let rows = '';
-  for (const [section, oldRows, newRows, keyFn, labelFn, fields] of SECTIONS) {
-    const oldBy = new Map((oldRows || []).map(r => [keyFn(r), r]));
-    const newBy = new Map((newRows || []).map(r => [keyFn(r), r]));
-    for (const k of new Set([...oldBy.keys(), ...newBy.keys()])) {
-      const o = oldBy.get(k), n = newBy.get(k);
-      if (!o || !n) { // added/removed row → single summary line
-        const r = o || n;
-        rows += `<tr>${td(esc(section))}${td(esc(labelFn(r)))}${td(o ? 'row removed' : 'row added', 'font-style:italic;')}${td(cell(r.qty_litres), 'background:#fef3c7;')}</tr>`;
-        continue;
-      }
-      for (const [key, label] of fields) {
-        const ov = o[key], nv = n[key];
-        const oNum = parseFloat(ov), nNum = parseFloat(nv);
-        const same = (ov ?? '') === (nv ?? '') || (Number.isFinite(oNum) && Number.isFinite(nNum) && oNum === nNum);
-        if (same) continue;
-        rows += `<tr>${td(esc(section))}${td(esc(labelFn(o)) + ' — ' + esc(label))}${td(cell(ov), 'color:#6b7280;')}${td(cell(nv), 'background:#fef3c7;font-weight:600;')}</tr>`;
-      }
-    }
-  }
-  const kmO = parseFloat(snapshot.actual_km) || 0, kmN = parseFloat(changes.actual_km) || 0;
-  if (kmO !== kmN) rows = `<tr>${td('Trip')}${td('Actual KM')}${td(cell(snapshot.actual_km), 'color:#6b7280;')}${td(cell(changes.actual_km), 'background:#fef3c7;font-weight:600;')}</tr>` + rows;
-  if (!rows) return '<p style="font-family:sans-serif;font-size:13px;color:#6b7280;">(No field-level differences.)</p>';
-  return `<table style="border-collapse:collapse;font-family:sans-serif;font-size:12px;">
-    <tr style="background:#f3f4f6;">
-      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Section</th>
-      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Row / Field</th>
-      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">Old Value</th>
-      <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left;">New Value</th>
-    </tr>${rows}</table>`;
-}
-
 // Information-only email to stakeholders AFTER changes are applied (no action
 // links — only the approver receives the actionable email, to avoid accidental
 // approvals from CC recipients). Fire-and-forget.
@@ -257,6 +236,7 @@ async function sendAppliedInfoEmail(cr, deciderName) {
       LEFT JOIN tankers t ON t.id=tp.tanker_id
       WHERE te.id=$1`, [cr.execution_id]);
     const x = info.rows[0] || {};
+    const names = await lookupNames();
     const html = `
       <p style="font-family:sans-serif;font-size:14px;">Dear Team,</p>
       <p style="font-family:sans-serif;font-size:13px;">
@@ -272,7 +252,9 @@ async function sendAppliedInfoEmail(cr, deciderName) {
         <tr><td style="padding:3px 8px;border:1px solid #e5e7eb;font-weight:600;">Approved by</td>
             <td style="padding:3px 8px;border:1px solid #e5e7eb;">${esc(deciderName || '')}</td></tr>
       </table>
-      ${compactDiffHtml(cr.snapshot, cr.changes)}
+      ${(() => { const rows = changeDiff(cr.snapshot, cr.changes, names);
+                  return rows.length ? diffTableHtml(rows, { oldHead: 'Old Value', newHead: 'New Value' })
+                    : '<p style="font-family:sans-serif;font-size:13px;color:#6b7280;">(No field-level differences.)</p>'; })()}
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;"/>
       <p style="font-family:sans-serif;font-size:12px;color:#9ca3af;">Shreeja TMS · change request #${cr.id} · automated notification</p>`;
     const transporter = createTransport();
@@ -384,6 +366,8 @@ router.post('/executions/:id', authenticate, async (req, res) => {
       return res.status(400).json({ error: `Approver "${APPROVER_ID()}" has no email address configured` });
 
     const snapshot = await snapshotExecution({ query }, req.params.id);
+    if (!changeDiff(snapshot, changes).length)
+      return res.status(400).json({ error: 'No changes detected — the submitted data is identical to the current trip data' });
     const token = crypto.randomBytes(24).toString('hex');
 
     const ins = await query(
@@ -559,3 +543,4 @@ router.post('/:id/approve', authenticate, (req, res) => portalDecision(req, res,
 router.post('/:id/reject',  authenticate, (req, res) => portalDecision(req, res, 'reject'));
 
 module.exports = router;
+module.exports._internal = { changeDiff, sameVal };
