@@ -8,6 +8,13 @@
 -- Cleanup rule for existing duplicates, per plan: keep the execution with
 -- acknowledgement data, preferring the latest id; cancel the rest with a
 -- reason that names the kept execution so the choice is auditable.
+--
+-- The original status CHECK (001) never listed 'cancelled', so the cancel
+-- endpoint (009) has always failed on this table; widen it first.
+ALTER TABLE trip_executions DROP CONSTRAINT IF EXISTS trip_executions_status_check;
+ALTER TABLE trip_executions ADD CONSTRAINT trip_executions_status_check
+  CHECK (status IN ('in_progress','saved','pending_ack','closed','cancelled'));
+
 WITH ranked AS (
   SELECT te.id, te.trip_plan_id,
          ROW_NUMBER() OVER (
