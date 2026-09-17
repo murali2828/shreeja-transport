@@ -397,7 +397,7 @@ export default function TankerBilling() {
               <tbody>
                 {filteredTrips.map(t => (
                   <FragmentRow key={t.id} t={t} editable={editable} expanded={!!expanded[t.id]}
-                    carried={run?.from_date && t.plan_for_date < run.from_date}
+                    carried={!!t.carried_forward}
                     onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
                     val={val} setEdit={setEdit}
                     legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}
@@ -436,7 +436,7 @@ export default function TankerBilling() {
               <tbody>
                 {saleTrips.map(t => (
                   <FragmentRow key={t.id} t={t} editable={editable} expanded={!!expanded[t.id]}
-                    carried={run?.from_date && t.plan_for_date < run.from_date}
+                    carried={!!t.carried_forward}
                     onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
                     val={val} setEdit={setEdit}
                     legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}

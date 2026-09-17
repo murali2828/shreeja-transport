@@ -204,7 +204,9 @@ router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), asy
              -- acknowledgements directly); only vendor billing excludes it.
              (tp.is_sale_tanker OR t.tanker_number ILIKE 'SALE%') AS is_sale_tanker
       FROM trip_plans tp
-      JOIN trip_executions te ON te.trip_plan_id = tp.id
+      -- A plan can carry a CANCELLED execution next to its live one (trip
+      -- cancelled and restarted); only the live execution is billable.
+      JOIN trip_executions te ON te.trip_plan_id = tp.id AND te.status <> 'cancelled'
       LEFT JOIN tankers t          ON t.id  = tp.tanker_id
       LEFT JOIN vendors v          ON v.id  = t.vendor_id
       LEFT JOIN route_masters rm   ON rm.id = tp.route_id
@@ -248,14 +250,14 @@ router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), asy
            vendor_id, vendor_name, route_name, start_point, delivery_point,
            bmcu_count, ack_litres, ack_kgs, ack_fat_pct, ack_snf_pct, transport_type,
            system_km, google_km, master_km, estimated_km, billed_km, legs,
-           is_sale_tanker, excluded)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+           is_sale_tanker, excluded, carried_forward)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
         [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
          tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
          tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), rN(tr.ack_fat_pct, 3), rN(tr.ack_snf_pct, 3), transportType,
          rN(dist.total_km), googleRefKm, sumBy('master'), sumBy('estimated'),
          rN(dist.total_km), JSON.stringify(dist.legs),
-         !!tr.is_sale_tanker, !!tr.is_sale_tanker]);
+         !!tr.is_sale_tanker, !!tr.is_sale_tanker, !!tr.carried_forward]);
     }
     await client.query('COMMIT');
     res.json({ id: runId, trips: trips.rows.length, new_combinations: newCombos });
