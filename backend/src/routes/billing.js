@@ -153,17 +153,26 @@ router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), asy
     // carried trips still apply by their own PLANNING date.
     //
     // BILLING_CARRY_FORWARD_FLOOR (env, optional, 'YYYY-MM-DD'): the
-    // carry-forward window never reaches earlier than this date, regardless
-    // of the 31-day lookback. Set on production only, to '2026-08-16' —
+    // carry-forward window never reaches earlier than this BILLING date
+    // (plan_for_date + BILLING_DATE_OFFSET_DAYS), regardless of the 31-day
+    // lookback. For the Sep 2026 parallel run with the transport billing team
+    // it is '2026-09-01' so nothing from August is swept in. Set on production only, to '2026-08-16' —
     // billing cycles for 2nd fortnight July 2026 through 1st fortnight
     // August 2026 were intentionally never run, and those unbilled trips
     // must NOT be swept into the 2nd fortnight August 2026 run. Once every
     // run's own 31-day lookback naturally stays at/after this floor (i.e.
     // from the run after 2nd fortnight August 2026 onward), this setting
     // becomes a permanent no-op and can be left in place or removed.
+    // BILLING_DATE_OFFSET_DAYS (env, default 0): the transport billing team
+    // bills a trip on its DELIVERY date, which is the milk-lifting date
+    // (= trip_plans.plan_for_date) + 1. With offset 1 a run for 1–15 Sep
+    // selects plan_for_date 31 Aug – 14 Sep, matching the team's "Sep 1st FN"
+    // tanker cards exactly (verified row for row on 17 Sep 2026). Set to 1 on
+    // both tiers; leave 0 only for a fortnight defined on lifting dates.
+    const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
     const trips = await client.query(`
       SELECT te.id AS execution_id, tp.plan_for_date::text AS plan_for_date,
-             (tp.plan_for_date < $1::date) AS carried_forward,
+             (tp.plan_for_date + ($5::int) < $1::date) AS carried_forward,
              t.tanker_number, t.capacity_litres, t.vendor_id,
              COALESCE(v.vendor_name, t.vendor_name) AS vendor_name,
              rm.route_name, sp.name AS start_point, dp.name AS delivery_point,
@@ -201,7 +210,8 @@ router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), asy
       LEFT JOIN route_masters rm   ON rm.id = tp.route_id
       LEFT JOIN starting_points sp ON sp.id = tp.start_point_id
       LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
-      WHERE tp.plan_for_date BETWEEN GREATEST($1::date - INTERVAL '31 days', COALESCE($4::date, '1900-01-01'::date)) AND $2
+      WHERE tp.plan_for_date + ($5::int)
+              BETWEEN GREATEST($1::date - INTERVAL '31 days', COALESCE($4::date, '1900-01-01'::date)) AND $2::date
         AND tp.status NOT IN ('cancelled','deleted')
         AND (
           -- Acknowledgement entry must be fully complete by the fortnight
@@ -214,7 +224,7 @@ router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), asy
         )
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
       ORDER BY tp.plan_for_date, t.tanker_number`,
-      [from_date, to_date, `${to_date} 23:59:59`, process.env.BILLING_CARRY_FORWARD_FLOOR || null]);
+      [from_date, to_date, `${to_date} 23:59:59`, process.env.BILLING_CARRY_FORWARD_FLOOR || null, offsetDays]);
 
     // Preload the whole Distance Master once — avoids ~5 SELECTs per trip
     // (an N+1 of thousands of round-trips on a full fortnight).
