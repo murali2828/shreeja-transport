@@ -343,12 +343,17 @@ router.post('/', authenticate, authorizeOrModule('execution', 'admin','planner',
       return res.status(400).json({ error: 'Plan not found or not published' });
 
     // Check not already started
+    // Any live execution — open OR closed — blocks a second one (a closed
+    // trip is re-opened via a change request, never re-started). Backed by
+    // the partial unique index from migration 043.
     const existing = await client.query(
-      "SELECT id FROM trip_executions WHERE trip_plan_id=$1 AND status NOT IN ('closed')",
+      "SELECT id, status FROM trip_executions WHERE trip_plan_id=$1 AND status <> 'cancelled'",
       [trip_plan_id]
     );
     if (existing.rows.length)
-      return res.status(409).json({ error: 'Execution already in progress for this plan' });
+      return res.status(409).json({ error: existing.rows[0].status === 'closed'
+        ? 'This trip is already closed — use a change request to correct it'
+        : 'Execution already in progress for this plan' });
 
     const r = await client.query(
       `INSERT INTO trip_executions (trip_plan_id,execution_date,dc_number,executed_by)
