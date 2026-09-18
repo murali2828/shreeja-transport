@@ -6,6 +6,18 @@
 // final status code are known. Fire-and-forget — auditing never breaks a request.
 
 const { pool } = require('../config/db');
+
+// id → login id cache for tokens that predate user_id in the JWT payload.
+const loginCache = new Map();
+async function loginOf(id) {
+  if (loginCache.has(id)) return loginCache.get(id);
+  try {
+    const r = await pool.query('SELECT user_id FROM users WHERE id=$1', [id]);
+    const v = r.rows[0]?.user_id || null;
+    loginCache.set(id, v);
+    return v;
+  } catch { return null; }
+}
 const { snapshotterFor, diffSnapshots, logChanges } = require('../services/changeTracker');
 
 const SKIP_PREFIXES = ['/audit', '/health'];
@@ -109,13 +121,17 @@ async function auditLog(req, res, next) {
     res.json = (body) => { try { createdId = body?.id ?? null; } catch {} return origJson(body); };
   }
 
-  res.on('finish', () => {
+  res.on('finish', async () => {
     try {
       const success = res.statusCode < 400;
       const user = req.user || {};
-      const userLogin = /\/auth\/login/.test(path)
+      // Login id: from the JWT (issued with user_id since Sep 2026); tokens
+      // issued before that carry only the numeric id, so fall back to a
+      // cached lookup. For login attempts, whatever identifier was typed.
+      let userLogin = /\/auth\/login/.test(path)
         ? String(req.body?.user_id || req.body?.username || '')
         : (user.user_id || null);
+      if (!userLogin && user.id) userLogin = await loginOf(user.id);
 
       pool.query(
         `INSERT INTO audit_logs
