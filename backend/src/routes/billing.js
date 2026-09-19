@@ -963,7 +963,7 @@ router.post('/runs/:id/recalc-distances', authenticate, authorizeOrModule('billi
       if (dist.legs.some(l => l.source === 'missing')) stillMissing++;
       const r = await client.query(`
         UPDATE billing_run_trips
-           SET system_km=$1, google_km=$2, master_km=$3, estimated_km=$4, legs=$5, updated_at=NOW()
+           SET system_km=$1, google_km=$2, master_km=$3, estimated_km=$4, legs=$5::jsonb, updated_at=NOW()
          WHERE id=$6 AND (system_km IS DISTINCT FROM $1 OR google_km IS DISTINCT FROM $2 OR legs::text IS DISTINCT FROM $5::text)`,
         [rN(dist.total_km), googleRefKm, sumBy('master'), sumBy('estimated'), JSON.stringify(dist.legs), t.id]);
       changed += r.rowCount;
