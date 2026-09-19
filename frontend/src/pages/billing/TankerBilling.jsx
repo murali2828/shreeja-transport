@@ -226,6 +226,7 @@ export default function TankerBilling() {
       </div>
 
       {view === 'runs' && user?.role === 'admin' && <VendorEmailToggle/>}
+      {view === 'runs' && canEdit && month && <MissingCoordinates from={fnDates().from} to={fnDates().to} />}
 
       {view === 'report' && <PaymentReport />}
 
@@ -343,6 +344,8 @@ export default function TankerBilling() {
           </button>
         </>)}
       </div>
+
+      <MissingCoordinates runId={openRunId} />
 
       {/* new route combinations — approval-chain notice */}
       {newComboCount > 0 && (
@@ -799,6 +802,47 @@ function VendorAssignRow({ tankerNumber, vendorList, onAssign, pending }) {
           ))}
           <button className="w-full text-center px-3 py-1 text-gray-400 hover:bg-gray-50 border-t" onClick={() => setOpen(false)}>close</button>
         </div>
+      )}
+    </div>
+  );
+}
+
+// Points (BMCU / starting / delivery) without coordinates among the trips of a
+// run, or of the fortnight about to be executed. Every leg touching one of
+// them gets 0 km ("missing") and no Google reference — fix the master first.
+function MissingCoordinates({ runId, from, to }) {
+  const [open, setOpen] = useState(false);
+  const enabled = !!runId || (!!from && !!to);
+  const { data } = useQuery({
+    queryKey: ['billing-missing-coords', runId || null, from || null, to || null],
+    queryFn: () => api.get('/billing/missing-coordinates', { params: runId ? { run_id: runId } : { from_date: from, to_date: to } }).then(r => r.data),
+    enabled,
+  });
+  if (!enabled || !data) return null;
+  const pts = data.points || [];
+  if (!pts.length) return (
+    <div className="card p-2.5 text-xs" style={{ background: '#edf7ee', border: '1px solid #008300', color: '#1f5e21' }}>
+      ✓ Every BMCU, starting point and delivery point on {runId ? 'this run' : 'this fortnight'} has coordinates — Google KM will cover the full round trip.
+    </div>);
+  const KIND = { bmcu: 'BMCU', starting_point: 'Starting Point', delivery_point: 'Delivery Point' };
+  const LINK = { bmcu: '/masters/bmcus', starting_point: '/masters/locations', delivery_point: '/masters/locations' };
+  return (
+    <div className="card p-3 text-xs" style={{ background: '#fdecec', border: '1px solid #e34948' }}>
+      <button className="w-full text-left flex items-center gap-2" onClick={() => setOpen(o => !o)}>
+        {open ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
+        <span className="font-bold" style={{ color: '#9b1c1c' }}>⚠ {pts.length} location(s) without coordinates</span>
+        <span style={{ color: '#57534e' }}>— {data.trips_affected} trip(s) {runId ? 'in this run' : 'in this fortnight'} will have a leg at 0 km and no Google KM reference. Add latitude/longitude in the masters{runId ? ', then click Recalc Distances' : ' before executing'}.</span>
+      </button>
+      {open && (
+        <table className="mt-2 w-full text-xs">
+          <thead><tr className="text-left text-gray-500"><th className="pr-3">Type</th><th className="pr-3">Location</th><th className="text-right">Trips</th></tr></thead>
+          <tbody>{pts.map(p => (
+            <tr key={p.kind + p.id} className="border-t border-red-100">
+              <td className="pr-3 py-0.5">{KIND[p.kind]}</td>
+              <td className="pr-3 py-0.5"><a className="text-blue-700 hover:underline" href={LINK[p.kind]} target="_blank" rel="noreferrer">{p.name}</a></td>
+              <td className="text-right py-0.5">{p.trips}</td>
+            </tr>))}</tbody>
+        </table>
       )}
     </div>
   );

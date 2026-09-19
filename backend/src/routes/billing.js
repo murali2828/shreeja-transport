@@ -290,6 +290,68 @@ router.get('/runs', authenticate, authorizeOrModule('billing', ...canBill, 'view
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── GET /api/billing/missing-coordinates?run_id=N | from_date&to_date ────────
+// Every BMCU / starting point / delivery point WITHOUT latitude+longitude that
+// is touched by the trips of a run (run_id) or by the trips a fortnight run
+// WOULD pick up (from_date/to_date, billing-date basis). Lets the biller fix
+// masters before executing, and explains "missing" legs on an existing run.
+router.get('/missing-coordinates', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+  try {
+    const { run_id, from_date, to_date } = req.query;
+    const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
+    let execFilter, params;
+    if (run_id) {
+      execFilter = 'te.id IN (SELECT execution_id FROM billing_run_trips WHERE run_id = $1)';
+      params = [run_id];
+    } else if (from_date && to_date) {
+      execFilter = `tp.plan_for_date + ($3::int) BETWEEN $1::date AND $2::date
+        AND tp.status NOT IN ('cancelled','deleted') AND te.status <> 'cancelled'`;
+      params = [from_date, to_date, offsetDays];
+    } else return res.status(400).json({ error: 'run_id or from_date+to_date required' });
+
+    const r = await query(`
+      WITH ex AS (
+        SELECT te.id AS execution_id, tp.start_point_id, tp.delivery_point_id
+        FROM trip_executions te JOIN trip_plans tp ON tp.id = te.trip_plan_id
+        WHERE ${execFilter}
+      ),
+      pts AS (
+        SELECT 'bmcu' AS kind, teb.bmcu_id AS id, ex.execution_id
+        FROM ex JOIN trip_execution_bmcus teb ON teb.execution_id = ex.execution_id AND teb.is_deleted = FALSE
+        UNION ALL SELECT 'starting_point', start_point_id, execution_id FROM ex WHERE start_point_id IS NOT NULL
+        UNION ALL SELECT 'delivery_point', delivery_point_id, execution_id FROM ex WHERE delivery_point_id IS NOT NULL
+      ),
+      named AS (
+        SELECT p.kind, p.id, p.execution_id,
+               CASE p.kind WHEN 'bmcu' THEN b.bmcu_code || ' — ' || b.bmcu_name
+                           WHEN 'starting_point' THEN sp.name ELSE dp.name END AS name,
+               CASE p.kind WHEN 'bmcu' THEN b.latitude WHEN 'starting_point' THEN sp.latitude ELSE dp.latitude END AS lat,
+               CASE p.kind WHEN 'bmcu' THEN b.longitude WHEN 'starting_point' THEN sp.longitude ELSE dp.longitude END AS lng
+        FROM pts p
+        LEFT JOIN bmcus b            ON p.kind = 'bmcu'           AND b.id  = p.id
+        LEFT JOIN starting_points sp ON p.kind = 'starting_point' AND sp.id = p.id
+        LEFT JOIN delivery_points dp ON p.kind = 'delivery_point' AND dp.id = p.id
+      )
+      SELECT kind, id, name, COUNT(DISTINCT execution_id)::int AS trips
+      FROM named WHERE lat IS NULL OR lng IS NULL
+      GROUP BY kind, id, name
+      ORDER BY trips DESC, kind, name`, params);
+    res.json({ points: r.rows, trips_affected: r.rows.length
+      ? (await query(`SELECT COUNT(DISTINCT execution_id)::int AS n FROM (
+           SELECT te.id AS execution_id, tp.start_point_id, tp.delivery_point_id
+           FROM trip_executions te JOIN trip_plans tp ON tp.id = te.trip_plan_id WHERE ${execFilter}) ex
+         WHERE EXISTS (SELECT 1 FROM trip_execution_bmcus teb JOIN bmcus b ON b.id = teb.bmcu_id
+                       WHERE teb.execution_id = ex.execution_id AND teb.is_deleted = FALSE AND (b.latitude IS NULL OR b.longitude IS NULL))
+            OR EXISTS (SELECT 1 FROM starting_points sp WHERE sp.id = ex.start_point_id AND (sp.latitude IS NULL OR sp.longitude IS NULL))
+            OR EXISTS (SELECT 1 FROM delivery_points dp WHERE dp.id = ex.delivery_point_id AND (dp.latitude IS NULL OR dp.longitude IS NULL))`,
+         params)).rows[0].n
+      : 0 });
+  } catch (err) {
+    console.error('Billing missing-coordinates error:', err);
+    res.status(500).json({ error: 'Failed to check coordinates' });
+  }
+});
+
 // ── GET /api/billing/runs/:id — full detail ──────────────────────────────────
 router.get('/runs/:id', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
   try {
