@@ -936,6 +936,47 @@ router.post('/runs/:id/push-vendor', authenticate, authorizeOrModule('billing', 
   }
 });
 
+// ── POST /api/billing/runs/:id/recalc-distances ─────────────────────────────
+// Recompute System / Google / Master / Estimated KM and the leg breakdown for
+// every trip of an unsubmitted run, e.g. after plant coordinates or Distance
+// Master rows were added. The biller's Billed KM, state, rate, amount,
+// remarks and exclusions are left exactly as they are — only the reference
+// figures move. Refuses once the run is in the approval chain.
+router.post('/runs/:id/recalc-distances', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const runId = req.params.id;
+    const run = (await client.query('SELECT * FROM billing_runs WHERE id=$1', [runId])).rows[0];
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (!['draft', 'rejected', 'pending_vendor'].includes(run.status))
+      return res.status(400).json({ error: 'Distances can only be recalculated before the run is submitted for approval' });
+    const trips = (await client.query(
+      'SELECT id, execution_id FROM billing_run_trips WHERE run_id=$1 ORDER BY id', [runId])).rows;
+    await client.query('BEGIN');
+    const masterCache = await loadMasterDistanceCache(client);
+    let changed = 0, stillMissing = 0, newCombos = 0;
+    for (const t of trips) {
+      const dist = await computeExecutionDistance(client, t.execution_id, req.user.id, masterCache);
+      const sumBy = src => rN(dist.legs.filter(l => l.source === src).reduce((s, l) => s + l.km, 0));
+      const googleRefKm = rN(dist.legs.reduce((s, l) => s + (l.google_km || 0), 0));
+      newCombos += dist.legs.filter(l => l.is_new).length;
+      if (dist.legs.some(l => l.source === 'missing')) stillMissing++;
+      const r = await client.query(`
+        UPDATE billing_run_trips
+           SET system_km=$1, google_km=$2, master_km=$3, estimated_km=$4, legs=$5, updated_at=NOW()
+         WHERE id=$6 AND (system_km IS DISTINCT FROM $1 OR google_km IS DISTINCT FROM $2 OR legs::text IS DISTINCT FROM $5::text)`,
+        [rN(dist.total_km), googleRefKm, sumBy('master'), sumBy('estimated'), JSON.stringify(dist.legs), t.id]);
+      changed += r.rowCount;
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, trips: trips.length, changed, still_missing_legs: stillMissing, new_combos: newCombos });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Billing recalc-distances error:', err);
+    res.status(500).json({ error: 'Failed to recalculate distances' });
+  } finally { client.release(); }
+});
+
 // ── POST /api/billing/runs/:id/submit — finalize & start the approval chain ─
 router.post('/runs/:id/submit', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {

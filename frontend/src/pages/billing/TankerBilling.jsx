@@ -127,6 +127,16 @@ export default function TankerBilling() {
 
   const [vendorFilter, setVendorFilter] = useState([]); // [{id, vendor_name}] — empty = all vendors
 
+  const recalcMut = useMutation({
+    mutationFn: () => api.post(`/billing/runs/${openRunId}/recalc-distances`),
+    onSuccess: r => {
+      const d = r.data;
+      toast.success(`Distances recalculated: ${d.changed} of ${d.trips} trips updated` +
+        (d.still_missing_legs ? ` · ${d.still_missing_legs} trip(s) still have a leg without coordinates` : ''), { duration: 8000 });
+      qc.invalidateQueries({ queryKey: ['billing-run', openRunId] });
+    },
+    onError: e => toast.error(e.response?.data?.error || 'Recalculation failed'),
+  });
   const pushVendorMut = useMutation({
     mutationFn: () => api.post(`/billing/runs/${openRunId}/push-vendor`,
       vendorFilter.length ? { vendor_ids: vendorFilter.map(v => v.id) } : {}),
@@ -290,6 +300,13 @@ export default function TankerBilling() {
         <button className="btn-secondary text-xs flex items-center gap-1.5" onClick={downloadReport}>
           <Download size={13}/> Report{vendorFilter.length ? ` (${vendorFilter.length})` : ''}
         </button>
+        {editable && ['draft', 'rejected', 'pending_vendor'].includes(run.status) && (
+          <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={recalcMut.isPending}
+            title="Recompute System / Google / Master KM and the leg breakdown for every trip (e.g. after plant coordinates or Distance Master rows were added). Billed KM, state, rate and amount are not touched."
+            onClick={() => recalcMut.mutate()}>
+            <RefreshCw size={13} className={recalcMut.isPending ? 'animate-spin' : ''}/> {recalcMut.isPending ? 'Recalculating…' : 'Recalc Distances'}
+          </button>
+        )}
         {editable && ['draft', 'rejected', 'pending_vendor'].includes(run.status) && (
           <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={pushVendorMut.isPending}
                   title={vendorFilter.length
