@@ -119,4 +119,24 @@ See [PRODUCTION_DEPLOYMENT_GUIDE.md](./PRODUCTION_DEPLOYMENT_GUIDE.md) for full 
 
 ---
 
+## Documentation
+
+Current operating docs live in `docs/` (the Quick Start above and the deploy script section describe the original PM2/Nginx install; the live deployment is Docker Compose with two tiers — see `docs/ENVIRONMENTS.md`).
+
+| Doc | What it covers |
+|-----|----------------|
+| [CLAUDE.md](./CLAUDE.md) / [AGENTS.md](./AGENTS.md) | One-page project guide: commands, architecture, must-not-break rules |
+| [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Module map, data flow, integrations, data model, environments |
+| [docs/CONVENTIONS.md](./docs/CONVENTIONS.md) | Code style, naming, error handling, API contract style |
+| [docs/WORKFLOW.md](./docs/WORKFLOW.md) | Local setup, checks, branching (`qa` → `main`), deploy, rollback, secrets |
+| [docs/RUNBOOK.md](./docs/RUNBOOK.md) | Start/stop, health checks, logs, common failures, integration troubleshooting |
+| [docs/DECISIONS.md](./docs/DECISIONS.md) | Architecture decision records |
+| [docs/CHANGELOG.md](./docs/CHANGELOG.md) | Notable changes by fortnight |
+| [docs/ENVIRONMENTS.md](./docs/ENVIRONMENTS.md) | QA vs PROD matrix, deploy commands, WheelsEye and Assure settings |
+| [docs/BACKUP_RESTORE_STRATEGY.md](./docs/BACKUP_RESTORE_STRATEGY.md) | Backup design, restore runbook, drill calendar |
+| [docs/assure-handover/](./docs/assure-handover/) | Shreeja Assure integration contract (`API_SPEC_v1.md`) and handover notes |
+| [DOCKER_DEPLOY.md](./DOCKER_DEPLOY.md), [PRODUCTION_DEPLOYMENT_GUIDE.md](./PRODUCTION_DEPLOYMENT_GUIDE.md), [QUICKSTART.md](./QUICKSTART.md), [GITHUB_SETUP_GUIDE.md](./GITHUB_SETUP_GUIDE.md), [FILE_MANIFEST.md](./FILE_MANIFEST.md), [INTEGRATION-FACTS.md](./INTEGRATION-FACTS.md) | Earlier guides kept for reference |
+
+---
+
 *Shreeja Transport Management System — built for Shreeja Dairy Operations*
