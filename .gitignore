@@ -57,3 +57,7 @@ temp/
 # backup/restore (deploy/backup.sh) — secrets and restored material
 deploy/backup.env
 restored-config/
+
+# ─── Claude Code — personal overrides stay local ──────────────────────────────
+CLAUDE.local.md
+.claude/settings.local.json
