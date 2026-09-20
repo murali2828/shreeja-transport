@@ -85,9 +85,9 @@ runs exactly the two checks above on push/PR to `qa` and `main`.
    git fetch origin && git checkout main && git pull origin main
    docker compose -p shreeja-transport -f docker-compose.yml --env-file .env up -d --build
    ```
-   TODO(verify): `ENVIRONMENTS.md` shows the plain `docker compose up -d --build` form
-   (default project name); the compose project name must match whatever the running
-   stack was created with, otherwise a second stack is created beside the first.
+   The `-p shreeja-transport` / `-p shreeja-qa` project names are what the running
+   stacks were created with (verified against the operator's deploy output, Sep 2026);
+   the compose files also pin container names, so the plain form in older docs works too.
 6. Watch `docker logs -f shreeja-backend` for `[migrate]` lines and `[server]` start,
    then hit `/api/health` through the domain.
 

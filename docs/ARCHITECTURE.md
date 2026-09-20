@@ -121,7 +121,7 @@ Soft (non-FK) integer user references are deliberate so rows survive user deleti
 | Compose | `docker-compose.yml`, `.env`, project `shreeja-transport` | `docker-compose.qa.yml`, `.env.qa`, project `shreeja-qa` |
 | Host port → nginx | 127.0.0.1:8080 | 127.0.0.1:8081 |
 | DB / volumes | `dairy_transport`, `shreeja-pgdata`, `shreeja-docuploads` | `dairy_transport_qa`, `shreeja-qa-pgdata`, `shreeja-qa-docuploads` |
-| Billing module | `BILLING_ENABLED` unset (503) until sign-off — TODO(verify) current prod value | `BILLING_ENABLED=true` |
+| Billing module | `BILLING_ENABLED=true` since Aug 2026 (parallel run with the transport billing team, Sep 2026) | `BILLING_ENABLED=true` |
 
 Host nginx (`deploy/reverse-proxy.conf.example`) terminates TLS for both domains. Full detail in
 [`ENVIRONMENTS.md`](./ENVIRONMENTS.md).
