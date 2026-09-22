@@ -1072,6 +1072,18 @@ router.post('/runs/:id/submit', authenticate, authorizeOrModule('billing', ...ca
        WHERE run_id=$1 AND amount > 0 AND file_data IS NOT NULL`, [runId])).rows.map(r => r.tanker_number));
     const carried = tankers.filter(tn => !validTolls.has(tn));
     let carriedTrips = 0;
+    // Dropping trips is destructive: it discards the biller's keyed km / state
+    // on every trip of those tankers (run #14, 2026-09-21 lost 592 trips this
+    // way). So it only happens when the biller has seen the list and confirmed.
+    if (carried.length && req.body?.confirm_carry_forward !== true) {
+      const n = (await query(
+        `SELECT COUNT(*)::int AS n FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE AND tanker_number = ANY($2)`,
+        [runId, carried])).rows[0].n;
+      return res.status(409).json({
+        error: `${carried.length} tanker(s) have no toll challan (${n} trip(s)). Upload their challans on the Toll Challans tab, or confirm to carry those trips forward to the next fortnight.`,
+        code: 'TOLLS_MISSING', tankers: carried, trips: n,
+      });
+    }
     if (carried.length) {
       const del = await query(
         `DELETE FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE AND tanker_number = ANY($2) RETURNING id`,
