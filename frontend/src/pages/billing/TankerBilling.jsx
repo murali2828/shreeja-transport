@@ -110,7 +110,7 @@ export default function TankerBilling() {
   });
 
   const submitMut = useMutation({
-    mutationFn: () => api.post(`/billing/runs/${openRunId}/submit`),
+    mutationFn: (body) => api.post(`/billing/runs/${openRunId}/submit`, body || {}),
     onSuccess: r => {
       if (r.data.carried_forward?.length)
         toast(`⚠ ${r.data.carried_forward.length} tanker(s) had no toll challan — ${r.data.carried_trips} trip(s) removed from this run and will be carried forward: ${r.data.carried_forward.join(', ')}`,
@@ -122,7 +122,18 @@ export default function TankerBilling() {
       qc.invalidateQueries(['billing-run', openRunId]);
       qc.invalidateQueries(['billing-runs']);
     },
-    onError: e => toast.error(e.response?.data?.error || e.message, { duration: 8000 }),
+    onError: e => {
+      const d = e.response?.data;
+      if (d?.code === 'TOLLS_MISSING') {
+        const ok = window.confirm(
+          `${d.tankers.length} tanker(s) have NO toll challan in this run (${d.trips} trip(s)):\n\n${d.tankers.join(', ')}\n\n` +
+          `Cancel = go back and upload their challans (Toll Challans tab).\n` +
+          `OK = REMOVE those ${d.trips} trip(s) from this run and carry them forward to the next fortnight — their keyed km/state on this run will be discarded.`);
+        if (ok) submitMut.mutate({ confirm_carry_forward: true });
+        return;
+      }
+      toast.error(d?.error || e.message, { duration: 8000 });
+    },
   });
 
   const [vendorFilter, setVendorFilter] = useState([]); // [{id, vendor_name}] — empty = all vendors
@@ -338,7 +349,7 @@ export default function TankerBilling() {
                     if (Object.keys(edits).length) return toast.error('Save your changes first');
                     if (unassignedTankers.length)
                       return toast.error(`No vendor mapped for: ${unassignedTankers.join(', ')} — assign a vendor on the Vendor Wise tab first`, { duration: 8000 });
-                    window.confirm(`Submit ₹ ${nf(run?.total_amount)} for approval? Email goes to Mahesh K (L1).`) && submitMut.mutate();
+                    window.confirm(`Submit ₹ ${nf(run?.total_amount)} for approval? Email goes to Mahesh K (L1).`) && submitMut.mutate({});
                   }}>
             <Send size={13}/> Submit for Approval
           </button>
