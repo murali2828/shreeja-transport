@@ -103,17 +103,8 @@ async function refreshRunTotal(runId) {
 }
 
 // Rate lookup: state × transport type × capacity KL, period covering planDate.
-async function findRate(state, transportType, capacityLitres, planDate) {
-  if (!state || !transportType || !capacityLitres || !planDate) return null;
-  const r = await query(`
-    SELECT id, rate_per_km FROM tanker_rates
-    WHERE state = $1 AND transport_type = $2
-      AND ABS(capacity_kl - $3::numeric / 1000.0) < 0.051
-      AND $4::date BETWEEN effective_from AND effective_to
-    ORDER BY ABS(capacity_kl - $3::numeric / 1000.0)
-    LIMIT 1`, [state, transportType, capacityLitres, planDate]);
-  return r.rows[0] || null;
-}
+// Shared with the Day Optimizer so both price a trip identically.
+const { findRate } = require('../services/rates');
 
 function recomputeAmount(trip) {
   return (trip.billed_km != null && trip.rate_per_km != null)
