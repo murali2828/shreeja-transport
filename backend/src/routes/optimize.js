@@ -116,9 +116,13 @@ router.get('/day/preview', authenticate, canPlan, v2Gate, async (req, res) => {
   try {
     const radius = parseFloat(process.env.OPTIMIZER_PREFETCH_RADIUS_KM || '150') || 150;
     const includeSale = String(req.query.include_sale || '') === 'true';
-    const { bmcus, plants, catchments, fleet, excluded, demand, distMap } = await dayData.buildInstance(p.plan_for_date, p.shift, [], { includeSale });
+    const { instance, bmcus, plants, catchments, fleet, excluded, demand, distMap } = await dayData.buildInstance(p.plan_for_date, p.shift, [], { includeSale });
     const plantById = Object.fromEntries(plants.map(pl => [pl.id, pl]));
+    // Past dates: how the forecast compares with the executed RMRD, before a run
+    const forecastAccuracy = await dayData.loadForecastAccuracy(p.plan_for_date, instance.nodes, includeSale,
+      { shift: p.shift, plantNameById: Object.fromEntries(plants.map(pl => [pl.id, pl.name])) });
     res.json({
+      forecast_accuracy: forecastAccuracy,
       plan_for_date: p.plan_for_date, shift: p.shift,
       constraints: DEFAULT_CONSTRAINTS,
       demand: demand.filter(d => p.shift === 'BOTH' || d.shift === p.shift).map(d => ({
@@ -166,7 +170,10 @@ router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
 
     await dayData.saveForecasts(p.plan_for_date, demand, overrides);
     const comparison = await dayData.loadComparison(p.plan_for_date, p.shift, fleet, rates);
+    const forecastAccuracy = await dayData.loadForecastAccuracy(p.plan_for_date, instance.nodes, req.body?.include_sale === true,
+      { shift: p.shift, plantNameById: Object.fromEntries(plants.map(pl => [pl.id, pl.name])) });
     if (comparison) {
+      comparison.forecast_accuracy = forecastAccuracy;
       // Deltas are optimiser − actual; the executed block is the primary one
       // (₹/L and fill use executed RMRD litres), the flat fields mirror it.
       const d = (a, b) => a == null || b == null ? null : Math.round((a - b) * 100) / 100;
@@ -235,7 +242,7 @@ router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
       constraints: result.constraints,
       plants: plants.filter(pl => instance.plants.some(ip => ip.id === pl.id)).map(pl => ({ id: pl.id, name: pl.name })),
       trips: result.trips, totals: result.totals, unserved: result.unserved,
-      excluded_tankers: excluded, warnings: result.warnings, comparison, stats: result.stats,
+      excluded_tankers: excluded, warnings: result.warnings, comparison, forecast_accuracy: forecastAccuracy, stats: result.stats,
     });
   } catch (err) {
     console.error('[optimizer-v2] run error:', err);
@@ -342,6 +349,15 @@ router.get('/:sessionId(\\d+)/report', authenticate, canPlan, v2Gate, async (req
       ws.getCell(r, 5).font = { color: { argb: 'FF6B7280' } };
       r++;
     }
+    const fa = cmp?.forecast_accuracy || null;
+    if (fa) {
+      const pct = fa.error_pct == null ? '' : ` (${fa.error_pct > 0 ? '+' : ''}${fa.error_pct} %)`;
+      xlRow(ws, r, ['Forecast vs actual RMRD',
+        `Forecast ${Math.round(fa.forecast_litres).toLocaleString('en-IN')} L · Actual RMRD vendor ${Math.round(fa.actual_rmrd_vendor).toLocaleString('en-IN')} L · sale ${Math.round(fa.actual_rmrd_sale).toLocaleString('en-IN')} L · all ${Math.round(fa.actual_rmrd_all).toLocaleString('en-IN')} L · error ${fa.error_litres > 0 ? '+' : ''}${Math.round(fa.error_litres).toLocaleString('en-IN')} L${pct} — see sheet "Forecast vs RMRD"`]);
+      const ap = Math.abs(fa.error_pct ?? 0);
+      ws.getCell(r, 2).font = { bold: true, color: { argb: ap <= 5 ? 'FF1E8449' : ap <= 10 ? 'FFB7791F' : 'FFC0392B' } };
+      r++;
+    }
     if (ex?.basis) { xlRow(ws, r, ['Actual basis', ex.basis]); r++; }
     if (pl?.basis) { xlRow(ws, r, ['Planned basis', pl.basis]); r++; }
     if (cmp?.note) { xlRow(ws, r, ['Note', cmp.note]); r++; }
@@ -435,6 +451,36 @@ router.get('/:sessionId(\\d+)/report', authenticate, canPlan, v2Gate, async (req
     }
     xlRow(wk, kr, ['TOTAL', '', '', '', all.trips, all.litres, all.cap ? all.litres / all.cap * 100 : null, all.km, all.cost, all.litres ? all.cost / all.litres : null, `${perTanker.size} tankers`],
       { 5: INT_FMT, 6: KM_FMT, 7: KM_FMT, 8: INR_FMT, 9: '0.0000' }, { bold: true, fill: 'FFF1F5F9' });
+
+    // ── Forecast vs RMRD (only when the date was executed) ──────────────────
+    if (fa) {
+      const wf = wb.addWorksheet('Forecast vs RMRD');
+      wf.columns = [30, 16, 16, 16, 14, 24].map(w => ({ width: w }));
+      xlTitle(wf, `Forecast vs actual RMRD — ${fmtDdMm(fa.date)} (${fa.shift === 'BOTH' ? 'AM+PM' : fa.shift})`, 6);
+      let fr = 3;
+      const fkv = (k, v, fmt) => { xlRow(wf, fr, [k, v], { 1: fmt }); fr++; };
+      fkv('Basis', fa.basis_label || fa.basis);
+      fkv('Forecast litres (after planner overrides)', n(fa.forecast_litres), INT_FMT);
+      fkv('Actual RMRD — vendor tankers', n(fa.actual_rmrd_vendor), INT_FMT);
+      fkv('Actual RMRD — sale tankers', n(fa.actual_rmrd_sale), INT_FMT);
+      fkv('Actual RMRD — all', n(fa.actual_rmrd_all), INT_FMT);
+      fkv(`Error litres (forecast − ${fa.basis} RMRD)`, n(fa.error_litres), INT_FMT);
+      fkv('Error %', fa.error_pct == null ? '' : n(fa.error_pct), KM_FMT);
+      const ap = Math.abs(fa.error_pct ?? 0);
+      wf.getCell(fr - 1, 2).font = { bold: true, color: { argb: ap <= 5 ? 'FF1E8449' : ap <= 10 ? 'FFB7791F' : 'FFC0392B' } };
+      fkv('BMCUs forecast', fa.bmcus_forecast, INT_FMT); fkv('BMCUs lifted', fa.bmcus_lifted, INT_FMT);
+      fkv('Forecast but not lifted', fa.bmcus_forecast_not_lifted, INT_FMT); fkv('Lifted but not forecast', fa.bmcus_lifted_not_forecast, INT_FMT);
+      fr++;
+      xlHeader(wf, fr, ['BMCU', 'Plant', 'Forecast L', 'Actual RMRD L', 'Diff L', 'Lifted by / note']); fr++;
+      wf.views = [{ state: 'frozen', ySplit: fr - 1 }];
+      for (const b of fa.per_bmcu || []) {
+        const note = [b.lifted_by, b.flag === 'forecast_not_lifted' ? 'forecast but not lifted' : b.flag === 'lifted_not_forecast' ? 'lifted but not forecast' : null].filter(Boolean).join(' · ');
+        xlRow(wf, fr, [`${b.bmcu_code || ''} ${b.bmcu_name || ''}`.trim(), b.plant_name || '', n(b.forecast), n(b.actual), n(b.diff), note], { 2: INT_FMT, 3: INT_FMT, 4: INT_FMT });
+        if (b.diff) wf.getCell(fr, 5).font = { color: { argb: b.diff > 0 ? 'FFC0392B' : 'FF1E8449' } };
+        fr++;
+      }
+      xlRow(wf, fr, ['TOTAL', '', n(fa.forecast_litres), n(fa.basis === 'all' ? fa.actual_rmrd_all : fa.actual_rmrd_vendor), n(fa.error_litres), ''], { 2: INT_FMT, 3: INT_FMT, 4: INT_FMT }, { bold: true, fill: 'FFF1F5F9' });
+    }
 
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=day_optimizer_${s.plan_for_date}_session${s.id}.xlsx`);

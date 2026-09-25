@@ -154,6 +154,12 @@ where the trip is in a billing run, else `COALESCE(actual_km, calculated_km)`
 × the Tanker Rate Master rate (same lookup as the optimiser). The planned
 figures stay visible as a muted reference column.
 
+Forecast accuracy (2026-09-26): for an executed date the page (Inputs step and
+Results), the run response (`comparison.forecast_accuracy`) and the Excel sheet
+"Forecast vs RMRD" show forecast litres vs the day's actual RMRD per BMCU and in
+total — vendor / sale / all split, error % against the matching basis (vendor
+unless sale milk was included), BMCUs forecast-but-not-lifted and lifted-but-not-forecast.
+
 ## 4. Delivery plan (QA)
 
 | Phase | Weeks | Deliverable | Depends on |

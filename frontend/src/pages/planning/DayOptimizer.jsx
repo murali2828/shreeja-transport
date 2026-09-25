@@ -75,6 +75,63 @@ function Delta({ value, unit = '', lowerIsBetter = true, digits = 0 }) {
   return <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${cls}`}>{value > 0 ? '+' : ''}{nf(value, digits)}{unit}</span>;
 }
 
+// Forecast vs actual RMRD of an executed date: totals line coloured by error
+// band (green ≤5 %, amber ≤10 %, red beyond) and a collapsible per-BMCU table.
+function ForecastAccuracyPanel({ fa }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  if (!fa) return null;
+  const ap = Math.abs(fa.error_pct ?? 0);
+  const band = fa.error_pct == null ? 'text-gray-600 bg-gray-50 border-gray-200'
+    : ap <= 5 ? 'text-green-700 bg-green-50 border-green-200' : ap <= 10 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-red-700 bg-red-50 border-red-200';
+  const sign = v => (v > 0 ? '+' : '') + nf(v);
+  const ql = q.toLowerCase();
+  const rows = ql ? fa.per_bmcu.filter(b => b.bmcu_code?.toLowerCase().includes(ql) || b.bmcu_name?.toLowerCase().includes(ql) || b.plant_name?.toLowerCase().includes(ql)) : fa.per_bmcu;
+  return (
+    <div className="card p-4">
+      <div className="text-sm font-semibold mb-1 flex items-center gap-2"><Info size={14}/> Forecast vs actual RMRD — {fmtDate(fa.date)}{fa.shift !== 'BOTH' && ` (${fa.shift})`}</div>
+      <div className={`inline-block rounded-lg border px-3 py-1.5 text-sm font-medium ${band}`}>
+        Forecast {nf(fa.forecast_litres)} L · Actual RMRD vendor {nf(fa.actual_rmrd_vendor)} L · sale {nf(fa.actual_rmrd_sale)} L · all {nf(fa.actual_rmrd_all)} L
+        · error {sign(fa.error_litres)} L{fa.error_pct != null && ` (${fa.error_pct > 0 ? '+' : ''}${nf(fa.error_pct, 1)} %)`}
+      </div>
+      <div className="text-xs text-gray-500 mt-2">
+        {fa.basis_label}. Error = (forecast − {fa.basis} RMRD) / {fa.basis} RMRD; green within ±5 %, amber within ±10 %.
+        {' '}{nf(fa.bmcus_forecast)} BMCUs forecast, {nf(fa.bmcus_lifted)} lifted · {nf(fa.bmcus_forecast_not_lifted)} forecast but not lifted · {nf(fa.bmcus_lifted_not_forecast)} lifted but not forecast.
+      </div>
+      <div className="flex items-center gap-3 mt-2 flex-wrap">
+        <button className="btn-secondary btn-sm" onClick={() => setOpen(o => !o)}>{open ? 'Hide BMCUs' : `Show ${nf(fa.per_bmcu.length)} BMCUs`}</button>
+        {open && <input className="input py-1 text-xs w-52" placeholder="Search BMCU / plant…" value={q} onChange={e => setQ(e.target.value)}/>}
+        {open && <span className="text-xs text-gray-400">BMCUs forecast but not lifted and lifted but not forecast are listed first, then by largest difference.</span>}
+      </div>
+      {open && (
+        <div className="overflow-auto max-h-[420px] mt-2">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-gray-50 border-b"><tr>
+              <th className="table-th">BMCU</th><th className="table-th">Plant</th><th className="table-th text-right">Forecast L</th>
+              <th className="table-th text-right">Actual RMRD L</th><th className="table-th text-right">Diff L</th><th className="table-th">Lifted by</th></tr></thead>
+            <tbody>
+              {rows.map(b => (
+                <tr key={b.bmcu_id} className={`border-b border-gray-50 ${b.flag ? 'bg-amber-50/40' : ''}`}>
+                  <td className="table-td"><span className="font-mono text-[#005ba3] font-semibold">{b.bmcu_code}</span> <span className="text-gray-600">{b.bmcu_name}</span></td>
+                  <td className="table-td text-gray-600">{b.plant_name || '—'}</td>
+                  <td className="table-td text-right">{nf(b.forecast)}</td>
+                  <td className="table-td text-right">{nf(b.actual)}</td>
+                  <td className="table-td text-right"><span className={`px-1.5 py-0.5 rounded font-semibold ${b.diff === 0 ? 'text-gray-500' : b.diff > 0 ? 'text-red-700 bg-red-50' : 'text-sky-800 bg-sky-50'}`}
+                    title={b.diff > 0 ? 'over-forecast' : b.diff < 0 ? 'under-forecast' : ''}>{sign(b.diff)}</span></td>
+                  <td className="table-td">{b.lifted_by || <span className="text-gray-400">not lifted</span>}
+                    {b.flag === 'forecast_not_lifted' && <span className="badge bg-amber-50 text-amber-700 ml-1">forecast, not lifted</span>}
+                    {b.flag === 'lifted_not_forecast' && <span className="badge bg-amber-50 text-amber-700 ml-1">lifted, not forecast</span>}</td>
+                </tr>
+              ))}
+              {!rows.length && <tr><td colSpan={6} className="table-td text-center text-gray-400 py-4">No BMCUs match</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DayOptimizer() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -299,6 +356,8 @@ export default function DayOptimizer() {
         </div>
       </div>
 
+      {preview?.forecast_accuracy && <ForecastAccuracyPanel fa={preview.forecast_accuracy}/>}
+
       <div className="flex justify-end">
         <button className="btn-primary flex items-center gap-2" disabled={runMut.isPending || !preview}
           onClick={() => runMut.mutate()}>
@@ -364,6 +423,7 @@ export default function DayOptimizer() {
             </div>
           );
         })()}
+        <ForecastAccuracyPanel fa={result.forecast_accuracy || comparison?.forecast_accuracy}/>
 
         {unserved?.length > 0 && (
           <div className="card p-3 border-red-300 bg-red-50 text-sm text-red-800 flex items-center gap-2">

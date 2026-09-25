@@ -536,6 +536,85 @@ async function loadComparison(planDate, shift, fleet, rates) {
   return cmp;
 }
 
+// ─── Forecast accuracy: forecast vs the day's actual RMRD ───────────────────
+// Only meaningful once the date is executed. `demandRows` are the per-BMCU
+// nodes the run used (instance.nodes: litres after planner overrides and the
+// shift scope). Actual RMRD per BMCU comes from trip_execution_bmcu_shifts
+// joined to live trip_execution_bmcus — the same rows loadDemand is built
+// from — for every non-cancelled execution whose plan_for_date is the date,
+// split into vendor and sale-tanker lifts (utils/saleTanker.js). The forecast
+// is compared with the vendor share unless the run included sale milk.
+// Returns null when the date has no executions (future date).
+async function loadForecastAccuracy(planDate, demandRows, includeSale = false, opts = {}) {
+  const shift = SHIFTS.includes(opts.shift) ? opts.shift : 'BOTH';
+  const execCount = (await query(`
+    SELECT COUNT(*)::int AS n FROM trip_executions te
+    JOIN trip_plans tp ON tp.id = te.trip_plan_id
+    WHERE tp.plan_for_date = $1::date AND te.status <> 'cancelled'`, [planDate])).rows[0].n;
+  if (!execCount) return null;
+  const actualRows = (await query(`
+    SELECT teb.bmcu_id, ${saleTankerSql('tp', 't')} AS is_sale, SUM(s.rmrd_qty)::numeric AS qty
+    FROM trip_execution_bmcu_shifts s
+    JOIN trip_execution_bmcus teb ON teb.execution_id = s.execution_id AND teb.seq_no = s.bmcu_seq_no
+      AND teb.is_deleted = FALSE
+    JOIN trip_executions te ON te.id = s.execution_id AND te.status <> 'cancelled'
+    JOIN trip_plans tp ON tp.id = te.trip_plan_id
+    LEFT JOIN tankers t ON t.id = tp.tanker_id
+    WHERE tp.plan_for_date = $1::date AND s.shift IN ('AM','PM')
+      AND ($2::text = 'BOTH' OR s.shift = $2::text)
+    GROUP BY teb.bmcu_id, 2`, [planDate, shift])).rows;
+
+  const per = new Map(); // bmcu_id → { forecast, vendor, sale, ... }
+  const plantNames = opts.plantNameById || {};
+  for (const d of demandRows || []) {
+    per.set(d.bmcu_id, { bmcu_id: d.bmcu_id, bmcu_code: d.bmcu_code, bmcu_name: d.bmcu_name,
+      plant_name: plantNames[d.plant_id] || null, forecast: Number(d.litres) || 0, vendor: 0, sale: 0 });
+  }
+  for (const a of actualRows) {
+    if (!per.has(a.bmcu_id)) per.set(a.bmcu_id, { bmcu_id: a.bmcu_id, bmcu_code: null, bmcu_name: null, plant_name: null, forecast: 0, vendor: 0, sale: 0 });
+    per.get(a.bmcu_id)[a.is_sale ? 'sale' : 'vendor'] += parseFloat(a.qty) || 0;
+  }
+  // Names for BMCUs lifted that day but not among the run's nodes (inactive BMCUs)
+  const unnamed = [...per.values()].filter(p => !p.bmcu_code).map(p => p.bmcu_id);
+  if (unnamed.length) {
+    const named = (await query('SELECT id, bmcu_code, bmcu_name FROM bmcus WHERE id = ANY($1)', [unnamed])).rows;
+    for (const b of named) Object.assign(per.get(b.id), { bmcu_code: b.bmcu_code, bmcu_name: b.bmcu_name });
+  }
+
+  const basis = includeSale ? 'all' : 'vendor';
+  let forecast = 0, vendor = 0, sale = 0, bmcusForecast = 0, bmcusLifted = 0, fNotL = 0, lNotF = 0;
+  const perBmcu = [];
+  for (const p of per.values()) {
+    const actual = basis === 'all' ? p.vendor + p.sale : p.vendor;
+    forecast += p.forecast; vendor += p.vendor; sale += p.sale;
+    const isForecast = p.forecast > 0, isLifted = actual > 0;
+    if (!isForecast && !(p.vendor > 0 || p.sale > 0)) continue;
+    if (isForecast) bmcusForecast++;
+    if (isLifted) bmcusLifted++;
+    if (isForecast && !isLifted) fNotL++;
+    if (isLifted && !isForecast) lNotF++;
+    perBmcu.push({
+      bmcu_id: p.bmcu_id, bmcu_code: p.bmcu_code, bmcu_name: p.bmcu_name, plant_name: p.plant_name,
+      forecast: r2(p.forecast), actual: r2(actual), diff: r2(p.forecast - actual),
+      lifted_by: p.vendor > 0 && p.sale > 0 ? 'both' : p.vendor > 0 ? 'vendor' : p.sale > 0 ? 'sale' : null,
+      flag: isForecast && !isLifted ? 'forecast_not_lifted' : isLifted && !isForecast ? 'lifted_not_forecast' : null,
+    });
+  }
+  // Mismatched BMCUs (forecast but not lifted / lifted but not forecast) first, then by |diff|
+  perBmcu.sort((a, z) => (z.flag ? 1 : 0) - (a.flag ? 1 : 0) || Math.abs(z.diff) - Math.abs(a.diff));
+  const matching = basis === 'all' ? vendor + sale : vendor;
+  return {
+    date: planDate, shift, basis,
+    basis_label: basis === 'all' ? 'forecast includes sale-tanker milk — compared with all RMRD' : 'forecast excludes sale-tanker milk — compared with vendor RMRD',
+    forecast_litres: r2(forecast), actual_rmrd_all: r2(vendor + sale), actual_rmrd_vendor: r2(vendor), actual_rmrd_sale: r2(sale),
+    error_litres: r2(forecast - matching),
+    error_pct: matching > 0 ? r1((forecast - matching) / matching * 100) : null,
+    bmcus_forecast: bmcusForecast, bmcus_lifted: bmcusLifted,
+    bmcus_forecast_not_lifted: fNotL, bmcus_lifted_not_forecast: lNotF,
+    per_bmcu: perBmcu,
+  };
+}
+
 // ─── Build the optimiser instance for a date + shift scope ──────────────────
 async function buildInstance(planDate, shiftScope, demandOverrides, opts = {}) {
   const bmcus = await loadBmcus();
@@ -565,5 +644,5 @@ async function buildInstance(planDate, shiftScope, demandOverrides, opts = {}) {
 
 module.exports = {
   SHIFTS, shiftLabel, loadPlants, loadBmcus, buildResolver, loadCatchments, loadFleet, loadDemand,
-  saveForecasts, backfillActuals, distanceCoverage, prefetchDistances, loadComparison, buildInstance,
+  saveForecasts, backfillActuals, distanceCoverage, prefetchDistances, loadComparison, loadForecastAccuracy, buildInstance,
 };
