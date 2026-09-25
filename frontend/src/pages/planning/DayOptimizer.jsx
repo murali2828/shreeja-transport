@@ -238,7 +238,9 @@ export default function DayOptimizer() {
                     <td className="table-td text-gray-600">{d.plant_name || <span className="text-red-500">none</span>}
                       {d.catchment_method === 'nearest' && <span className="text-gray-400"> (nearest)</span>}</td>
                     <td className="table-td text-right font-semibold">{nf(d.forecast_litres)}</td>
-                    <td className="table-td"><span className={`badge ${d.method === 'none' ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-600'}`}>{d.method}</span></td>
+                    <td className="table-td"><span className={`badge ${d.method === 'none' ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-600'}`}
+                      title={d.method === 'median_x_p14' ? `median of the last 14 days' lifts × lift probability ${d.lift_probability} (${d.lifts_last_14d} lifts in 14 days)` : d.method}>
+                      {d.method === 'median_x_p14' ? `median × p ${d.lift_probability}` : d.method}</span></td>
                     <td className="table-td text-gray-500">{d.last_7_days.map(x => nf(x.litres)).join(', ') || '—'}</td>
                     <td className="table-td"><input type="number" className="input py-0.5 text-xs w-24 text-right" placeholder={nf(d.forecast_litres)}
                       value={demandEdits[`${d.bmcu_id}|${d.shift}`] ?? ''}

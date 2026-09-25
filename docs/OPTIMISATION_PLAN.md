@@ -256,3 +256,22 @@ Decisions:
 5. Is "one tanker, two trips a day" acceptable in general, or only on short routes?
 6. Weighting: pure cost, or cost with a penalty for changing a BMCU's usual tanker
    and driver (continuity matters at the BMCU gate)?
+
+### Demand forecast calibration (26 Sep 2026)
+
+Run 9 on 08-09-2026 forecast 8,50,335 L against 7,00,627 L actually lifted (RMRD), a 21 %
+over-forecast that alone explains the extra trips. Tested on 11 production days (02–14 Sep)
+against the day's actual RMRD, using the 90-day extract:
+
+| Method | Mean abs. error |
+|---|---|
+| Weighted mean of the last 14 lifts (original) | 17.5 % |
+| Mean × lift probability | 6.8 % |
+| **Median × lift probability (adopted)** | **6.5 %** |
+| Median × lift probability, skip if lifted within the typical interval | 8.7 % |
+
+Lift probability = lifts in the last 14 days ÷ 14, so BMCUs lifted on alternate days count at
+half their per-lift volume. The remaining bias is about +5 %; the planner's override on the
+demand table is the correction for known exceptions. Shift codes are blank on all execution
+rows in production, so AM/PM forecasts are the same daily series; "Both" is the meaningful scope.
+
