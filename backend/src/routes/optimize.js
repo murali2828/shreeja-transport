@@ -18,8 +18,9 @@ const {
   nearestNeighbourOrder, computeRouteKm, clarkeWrightSavings,
   assignTankers, effectiveRate,
 } = require('../services/optimizerCore');
-const { runFleetOptimizer, DEFAULT_CONSTRAINTS } = require('../services/optimizerV2');
+const { runFleetOptimizer, DEFAULT_CONSTRAINTS, TT_BMCU, TT_P2P } = require('../services/optimizerV2');
 const dayData = require('../services/dayOptimizerData');
+const { allocatePlants, normaliseRequirements, mergeAllocationOptions, DEFAULT_ALLOCATION } = require('../services/plantAllocation');
 
 const ExcelJS = require('exceljs');
 
@@ -125,14 +126,18 @@ router.get('/day/preview', authenticate, canPlan, v2Gate, async (req, res) => {
       forecast_accuracy: forecastAccuracy,
       plan_for_date: p.plan_for_date, shift: p.shift,
       constraints: DEFAULT_CONSTRAINTS,
+      allocation_defaults: DEFAULT_ALLOCATION,
       demand: demand.filter(d => p.shift === 'BOTH' || d.shift === p.shift).map(d => ({
         ...d, plant_id: catchments[d.bmcu_id]?.plant_id || null,
         plant_name: plantById[catchments[d.bmcu_id]?.plant_id]?.name || null,
         catchment_method: catchments[d.bmcu_id]?.method,
       })),
       fleet, excluded_tankers: excluded,
+      // catchment_forecast_litres = what the plant's usual BMCUs forecast for
+      // this shift scope — the default for the "Plan to plant requirements" table
       plants: plants.map(pl => ({ id: pl.id, name: pl.name, has_coords: pl.has_coords, start_point: pl.start?.name || null,
-        bmcu_count: bmcus.filter(b => catchments[b.id]?.plant_id === pl.id).length })),
+        bmcu_count: bmcus.filter(b => catchments[b.id]?.plant_id === pl.id).length,
+        catchment_forecast_litres: Math.round(instance.nodes.filter(n => n.plant_id === pl.id).reduce((s, n) => s + n.litres, 0) * 100) / 100 })),
       distance_coverage: dayData.distanceCoverage(bmcus, plants, catchments, distMap, radius),
     });
   } catch (err) {
@@ -142,31 +147,82 @@ router.get('/day/preview', authenticate, canPlan, v2Gate, async (req, res) => {
 });
 
 // =============================================================================
-// POST /api/optimize/day  { plan_for_date, shift, constraints?, demand_overrides?, exclude_tanker_ids? }
+// POST /api/optimize/day  { plan_for_date, shift, constraints?, demand_overrides?, exclude_tanker_ids?,
+//   mode? ('catchment' | 'plant_requirements'), plant_requirements?, allocation?, pinned_bmcu_ids? }
+// mode 'plant_requirements' (docs/OPTIMISATION_PLAN.md §3.2b): the planner
+// gives the litres each plant requires; services/plantAllocation.js decides
+// which BMCUs go where (plants not listed require nothing), then the same
+// routing runs on the allocation with plant switching off.
 // =============================================================================
+const MODES = ['catchment', 'plant_requirements'];
 router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
   const p = parseDayParams(req.body || {});
   if (p.error) return res.status(400).json({ error: p.error });
-  const { constraints = {}, demand_overrides = [], exclude_tanker_ids = [] } = req.body || {};
-  if (!Array.isArray(demand_overrides) || !Array.isArray(exclude_tanker_ids))
-    return res.status(400).json({ error: 'demand_overrides and exclude_tanker_ids must be arrays' });
+  const { constraints = {}, demand_overrides = [], exclude_tanker_ids = [], plant_requirements = [], pinned_bmcu_ids = [] } = req.body || {};
+  const mode = req.body?.mode || 'catchment';
+  if (!Array.isArray(demand_overrides) || !Array.isArray(exclude_tanker_ids) || !Array.isArray(plant_requirements) || !Array.isArray(pinned_bmcu_ids))
+    return res.status(400).json({ error: 'demand_overrides, exclude_tanker_ids, plant_requirements and pinned_bmcu_ids must be arrays' });
+  if (!MODES.includes(mode)) return res.status(400).json({ error: 'mode must be catchment or plant_requirements' });
   const overrides = demand_overrides.filter(o => o && o.bmcu_id && ['AM', 'PM'].includes(o.shift) && Number.isFinite(parseFloat(o.litres)));
   const excludeIds = new Set(exclude_tanker_ids.map(Number));
+  const reqMode = mode === 'plant_requirements';
+  const reqs = reqMode ? normaliseRequirements(plant_requirements) : new Map();
+  const allocOptions = mergeAllocationOptions(req.body?.allocation);
+  const pinnedIds = pinned_bmcu_ids.map(Number).filter(Number.isFinite);
+  if (reqMode && ![...reqs.values()].some(r => r.required_litres > 0))
+    return res.status(400).json({ error: 'plant_requirements must list at least one plant with required_litres > 0' });
   try {
     const built = await dayData.buildInstance(p.plan_for_date, p.shift, overrides, { includeSale: req.body?.include_sale === true });
     const { instance, plants, fleet, excluded, rates, demand } = built;
     for (const t of instance.tankers.filter(t => excludeIds.has(t.id)))
       excluded.push({ tanker_id: t.id, tanker_number: t.tanker_number, reason: 'Excluded by planner' });
     instance.tankers = instance.tankers.filter(t => !excludeIds.has(t.id));
-    const demandNodes = instance.nodes.filter(n => n.litres > 0);
+    let demandNodes = instance.nodes.filter(n => n.litres > 0);
     if (!demandNodes.length) return res.status(400).json({ error: `No demand for ${p.plan_for_date} ${p.shift}: no RMRD history, plan quantities or overrides for any active BMCU` });
     if (!instance.tankers.length) return res.status(400).json({ error: 'No available tankers with a valid rate for this date — see excluded tankers in the preview' });
-    if (!instance.plants.length) return res.status(400).json({ error: 'No plant catchment could be resolved — check delivery point coordinates' });
 
     // Cap the time budget so the request stays well inside proxy/DB timeouts
     const c = { ...constraints };
     c.time_budget_ms = Math.min(Math.max(parseInt(c.time_budget_ms) || DEFAULT_CONSTRAINTS.time_budget_ms, 500), 20000);
+
+    let allocation = null;
+    if (reqMode) {
+      const plantById = new Map(plants.map(pl => [pl.id, pl]));
+      const missing = [...reqs.entries()].filter(([id, r]) => r.required_litres > 0 && !plantById.get(id)?.has_coords)
+        .map(([id]) => plantById.get(id)?.name || `#${id}`);
+      if (missing.length) return res.status(400).json({ error: `Plant(s) without coordinates cannot take a requirement: ${missing.join(', ')} — fill lat/lng in Masters → Delivery Points` });
+      // ₹/km proxy for ranking moves: litre-weighted mean of the fleet's BMCU rate
+      let wSum = 0, capSum = 0;
+      for (const t of instance.tankers) { const r = t.rates[TT_BMCU] || t.rates[TT_P2P]; if (r > 0) { wSum += t.capacity_litres * r; capSum += t.capacity_litres; } }
+      const ratePerKm = capSum > 0 ? wSum / capSum : 30;
+      const allocPlants = plants.filter(pl => pl.has_coords || reqs.has(pl.id)).map(pl => {
+        const r = reqs.get(pl.id);
+        return { id: pl.id, name: pl.name, end: pl.end, required_litres: r?.required_litres || 0, priority: r?.priority, locked: !!r?.locked };
+      });
+      const alloc = allocatePlants({ nodes: demandNodes, plants: allocPlants, resolve: instance.resolve, ratePerKm, options: allocOptions, pinnedBmcuIds: pinnedIds });
+      demandNodes = demandNodes.map(n => ({ ...n, catchment_plant_id: n.plant_id, plant_id: alloc.assignments.get(n.bmcu_id) ?? n.plant_id }));
+      const byId = new Map(demandNodes.map(d => [d.bmcu_id, d]));
+      instance.nodes = instance.nodes.map(n => byId.get(n.bmcu_id) || n);
+      const usedPlantIds = new Set(demandNodes.map(n => n.plant_id));
+      instance.plants = plants.filter(pl => usedPlantIds.has(pl.id));
+      c.allow_plant_switch = false;   // the allocation decided the plants
+      allocation = {
+        mode, options: alloc.options, rate_per_km_proxy: Math.round(ratePerKm * 100) / 100,
+        plants: alloc.plants, moves: alloc.moves, notes: alloc.notes, totals: alloc.totals,
+        flagged_bmcu_ids: alloc.flagged_bmcu_ids, pinned_bmcu_ids: pinnedIds,
+        requirements: [...reqs.entries()].map(([delivery_point_id, r]) => ({ delivery_point_id, ...r })),
+      };
+    }
+    if (!instance.plants.length) return res.status(400).json({ error: 'No plant catchment could be resolved — check delivery point coordinates' });
     const result = runFleetOptimizer(instance, c);
+    if (allocation) {
+      // What the routed plan actually delivers per plant (unserved pickups drop out here)
+      const delivered = new Map();
+      for (const t of result.trips) delivered.set(t.plant_id, (delivered.get(t.plant_id) || 0) + t.total_qty_litres);
+      for (const pl of allocation.plants) pl.delivered_by_plan = Math.round((delivered.get(pl.id) || 0) * 100) / 100;
+      if (allocation.moves.length) result.warnings.push(`${allocation.moves.length} BMCU(s) sent to a plant other than their usual one — see Plant allocation.`);
+      for (const n of allocation.notes) result.warnings.push(n);
+    }
 
     await dayData.saveForecasts(p.plan_for_date, demand, overrides);
     const comparison = await dayData.loadComparison(p.plan_for_date, p.shift, fleet, rates);
@@ -203,11 +259,13 @@ router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
             input_bmcu_count, input_total_qty, result_trip_count, result_total_km, result_total_cost, km_coverage_pct,
             comparison, summary, status, created_by)
          VALUES ($1,NULL,NULL,$2,'fleet_v2','fleet_v2',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'completed',$13) RETURNING id`,
-        [p.plan_for_date, shiftsMilk, JSON.stringify(result.constraints), p.shift,
+        [p.plan_for_date, shiftsMilk,
+         JSON.stringify({ ...result.constraints, mode, ...(allocation ? { plant_requirements: allocation.requirements, allocation: allocation.options, pinned_bmcu_ids: pinnedIds } : {}) }),
+         p.shift,
          demandNodes.length, result.totals.litres, result.totals.trips, result.totals.km, result.totals.cost,
          result.totals.estimated_legs ? null : 100,
          comparison ? JSON.stringify(comparison) : null,
-         JSON.stringify({ totals: result.totals, unserved: result.unserved, excluded_tankers: excluded, warnings: result.warnings, stats: result.stats }),
+         JSON.stringify({ totals: result.totals, unserved: result.unserved, excluded_tankers: excluded, warnings: result.warnings, stats: result.stats, allocation }),
          req.user.id]);
       sessionId = sess.rows[0].id;
       for (const n of demandNodes)
@@ -238,7 +296,7 @@ router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
     } finally { client.release(); }
 
     res.json({
-      session_id: sessionId, plan_for_date: p.plan_for_date, shift: p.shift,
+      session_id: sessionId, plan_for_date: p.plan_for_date, shift: p.shift, mode, allocation,
       constraints: result.constraints,
       plants: plants.filter(pl => instance.plants.some(ip => ip.id === pl.id)).map(pl => ({ id: pl.id, name: pl.name })),
       trips: result.trips, totals: result.totals, unserved: result.unserved,
@@ -324,6 +382,9 @@ router.get('/:sessionId(\\d+)/report', authenticate, canPlan, v2Gate, async (req
     kv('Fill floor', C.fill_floor != null ? `${Math.round(C.fill_floor * 100)} %` : ''); kv('Max trips per tanker per day', C.max_trips_per_tanker_per_day);
     kv('Max BMCUs per trip', C.max_bmcus_per_trip); kv('Max km per trip', C.max_trip_km);
     kv('Plant switch allowed', C.allow_plant_switch ? 'Yes' : 'No'); kv('Time budget (ms) / iterations', `${C.time_budget_ms} / ${C.max_iterations}`);
+    const alloc = summary.allocation || null;
+    kv('Mode', alloc ? 'Plan to plant requirements (see sheet "Plant Allocation")' : 'Plan by usual catchments');
+    if (alloc) { kv('Max extra km per BMCU / shortfall rule', `${alloc.options?.max_extra_km_per_bmcu} km / ${alloc.options?.shortfall_rule}`); }
     r++;
     const tot = summary.totals || {};
     // Comparison blocks: sessions before 2026-09-25 stored one flat block
@@ -480,6 +541,37 @@ router.get('/:sessionId(\\d+)/report', authenticate, canPlan, v2Gate, async (req
         fr++;
       }
       xlRow(wf, fr, ['TOTAL', '', n(fa.forecast_litres), n(fa.basis === 'all' ? fa.actual_rmrd_all : fa.actual_rmrd_vendor), n(fa.error_litres), ''], { 2: INT_FMT, 3: INT_FMT, 4: INT_FMT }, { bold: true, fill: 'FFF1F5F9' });
+    }
+
+    // ── Plant Allocation (only for "Plan to plant requirements" sessions) ───
+    if (alloc) {
+      const wa = wb.addWorksheet('Plant Allocation');
+      wa.columns = [26, 10, 9, 14, 14, 14, 14, 14, 14, 14, 10, 50].map(w => ({ width: w }));
+      xlTitle(wa, `Plant allocation — ${fmtDdMm(s.plan_for_date)} (${s.shifts_milk})  ·  max extra ${alloc.options?.max_extra_km_per_bmcu} km per BMCU, shortfall rule ${alloc.options?.shortfall_rule}, keep-history ${alloc.options?.keep_history_bonus_pct} %`, 12);
+      let ar = 3;
+      xlHeader(wa, ar, ['Plant', 'Priority', 'Locked', 'Required L', 'Target L (after shortfall)', 'Allocated L', 'Delivered by plan L', 'Unmet L', 'Oversupplied L', 'Moved in L', 'Moved out L', 'Note']); ar++;
+      const aF = { 3: INT_FMT, 4: INT_FMT, 5: INT_FMT, 6: INT_FMT, 7: INT_FMT, 8: INT_FMT, 9: INT_FMT, 10: INT_FMT };
+      const tot = { required: 0, eff: 0, allocated: 0, delivered: 0, unmet: 0, over: 0, in: 0, out: 0 };
+      for (const pl of alloc.plants || []) {
+        xlRow(wa, ar, [pl.name, pl.priority, pl.locked ? 'Yes' : '', n(pl.required), n(pl.effective_required), n(pl.allocated), n(pl.delivered_by_plan), n(pl.unmet), n(pl.oversupplied), n(pl.moved_in), n(pl.moved_out), pl.unmet_reason || ''], aF);
+        if (pl.unmet > 0) wa.getCell(ar, 8).font = { bold: true, color: { argb: 'FFC0392B' } };
+        if (pl.oversupplied > 0) wa.getCell(ar, 9).font = { color: { argb: 'FFB7791F' } };
+        tot.required += n(pl.required) || 0; tot.eff += n(pl.effective_required) || 0; tot.allocated += n(pl.allocated) || 0; tot.delivered += n(pl.delivered_by_plan) || 0;
+        tot.unmet += n(pl.unmet) || 0; tot.over += n(pl.oversupplied) || 0; tot.in += n(pl.moved_in) || 0; tot.out += n(pl.moved_out) || 0;
+        ar++;
+      }
+      xlRow(wa, ar, ['TOTAL', '', '', tot.required, tot.eff, tot.allocated, tot.delivered, tot.unmet, tot.over, tot.in, tot.out, `forecast supply ${Math.round(alloc.totals?.supply || 0).toLocaleString('en-IN')} L`], aF, { bold: true, fill: 'FFF1F5F9' });
+      ar += 2;
+      xlHeader(wa, ar, ['BMCU reassigned', 'Litres', '', 'From plant', 'To plant', 'Extra km', 'Marginal cost ₹', 'Flag', '', '', '', 'Reason']); ar++;
+      if (!(alloc.moves || []).length) { xlRow(wa, ar, ['None — every BMCU goes to its usual plant']); ar++; }
+      for (const m of alloc.moves || []) {
+        xlRow(wa, ar, [`${m.bmcu_code || ''} ${m.bmcu_name || ''}`.trim(), n(m.litres), '', m.from_plant_name, m.to_plant_name, n(m.extra_km), n(m.marginal_cost),
+          m.flag === 'beyond_max_extra_km' ? 'beyond km limit' : m.flag === 'oversupplied' ? 'oversupplies' : '', '', '', '', m.reason || ''], { 1: INT_FMT, 5: KM_FMT, 6: INR_FMT });
+        if (m.flag) wa.getCell(ar, 8).font = { color: { argb: 'FFC0392B' } };
+        ar++;
+      }
+      if ((alloc.pinned_bmcu_ids || []).length) { ar++; xlRow(wa, ar, ['Pinned to usual plant (planner)', alloc.pinned_bmcu_ids.length + ' BMCU(s)']); ar++; }
+      for (const note of alloc.notes || []) { xlRow(wa, ar, ['Note', note]); ar++; }
     }
 
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
