@@ -61,3 +61,6 @@ restored-config/
 # ─── Claude Code — personal overrides stay local ──────────────────────────────
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Day Optimizer replay fixtures (production extracts, never committed)
+backend/scripts/fixtures/
