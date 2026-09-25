@@ -40,8 +40,11 @@ export function AuthProvider({ children }) {
     window.location.href = '/login';
   };
 
+  // Feature flags the login response carries (billing_enabled, optimizer_v2_enabled)
+  const optimizerV2Enabled = user?.optimizer_v2_enabled === true;
+
   return (
-    <AuthContext.Provider value={{ user, loading, loginUser, logoutUser, clearMustChangePassword }}>
+    <AuthContext.Provider value={{ user, loading, loginUser, logoutUser, clearMustChangePassword, optimizerV2Enabled }}>
       {children}
     </AuthContext.Provider>
   );

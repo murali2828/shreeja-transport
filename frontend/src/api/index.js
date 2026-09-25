@@ -253,6 +253,11 @@ export const saveOptimizerAsPlans  = (sid, trips) => api.post(`/optimize/${sid}/
 export const getOptimizeSessions   = (p)     => api.get('/optimize/sessions', { params: p });
 export const getOptimizeSession    = (id)    => api.get(`/optimize/sessions/${id}`);
 export const getOptimizeCompare    = (p)     => api.get('/optimize/compare', { params: p });
+// Day Optimizer (fleet v2) — gated by OPTIMIZER_V2_ENABLED
+export const getDayOptimizerPreview = (p)    => api.get('/optimize/day/preview', { params: p });
+export const runDayOptimizer        = (d)    => api.post('/optimize/day', d, { timeout: 60_000 });
+export const prefetchOptimizerDistances = () => api.post('/optimize/prefetch-distances', {}, { timeout: 600_000 });
+export const backfillForecast       = (date) => api.post('/optimize/forecast/backfill', null, { params: { date } });
 
 // ── Tanker Rates ──────────────────────────────────────────────────────────────
 export const getTankerRates            = (p)     => api.get('/tanker-rates', { params: p });

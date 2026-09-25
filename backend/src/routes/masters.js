@@ -80,12 +80,15 @@ router.delete('/tankers/:id', authenticate, authorizeOrModule('masters', 'admin'
 });
 
 // ─── BMCUs ────────────────────────────────────────────────────────────────────
+// Lifting policy values (migration 044) — used by the Day Optimizer / lifting advisor
+const LIFT_POLICIES = ['twice_daily', 'daily', 'alternate_days'];
+
 router.get('/bmcus', authenticate, async (req, res) => {
   try {
     const includeAll = req.query.all === 'true';
     const r = await query(
       `SELECT id, bmcu_code, bmcu_name, address, district, state, contact,
-              latitude, longitude, is_active, created_at, updated_at
+              latitude, longitude, chilling_capacity_litres, lift_policy, is_active, created_at, updated_at
        FROM bmcus ${includeAll ? '' : 'WHERE is_active=TRUE '}ORDER BY bmcu_code`
     );
     res.json(r.rows);
@@ -93,14 +96,16 @@ router.get('/bmcus', authenticate, async (req, res) => {
 });
 
 router.post('/bmcus', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
-  const { bmcu_code, bmcu_name, address, district, state, contact, latitude, longitude } = req.body;
+  const { bmcu_code, bmcu_name, address, district, state, contact, latitude, longitude,
+          chilling_capacity_litres, lift_policy } = req.body;
   if (!bmcu_code || !bmcu_name) return res.status(400).json({ error: 'bmcu_code and bmcu_name required' });
+  if (lift_policy && !LIFT_POLICIES.includes(lift_policy)) return res.status(400).json({ error: 'lift_policy must be twice_daily, daily or alternate_days' });
   try {
     const r = await query(
-      `INSERT INTO bmcus (bmcu_code,bmcu_name,address,district,state,contact,latitude,longitude)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      `INSERT INTO bmcus (bmcu_code,bmcu_name,address,district,state,contact,latitude,longitude,chilling_capacity_litres,lift_policy)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [bmcu_code.trim(), bmcu_name.trim(), address||null, district||null, state||null,
-       contact||null, latitude||null, longitude||null]
+       contact||null, latitude||null, longitude||null, chilling_capacity_litres||null, lift_policy||'twice_daily']
     );
     res.status(201).json(r.rows[0]);
   } catch (err) {
@@ -110,13 +115,15 @@ router.post('/bmcus', authenticate, authorizeOrModule('masters', 'admin'), async
 });
 
 router.put('/bmcus/:id', authenticate, authorizeOrModule('masters', 'admin'), async (req, res) => {
-  const { bmcu_name, address, district, state, contact, is_active, latitude, longitude } = req.body;
+  const { bmcu_name, address, district, state, contact, is_active, latitude, longitude,
+          chilling_capacity_litres, lift_policy } = req.body;
+  if (lift_policy && !LIFT_POLICIES.includes(lift_policy)) return res.status(400).json({ error: 'lift_policy must be twice_daily, daily or alternate_days' });
   try {
     const r = await query(
       `UPDATE bmcus SET bmcu_name=$1,address=$2,district=$3,state=$4,contact=$5,
-        is_active=$6,latitude=$7,longitude=$8,updated_at=NOW() WHERE id=$9 RETURNING *`,
+        is_active=$6,latitude=$7,longitude=$8,chilling_capacity_litres=$9,lift_policy=$10,updated_at=NOW() WHERE id=$11 RETURNING *`,
       [bmcu_name, address||null, district||null, state||null, contact||null,
-       is_active ?? true, latitude||null, longitude||null, req.params.id]
+       is_active ?? true, latitude||null, longitude||null, chilling_capacity_litres||null, lift_policy||'twice_daily', req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(r.rows[0]);

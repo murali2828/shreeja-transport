@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { getBmcus, createBmcu, updateBmcu, deleteBmcu } from '../../api/index';
 import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
 
-const EMPTY = { bmcu_code: '', bmcu_name: '', address: '', district: '', state: '', contact: '', latitude: '', longitude: '', is_active: true };
+const EMPTY = { bmcu_code: '', bmcu_name: '', address: '', district: '', state: '', contact: '', latitude: '', longitude: '', chilling_capacity_litres: '', lift_policy: 'twice_daily', is_active: true };
 
 export default function BmcuMaster() {
   const qc = useQueryClient();
@@ -40,7 +40,7 @@ export default function BmcuMaster() {
   }, [bmcus, search, stateFilter, statusFilter]);
 
   const openAdd  = () => { setForm(EMPTY); setModal('add'); };
-  const openEdit = (row) => { setForm({ ...row, address: row.address||'', district: row.district||'', state: row.state||'', contact: row.contact||'', latitude: row.latitude||'', longitude: row.longitude||'' }); setModal(row); };
+  const openEdit = (row) => { setForm({ ...row, address: row.address||'', district: row.district||'', state: row.state||'', contact: row.contact||'', latitude: row.latitude||'', longitude: row.longitude||'', chilling_capacity_litres: row.chilling_capacity_litres||'', lift_policy: row.lift_policy||'twice_daily' }); setModal(row); };
   const close    = () => setModal(null);
   const set      = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -183,6 +183,18 @@ export default function BmcuMaster() {
               <Field label="Longitude">
                 <input type="number" step="0.00000001" className="input w-full" placeholder="e.g. 80.27071"
                   value={form.longitude} onChange={e => set('longitude', e.target.value)}/>
+              </Field>
+              <Field label="Chilling Capacity (L)">
+                <input type="number" step="1" min="0" className="input w-full" placeholder="optional, e.g. 5000"
+                  value={form.chilling_capacity_litres} onChange={e => set('chilling_capacity_litres', e.target.value)}/>
+              </Field>
+              <Field label="Lifting Policy">
+                <select className="input w-full" value={form.lift_policy}
+                  onChange={e => set('lift_policy', e.target.value)}>
+                  <option value="twice_daily">Twice daily</option>
+                  <option value="daily">Once daily</option>
+                  <option value="alternate_days">Alternate days</option>
+                </select>
               </Field>
               {modal !== 'add' && (
                 <Field label="Status">

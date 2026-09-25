@@ -91,6 +91,8 @@ export default function Sidebar({ collapsed = false }) {
         <NavSection label={collapsed ? '' : 'Planning'}>
           {ni('/planning',          <ClipboardList size={15}/>, 'Trip Plans')}
           {ni('/planning/optimize', <Zap size={15}/>,           'Route Optimizer')}
+          {/* Day Optimizer (fleet v2): shown only where OPTIMIZER_V2_ENABLED=true (login response) */}
+          {user?.optimizer_v2_enabled === true && ni('/planning/optimize-day', <Zap size={15}/>, 'Day Optimizer')}
           {ni('/planning/deleted',  <Trash2 size={15}/>,        'Deleted Plans')}
         </NavSection>
       )}

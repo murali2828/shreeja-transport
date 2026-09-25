@@ -29,6 +29,7 @@ import TripPlanList    from './pages/planning/TripPlanList';
 import TripPlanForm    from './pages/planning/TripPlanForm';
 import DeletedPlansList from './pages/planning/DeletedPlansList';
 import RouteOptimizer  from './pages/planning/RouteOptimizer';
+import DayOptimizer    from './pages/planning/DayOptimizer';
 
 // Execution
 import ExecutionList        from './pages/execution/ExecutionList';
@@ -138,6 +139,9 @@ function AppRoutes() {
         }/>
         <Route path="planning/optimize" element={
           <ProtectedRoute roles={['admin','planner']}><RouteOptimizer/></ProtectedRoute>
+        }/>
+        <Route path="planning/optimize-day" element={
+          <ProtectedRoute roles={['admin','planner']}><DayOptimizer/></ProtectedRoute>
         }/>
 
         {/* Execution — all roles */}
