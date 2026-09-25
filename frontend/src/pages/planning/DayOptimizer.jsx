@@ -146,6 +146,12 @@ export default function DayOptimizer() {
   const [demandSearch, setDemandSearch] = useState('');
   const [result, setResult] = useState(null);
   const [accepted, setAccepted] = useState({});
+  // "Plan to plant requirements" mode: litres each plant needs; the portal
+  // decides which BMCUs supply which plant (services/plantAllocation.js).
+  const [mode, setMode] = useState('catchment');               // 'catchment' | 'plant_requirements'
+  const [reqEdits, setReqEdits] = useState({});                 // { plant_id: { required, priority, locked } }
+  const [allocOpts, setAllocOpts] = useState({});               // { max_extra_km_per_bmcu, shortfall_rule }
+  const [pinned, setPinned] = useState({});                     // { bmcu_id: true } keep usual plant
 
   const { data: preview, isLoading: loadingPreview, isError: previewError, error: previewErr, refetch } = useQuery({
     queryKey: ['day-optimizer-preview', planDate, shift, !!constraints.include_sale],
@@ -156,9 +162,23 @@ export default function DayOptimizer() {
 
   useEffect(() => {
     if (preview?.constraints && !Object.keys(constraints).length) setConstraints(preview.constraints);
+    if (preview?.allocation_defaults && !Object.keys(allocOpts).length) setAllocOpts(preview.allocation_defaults);
   }, [preview]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setC = (k, v) => setConstraints(p => ({ ...p, [k]: v }));
+  const isReqMode = mode === 'plant_requirements';
+
+  // Requirement rows: one per plant, required defaults to the catchment forecast
+  const reqRows = useMemo(() => (preview?.plants || []).map(p => {
+    const e = reqEdits[p.id] || {};
+    const required = e.required !== undefined && e.required !== '' ? parseFloat(e.required) || 0 : (p.catchment_forecast_litres || 0);
+    return { ...p, required, priority: e.priority ?? 99, locked: !!e.locked, edited: e.required !== undefined && e.required !== '' };
+  }), [preview, reqEdits]);
+  const reqTotals = useMemo(() => ({
+    supply: reqRows.reduce((s, p) => s + (p.catchment_forecast_litres || 0), 0),
+    required: reqRows.reduce((s, p) => s + p.required, 0),
+  }), [reqRows]);
+  const setReq = (id, k, v) => setReqEdits(p => ({ ...p, [id]: { ...(p[id] || {}), [k]: v } }));
 
   const demandRows = useMemo(() => {
     const rows = preview?.demand || [];
@@ -185,18 +205,26 @@ export default function DayOptimizer() {
   });
 
   const runMut = useMutation({
-    mutationFn: () => runDayOptimizer({
+    // extra = { pinned_bmcu_ids } when a planner vetoes a move from the results
+    mutationFn: (extra = {}) => runDayOptimizer({
       plan_for_date: planDate, shift, constraints, include_sale: !!constraints.include_sale,
       demand_overrides: Object.entries(demandEdits)
         .filter(([, v]) => v !== '' && v !== undefined)
         .map(([k, v]) => { const [bmcu_id, sh] = k.split('|'); return { bmcu_id: Number(bmcu_id), shift: sh, litres: parseFloat(v) || 0 }; }),
       exclude_tanker_ids: Object.keys(excludedTankers).filter(k => excludedTankers[k]).map(Number),
+      mode,
+      ...(isReqMode ? {
+        plant_requirements: reqRows.map(p => ({ delivery_point_id: p.id, required_litres: p.required, priority: Number(p.priority) || 99, locked: p.locked })),
+        allocation: allocOpts,
+        pinned_bmcu_ids: Object.keys(pinned).filter(k => pinned[k]).map(Number),
+      } : {}),
+      ...extra,
     }).then(r => r.data),
     onSuccess: (d) => {
       setResult(d);
       setAccepted(Object.fromEntries(d.trips.map(t => [t.opt_trip_id, true])));
       setStep(2);
-      toast.success(`${d.totals.trips} trips planned — ${inr(d.totals.cost)}`);
+      toast.success(`${d.totals.trips} trips planned — ${inr(d.totals.cost)}${d.allocation ? ` · ${d.allocation.moves.length} BMCU(s) reassigned` : ''}`);
     },
     onError: (e) => toast.error(e.response?.data?.error || 'Day Optimizer run failed'),
   });
@@ -272,6 +300,77 @@ export default function DayOptimizer() {
           </label>
         </div>
         <div className="text-xs text-gray-400 mt-2">Defaults: fill floor 85 %, 8 BMCUs, 550 km, 1 trip per tanker per day (a second trip is not feasible after loading, unloading and cleaning); sale-tanker milk excluded from the forecast. Cost = km × Tanker Rate Master rate (Point to Point for one BMCU, else BMCU/CC to Dairy/CC).</div>
+      </div>
+
+      {/* Mode: usual catchments vs plant requirements */}
+      <div className="card p-4">
+        <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-gray-700"><Factory size={14}/> Where the milk goes</div>
+        <div className="flex flex-wrap gap-4 text-sm">
+          <label className="flex items-center gap-2"><input type="radio" name="mode" checked={!isReqMode} onChange={() => setMode('catchment')}/> Plan by usual catchments
+            <span className="text-xs text-gray-400">(each BMCU to the plant it usually goes to)</span></label>
+          <label className="flex items-center gap-2"><input type="radio" name="mode" checked={isReqMode} onChange={() => setMode('plant_requirements')}/> Plan to plant requirements
+            <span className="text-xs text-gray-400">(enter litres per plant; the portal decides which BMCUs supply which plant)</span></label>
+        </div>
+        {isReqMode && (
+          <div className="mt-3 space-y-3">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50 border-b"><tr>
+                  <th className="table-th">Plant</th><th className="table-th text-right">Catchment forecast L</th><th className="table-th text-right w-36">Required L</th>
+                  <th className="table-th text-right w-24">Priority</th><th className="table-th">Locked</th><th className="table-th">Notes</th></tr></thead>
+                <tbody>
+                  {reqRows.map(p => (
+                    <tr key={p.id} className="border-b border-gray-50">
+                      <td className="table-td font-medium">{p.name}{p.start_point && <span className="text-gray-400 font-normal"> · from {p.start_point}</span>}</td>
+                      <td className="table-td text-right text-gray-600">{nf(p.catchment_forecast_litres)}<span className="text-gray-400"> · {p.bmcu_count} BMCUs</span></td>
+                      <td className="table-td text-right"><input type="number" min="0" step="500" className={`input py-0.5 text-xs w-32 text-right ${p.edited ? 'border-[#0078d4]' : ''}`}
+                        value={reqEdits[p.id]?.required ?? p.catchment_forecast_litres ?? 0} onChange={e => setReq(p.id, 'required', e.target.value)}/></td>
+                      <td className="table-td text-right"><input type="number" min="1" step="1" className="input py-0.5 text-xs w-20 text-right" title="1 = highest; when the day's milk cannot cover every plant, the lowest priority is left short first"
+                        value={reqEdits[p.id]?.priority ?? 99} onChange={e => setReq(p.id, 'priority', e.target.value)}/></td>
+                      <td className="table-td"><input type="checkbox" checked={p.locked} onChange={e => setReq(p.id, 'locked', e.target.checked)} title="Keep this plant's usual BMCUs; only add to it"/></td>
+                      <td className="table-td text-xs">
+                        {!p.has_coords && <span className="text-red-600">no coordinates — cannot take a requirement</span>}
+                        {p.has_coords && p.required === 0 && <span className="text-amber-700">requires nothing — its usual BMCUs go elsewhere</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className={`font-semibold ${reqTotals.required > reqTotals.supply + 0.5 ? 'bg-red-50 text-red-700' : 'bg-gray-50'}`}>
+                    <td className="table-td">Total</td>
+                    <td className="table-td text-right">{nf(reqTotals.supply)}</td>
+                    <td className="table-td text-right">{nf(reqTotals.required)}
+                      {reqTotals.required > reqTotals.supply + 0.5 && <div className="text-[11px] font-normal">required exceeds forecast supply by {nf(reqTotals.required - reqTotals.supply)} L — shortfall rule applies</div>}
+                      {reqTotals.required < reqTotals.supply - 0.5 && <div className="text-[11px] font-normal text-gray-500">{nf(reqTotals.supply - reqTotals.required)} L above requirements will still be placed (oversupply)</div>}</td>
+                    <td className="table-td" colSpan={3}>
+                      <button className="btn-secondary btn-sm" onClick={() => setReqEdits({})}>Reset to catchment forecast</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <label className="text-xs text-gray-500">Max extra km per BMCU</label>
+                <input type="number" min="0" step="10" className="input w-full py-1 text-sm" value={allocOpts.max_extra_km_per_bmcu ?? ''}
+                  onChange={e => setAllocOpts(o => ({ ...o, max_extra_km_per_bmcu: Number(e.target.value) }))}/>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Shortfall rule</label>
+                <select className="input w-full py-1 text-sm" value={allocOpts.shortfall_rule || 'priority'} onChange={e => setAllocOpts(o => ({ ...o, shortfall_rule: e.target.value }))}>
+                  <option value="priority">Priority — lowest priority plants go short first</option>
+                  <option value="proportional">Proportional — every plant scaled down</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Keep-history bonus (%)</label>
+                <input type="number" min="0" step="1" className="input w-full py-1 text-sm" value={allocOpts.keep_history_bonus_pct ?? ''}
+                  onChange={e => setAllocOpts(o => ({ ...o, keep_history_bonus_pct: Number(e.target.value) }))}/>
+              </div>
+              <div className="text-xs text-gray-400 md:col-span-1 self-end">A BMCU only leaves its usual plant when the new plant's delivery leg is within the extra-km limit; moves are ranked by extra km × ₹/km per litre moved. Plants not requiring anything send their BMCUs to the nearest plant with room.</div>
+            </div>
+            {Object.keys(pinned).filter(k => pinned[k]).length > 0 && (
+              <div className="text-xs text-gray-600">Pinned to usual plant: {Object.keys(pinned).filter(k => pinned[k]).length} BMCU(s) <button className="text-[#0078d4] underline ml-1" onClick={() => setPinned({})}>clear</button></div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -361,7 +460,7 @@ export default function DayOptimizer() {
       <div className="flex justify-end">
         <button className="btn-primary flex items-center gap-2" disabled={runMut.isPending || !preview}
           onClick={() => runMut.mutate()}>
-          {runMut.isPending ? <><RefreshCw size={14} className="animate-spin"/> Optimising… (up to {Math.round((constraints.time_budget_ms || 8000) / 1000)} s)</> : <><Zap size={14}/> Run Day Optimizer</>}
+          {runMut.isPending ? <><RefreshCw size={14} className="animate-spin"/> Optimising… (up to {Math.round((constraints.time_budget_ms || 8000) / 1000)} s)</> : <><Zap size={14}/> {isReqMode ? 'Plan to requirements' : 'Run Day Optimizer'}</>}
         </button>
       </div>
     </div>
@@ -369,7 +468,7 @@ export default function DayOptimizer() {
 
   // ─── Step 2: Results ──────────────────────────────────────────────────────
   const renderResults = () => {
-    const { totals, trips, comparison, warnings, unserved, excluded_tankers, stats } = result;
+    const { totals, trips, comparison, warnings, unserved, excluded_tankers, stats, allocation } = result;
     const byPlant = {};
     for (const t of trips) (byPlant[t.plant_name] ||= []).push(t);
     return (
@@ -442,6 +541,75 @@ export default function DayOptimizer() {
             {stats.seed_candidates?.length > 0 && <> · seeds: {stats.seed_candidates.map(s => `${nf(s.capacity / 1000)} KL ${inr(s.cost)}${s.chosen ? ' ✓' : ''}`).join(', ')}</>}
           </div>
         )}
+
+        {allocation && (() => {
+          const pinnedIds = Object.keys(pinned).filter(k => pinned[k]).map(Number);
+          const rerunWith = (ids) => { setPinned(Object.fromEntries(ids.map(id => [id, true]))); runMut.mutate({ pinned_bmcu_ids: ids }); };
+          const togglePin = (id, on) => rerunWith(on ? [...new Set([...pinnedIds, id])] : pinnedIds.filter(x => x !== id));
+          const pinnedRows = pinnedIds.map(id => (result.trips.flatMap(t => t.bmcus).find(b => b.bmcu_id === id) || { bmcu_id: id, bmcu_code: `#${id}` }));
+          return (
+            <div className="card">
+              <div className="card-header text-sm font-semibold flex items-center gap-2 flex-wrap"><Factory size={14}/> Plant allocation
+                <span className="text-xs text-gray-500 font-normal">required {nf(allocation.totals.required)} L · forecast supply {nf(allocation.totals.supply)} L · {allocation.moves.length} BMCU(s) reassigned ({nf(allocation.totals.moved_litres)} L)
+                  {allocation.totals.unmet > 0 && <span className="text-red-600"> · unmet {nf(allocation.totals.unmet)} L</span>} · max extra {allocation.options.max_extra_km_per_bmcu} km · {allocation.options.shortfall_rule} rule</span></div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 border-b"><tr>
+                    <th className="table-th">Plant</th><th className="table-th text-right">Required L</th><th className="table-th text-right">Allocated L</th><th className="table-th text-right">Delivered by plan L</th>
+                    <th className="table-th text-right">Unmet L</th><th className="table-th text-right">Oversupplied L</th><th className="table-th text-right">Moved in / out L</th><th className="table-th">Note</th></tr></thead>
+                  <tbody>
+                    {allocation.plants.map(pl => (
+                      <tr key={pl.id} className="border-b border-gray-50">
+                        <td className="table-td font-medium">{pl.name} <span className="text-gray-400 font-normal">· priority {pl.priority}{pl.locked ? ' · locked' : ''} · {pl.bmcu_count} BMCUs</span></td>
+                        <td className="table-td text-right">{nf(pl.required)}{pl.shortfall > 0 && <div className="text-[11px] text-red-600">target {nf(pl.effective_required)} after shortfall</div>}</td>
+                        <td className="table-td text-right font-semibold">{nf(pl.allocated)}</td>
+                        <td className="table-td text-right">{nf(pl.delivered_by_plan)}{pl.delivered_by_plan < pl.allocated - 0.5 && <span className="text-red-600" title="Some pickups allocated here are unserved by the plan"> ▼</span>}</td>
+                        <td className="table-td text-right">{pl.unmet > 0 ? <span className="px-1.5 py-0.5 rounded font-semibold text-red-700 bg-red-50">{nf(pl.unmet)}</span> : <span className="text-gray-400">0</span>}</td>
+                        <td className="table-td text-right">{pl.oversupplied > 0 ? <span className="px-1.5 py-0.5 rounded font-semibold text-amber-700 bg-amber-50">+{nf(pl.oversupplied)}</span> : <span className="text-gray-400">0</span>}</td>
+                        <td className="table-td text-right text-gray-600">{nf(pl.moved_in)} / {nf(pl.moved_out)}</td>
+                        <td className="table-td text-gray-500">{pl.unmet_reason || ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {allocation.notes?.length > 0 && <div className="px-4 py-2 text-xs text-gray-500 space-y-0.5 border-t">{allocation.notes.map((n, i) => <div key={i}>{n}</div>)}</div>}
+              <div className="px-4 py-2 text-sm font-semibold border-t flex items-center gap-2 flex-wrap">BMCUs reassigned from their usual plant ({allocation.moves.length})
+                <span className="text-xs text-gray-500 font-normal">tick "keep usual plant" to veto a move — the plan re-runs with that BMCU pinned</span></div>
+              {allocation.moves.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 border-b"><tr>
+                      <th className="table-th">Keep usual plant</th><th className="table-th">BMCU</th><th className="table-th">From → To</th><th className="table-th text-right">Litres</th>
+                      <th className="table-th text-right">Extra km</th><th className="table-th text-right">Marginal cost</th><th className="table-th">Reason</th></tr></thead>
+                    <tbody>
+                      {allocation.moves.map(m => (
+                        <tr key={m.bmcu_id} className={`border-b border-gray-50 ${m.flag ? 'bg-amber-50/40' : ''}`}>
+                          <td className="table-td"><input type="checkbox" disabled={runMut.isPending} checked={!!pinned[m.bmcu_id]} onChange={e => togglePin(m.bmcu_id, e.target.checked)}/></td>
+                          <td className="table-td"><span className="font-mono text-[#005ba3] font-semibold">{m.bmcu_code}</span> <span className="text-gray-600">{m.bmcu_name}</span></td>
+                          <td className="table-td">{m.from_plant_name} <span className="text-gray-400">→</span> <b>{m.to_plant_name}</b></td>
+                          <td className="table-td text-right">{nf(m.litres)}</td>
+                          <td className="table-td text-right">{m.extra_km > 0 ? '+' : ''}{nf(m.extra_km, 1)}</td>
+                          <td className="table-td text-right">{inr(m.marginal_cost)}</td>
+                          <td className="table-td text-gray-600">{m.reason}
+                            {m.flag === 'beyond_max_extra_km' && <span className="badge bg-red-50 text-red-700 ml-1">beyond km limit</span>}
+                            {m.flag === 'oversupplied' && <span className="badge bg-amber-50 text-amber-700 ml-1">oversupplies</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {pinnedRows.length > 0 && (
+                <div className="px-4 py-2 text-xs text-gray-600 border-t flex items-center gap-2 flex-wrap">Pinned to usual plant:
+                  {pinnedRows.map(b => <span key={b.bmcu_id} className="badge bg-gray-100 text-gray-700">{b.bmcu_code}
+                    <button className="ml-1 text-[#0078d4]" disabled={runMut.isPending} title="Unpin and re-run" onClick={() => togglePin(b.bmcu_id, false)}>×</button></span>)}
+                  {runMut.isPending && <span className="text-gray-400 flex items-center gap-1"><RefreshCw size={11} className="animate-spin"/> re-planning…</span>}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {Object.entries(byPlant).map(([plant, list]) => (
           <div key={plant} className="card">
