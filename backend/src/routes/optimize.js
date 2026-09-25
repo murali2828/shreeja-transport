@@ -115,7 +115,8 @@ router.get('/day/preview', authenticate, canPlan, v2Gate, async (req, res) => {
   if (p.error) return res.status(400).json({ error: p.error });
   try {
     const radius = parseFloat(process.env.OPTIMIZER_PREFETCH_RADIUS_KM || '150') || 150;
-    const { bmcus, plants, catchments, fleet, excluded, demand, distMap } = await dayData.buildInstance(p.plan_for_date, p.shift, []);
+    const includeSale = String(req.query.include_sale || '') === 'true';
+    const { bmcus, plants, catchments, fleet, excluded, demand, distMap } = await dayData.buildInstance(p.plan_for_date, p.shift, [], { includeSale });
     const plantById = Object.fromEntries(plants.map(pl => [pl.id, pl]));
     res.json({
       plan_for_date: p.plan_for_date, shift: p.shift,
@@ -148,7 +149,7 @@ router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
   const overrides = demand_overrides.filter(o => o && o.bmcu_id && ['AM', 'PM'].includes(o.shift) && Number.isFinite(parseFloat(o.litres)));
   const excludeIds = new Set(exclude_tanker_ids.map(Number));
   try {
-    const built = await dayData.buildInstance(p.plan_for_date, p.shift, overrides);
+    const built = await dayData.buildInstance(p.plan_for_date, p.shift, overrides, { includeSale: req.body?.include_sale === true });
     const { instance, plants, fleet, excluded, rates, demand } = built;
     for (const t of instance.tankers.filter(t => excludeIds.has(t.id)))
       excluded.push({ tanker_id: t.id, tanker_number: t.tanker_number, reason: 'Excluded by planner' });

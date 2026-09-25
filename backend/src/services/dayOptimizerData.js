@@ -186,16 +186,25 @@ async function loadFleet(planDate) {
 }
 
 // ─── Demand forecast per BMCU × shift ───────────────────────────────────────
-async function loadDemand(planDate, bmcus) {
+// includeSale=false (default): lifts made by sale tankers (Milma collections,
+// utils/saleTanker.js) are left out, so a BMCU that Milma always collects
+// forecasts 0 and one collected by both contributes only its vendor share —
+// the optimiser then plans the milk Shreeja actually transports. On
+// 08-09-2026 the day's RMRD was 8.51 lakh L of which ~1.5 lakh went by sale
+// tanker; forecasting all of it over-planned by five trips.
+async function loadDemand(planDate, bmcus, includeSale = false) {
   const hist = (await query(`
     SELECT teb.bmcu_id, s.shift, s.milk_date, SUM(s.rmrd_qty)::numeric AS qty
     FROM trip_execution_bmcu_shifts s
     JOIN trip_execution_bmcus teb ON teb.execution_id = s.execution_id AND teb.seq_no = s.bmcu_seq_no
       AND teb.is_deleted = FALSE
     JOIN trip_executions te ON te.id = s.execution_id AND te.status <> 'cancelled'
+    JOIN trip_plans tp ON tp.id = te.trip_plan_id
+    LEFT JOIN tankers t ON t.id = tp.tanker_id
     WHERE s.milk_date >= $1::date - 60 AND s.milk_date < $1::date
       AND s.shift IN ('AM','PM') AND s.rmrd_qty > 0
-    GROUP BY teb.bmcu_id, s.shift, s.milk_date`, [planDate])).rows;
+      AND ($2::boolean OR NOT ${saleTankerSql('tp', 't')})
+    GROUP BY teb.bmcu_id, s.shift, s.milk_date`, [planDate, !!includeSale])).rows;
   const lastPlan = (await query(`
     SELECT DISTINCT ON (pb.bmcu_id) pb.bmcu_id, pb.expected_qty
     FROM trip_plan_bmcus pb JOIN trip_plans tp ON tp.id = pb.trip_plan_id
@@ -432,12 +441,24 @@ async function loadExecutedComparison(planDate, fleet, rates, billingStates) {
     });
   }
   const trips = rows.length;
+  // Milk that left by sale tanker that day (not transported by Shreeja) —
+  // shown so the optimiser's vendor-only forecast and the executed vendor
+  // litres are visibly on the same basis.
+  const sale = (await query(`
+    SELECT COUNT(DISTINCT te.id)::int AS trips, COALESCE(SUM(s.rmrd_qty), 0) AS litres
+    FROM trip_executions te JOIN trip_plans tp ON tp.id = te.trip_plan_id
+    LEFT JOIN tankers t ON t.id = tp.tanker_id
+    JOIN trip_execution_bmcu_shifts s ON s.execution_id = te.id
+    JOIN trip_execution_bmcus eb ON eb.execution_id = s.execution_id AND eb.seq_no = s.bmcu_seq_no AND eb.is_deleted = FALSE
+    WHERE tp.plan_for_date = $1::date AND te.status <> 'cancelled' AND ${saleTankerSql('tp', 't')}`, [planDate])).rows[0];
   const notes = [];
+  if (parseFloat(sale.litres) > 0) notes.push(`${sale.trips} sale-tanker trip(s) carried ${Math.round(parseFloat(sale.litres)).toLocaleString('en-IN')} L that day at no transport cost to Shreeja — not counted here or in the forecast`);
   if (priced < trips) notes.push(`${trips - priced} executed trip(s) had no billed amount and no rate — excluded from cost`);
   if (billed < trips) notes.push(`${trips - billed} of ${trips} trips not yet billed: their cost is execution km × rate`);
   return {
     basis: EXECUTED_BASIS, date: planDate,
     trips, tankers_used: tankers.size, km: r1(km), litres: r2(litres), ack_litres: r2(ackLitres), cost: r2(cost),
+    sale_trips: sale.trips, sale_litres: r2(parseFloat(sale.litres)),
     cost_per_litre: litres > 0 ? Math.round(cost / litres * 10000) / 10000 : 0,
     avg_fill_pct: cap > 0 ? r1(litres / cap * 100) : 0,
     priced_trips: priced, billed_trips: billed,
@@ -516,13 +537,13 @@ async function loadComparison(planDate, shift, fleet, rates) {
 }
 
 // ─── Build the optimiser instance for a date + shift scope ──────────────────
-async function buildInstance(planDate, shiftScope, demandOverrides) {
+async function buildInstance(planDate, shiftScope, demandOverrides, opts = {}) {
   const bmcus = await loadBmcus();
   const { plants, startingPoints } = await loadPlants();
   const { resolve, distMap } = await buildResolver(bmcus, plants, startingPoints);
   const catchments = await loadCatchments(bmcus, plants, resolve);
   const { fleet, excluded, rates } = await loadFleet(planDate);
-  const demand = await loadDemand(planDate, bmcus);
+  const demand = await loadDemand(planDate, bmcus, !!opts.includeSale);
   const ov = new Map((demandOverrides || []).map(o => [`${o.bmcu_id}|${o.shift}`, parseFloat(o.litres)]));
   const litresFor = (bmcuId, shift) => {
     const o = ov.get(`${bmcuId}|${shift}`);

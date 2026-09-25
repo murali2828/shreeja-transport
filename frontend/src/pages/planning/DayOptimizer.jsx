@@ -91,8 +91,8 @@ export default function DayOptimizer() {
   const [accepted, setAccepted] = useState({});
 
   const { data: preview, isLoading: loadingPreview, isError: previewError, error: previewErr, refetch } = useQuery({
-    queryKey: ['day-optimizer-preview', planDate, shift],
-    queryFn: () => getDayOptimizerPreview({ plan_for_date: planDate, shift }).then(r => r.data),
+    queryKey: ['day-optimizer-preview', planDate, shift, !!constraints.include_sale],
+    queryFn: () => getDayOptimizerPreview({ plan_for_date: planDate, shift, include_sale: !!constraints.include_sale }).then(r => r.data),
     enabled: !!planDate,
     retry: false,
   });
@@ -129,7 +129,7 @@ export default function DayOptimizer() {
 
   const runMut = useMutation({
     mutationFn: () => runDayOptimizer({
-      plan_for_date: planDate, shift, constraints,
+      plan_for_date: planDate, shift, constraints, include_sale: !!constraints.include_sale,
       demand_overrides: Object.entries(demandEdits)
         .filter(([, v]) => v !== '' && v !== undefined)
         .map(([k, v]) => { const [bmcu_id, sh] = k.split('|'); return { bmcu_id: Number(bmcu_id), shift: sh, litres: parseFloat(v) || 0 }; }),
@@ -208,8 +208,13 @@ export default function DayOptimizer() {
             <input type="checkbox" checked={!!constraints.allow_plant_switch} onChange={e => setC('allow_plant_switch', e.target.checked)}/>
             Allow plant switch
           </label>
+          <label className="flex items-center gap-2 text-xs text-gray-600 mt-5"
+            title="Off (default): the forecast is built only from lifts by vendor tankers, so milk that Milma / sale tankers collect is not planned. On: forecast all milk.">
+            <input type="checkbox" checked={!!constraints.include_sale} onChange={e => setC('include_sale', e.target.checked)}/>
+            Include sale-tanker milk
+          </label>
         </div>
-        <div className="text-xs text-gray-400 mt-2">Defaults: fill floor 85 %, 6 BMCUs, 450 km, 2 trips per tanker per day. Cost = km × Tanker Rate Master rate (Point to Point for one BMCU, else BMCU/CC to Dairy/CC).</div>
+        <div className="text-xs text-gray-400 mt-2">Defaults: fill floor 85 %, 8 BMCUs, 550 km, 2 trips per tanker per day; sale-tanker milk excluded from the forecast. Cost = km × Tanker Rate Master rate (Point to Point for one BMCU, else BMCU/CC to Dairy/CC).</div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -354,6 +359,7 @@ export default function DayOptimizer() {
                 </tbody>
               </table>
               {ex?.ack_litres > 0 && <div className="text-xs text-gray-500 mt-2">Acknowledged at plant: {nf(ex.ack_litres)} L{ex.billed_trips != null && ` · ${ex.billed_trips} of ${ex.trips} trips billed`}</div>}
+              {ex?.sale_litres > 0 && <div className="text-xs text-violet-700 mt-1">Sale tankers that day: {ex.sale_trips} trip(s), {nf(ex.sale_litres)} L — not transported by Shreeja, not in the forecast unless "Include sale-tanker milk" is ticked</div>}
               {comparison.note && <div className="text-xs text-gray-500 mt-1">{comparison.note}</div>}
             </div>
           );
