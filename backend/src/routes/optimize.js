@@ -21,7 +21,34 @@ const {
 const { runFleetOptimizer, DEFAULT_CONSTRAINTS } = require('../services/optimizerV2');
 const dayData = require('../services/dayOptimizerData');
 
+const ExcelJS = require('exceljs');
+
 const canPlan = authorizeOrModule('planning', 'admin', 'planner');
+
+// ─── Suggested route name per optimised trip ────────────────────────────────
+// The Route Master whose BMCU set covers the largest share of the trip's
+// BMCUs (ties: the route with fewer extra BMCUs). Below 50 % coverage the
+// trip is a "New combination".
+const NEW_COMBINATION = 'New combination';
+async function suggestRouteNames(trips) {
+  const r = await pool.query(`
+    SELECT rm.id, rm.route_name, ARRAY_AGG(rb.bmcu_id) AS bmcu_ids
+    FROM route_masters rm JOIN route_bmcus rb ON rb.route_id = rm.id
+    WHERE rm.is_active = TRUE GROUP BY rm.id, rm.route_name`);
+  const routes = r.rows.map(x => ({ id: x.id, name: x.route_name, set: new Set(x.bmcu_ids) }));
+  for (const t of trips) {
+    const ids = new Set(t.bmcus.map(b => b.bmcu_id));
+    let best = null, bestShare = 0, bestExtra = Infinity;
+    for (const rt of routes) {
+      let hit = 0; for (const id of ids) if (rt.set.has(id)) hit++;
+      const share = hit / ids.size, extra = rt.set.size - hit;
+      if (share > bestShare || (share === bestShare && share > 0 && extra < bestExtra)) { best = rt; bestShare = share; bestExtra = extra; }
+    }
+    t.route_name = best && bestShare >= 0.5 ? best.name : NEW_COMBINATION;
+    t.route_id = best && bestShare >= 0.5 ? best.id : null;
+    t.route_overlap_pct = Math.round(bestShare * 100);
+  }
+}
 
 // ─── Day Optimizer (fleet v2) gate — OPTIMIZER_V2_ENABLED=true mounts it ─────
 const V2_ENABLED = () => process.env.OPTIMIZER_V2_ENABLED === 'true';
@@ -47,7 +74,7 @@ router.get('/day/preview', authenticate, canPlan, v2Gate, async (req, res) => {
   const p = parseDayParams(req.query);
   if (p.error) return res.status(400).json({ error: p.error });
   try {
-    const radius = parseFloat(process.env.OPTIMIZER_PREFETCH_RADIUS_KM || '80') || 80;
+    const radius = parseFloat(process.env.OPTIMIZER_PREFETCH_RADIUS_KM || '150') || 150;
     const { bmcus, plants, catchments, fleet, excluded, demand, distMap } = await dayData.buildInstance(p.plan_for_date, p.shift, []);
     const plantById = Object.fromEntries(plants.map(pl => [pl.id, pl]));
     res.json({
@@ -108,6 +135,7 @@ router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
       };
     }
     if (excluded.length) result.warnings.push(`${excluded.length} tanker(s) excluded — see Excluded tankers.`);
+    await suggestRouteNames(result.trips);
 
     // Persist the session in the existing optimizer tables
     const client = await pool.connect();
@@ -137,11 +165,11 @@ router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
           `INSERT INTO optimization_trips
              (session_id, trip_seq, tanker_id, tanker_number, capacity_litres, per_km_rate, total_qty_litres, utilization_pct,
               estimated_km, estimated_cost, per_liter_cost, km_is_estimated, delivery_point_id, start_point_id,
-              transport_type, rate_state, flags, shift_code)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+              transport_type, rate_state, flags, shift_code, route_name, vendor_name)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`,
           [sessionId, t.trip_seq, t.tanker_id, t.tanker_number, t.capacity_litres, t.rate_per_km, t.total_qty_litres, t.fill_pct,
            t.km, t.cost, t.cost_per_litre, t.flags.estimated_legs > 0, t.delivery_point_id, t.start_point_id,
-           t.transport_type, t.rate_state, JSON.stringify(t.flags), shiftsMilk.slice(0, 5)]);
+           t.transport_type, t.rate_state, JSON.stringify(t.flags), shiftsMilk.slice(0, 5), t.route_name, t.vendor_name]);
         t.opt_trip_id = tr.rows[0].id;
         for (const b of t.bmcus)
           await client.query(
@@ -169,11 +197,193 @@ router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
 });
 
 // =============================================================================
+// GET /api/optimize/:sessionId/report — Excel of a Day Optimizer session
+// Sheets: Summary (inputs, constraints, totals, comparison, unserved,
+// excluded tankers), Trip Wise, BMCU Pickups, Tanker Wise.
+// =============================================================================
+const XL_THIN = { style: 'thin', color: { argb: 'FFD1D5DB' } };
+const XL_BORDER = { top: XL_THIN, bottom: XL_THIN, left: XL_THIN, right: XL_THIN };
+const xlFill = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+const INR_FMT = '#,##0.00', INT_FMT = '#,##0', KM_FMT = '#,##0.0';
+function xlHeader(ws, row, headers, fill = 'FFE0F2FE') {
+  headers.forEach((h, i) => {
+    const c = ws.getCell(row, i + 1);
+    c.value = h; c.font = { bold: true, color: { argb: 'FF1F2937' } }; c.fill = xlFill(fill); c.border = XL_BORDER;
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  });
+  ws.getRow(row).height = 28;
+}
+function xlTitle(ws, text, span) {
+  ws.mergeCells(1, 1, 1, span);
+  const c = ws.getCell(1, 1); c.value = text; c.font = { bold: true, size: 13, color: { argb: 'FF0C4A6E' } };
+  c.alignment = { horizontal: 'left', vertical: 'middle' }; ws.getRow(1).height = 22;
+}
+function xlRow(ws, row, values, fmts = {}, opts = {}) {
+  values.forEach((v, i) => {
+    const c = ws.getCell(row, i + 1);
+    c.value = v == null ? '' : v; c.border = XL_BORDER;
+    if (fmts[i]) c.numFmt = fmts[i];
+    if (opts.bold) c.font = { bold: true };
+    if (opts.fill) c.fill = xlFill(opts.fill);
+  });
+}
+const fmtDdMm = iso => iso ? String(iso).slice(0, 10).split('-').reverse().join('-') : '';
+
+router.get('/:sessionId(\\d+)/report', authenticate, canPlan, v2Gate, async (req, res) => {
+  const sessionId = parseInt(req.params.sessionId);
+  try {
+    const s = (await pool.query(`
+      SELECT os.*, u.full_name AS created_by_name FROM optimization_sessions os
+      LEFT JOIN users u ON u.id = os.created_by WHERE os.id = $1 AND os.algorithm = 'fleet_v2'`, [sessionId])).rows[0];
+    if (!s) return res.status(404).json({ error: 'Day Optimizer session not found' });
+    const trips = (await pool.query(`
+      SELECT ot.*, dp.name AS plant_name, t.vendor_id, COALESCE(ot.vendor_name, v.vendor_name, t.vendor_name) AS vendor
+      FROM optimization_trips ot
+      LEFT JOIN delivery_points dp ON dp.id = ot.delivery_point_id
+      LEFT JOIN tankers t ON t.id = ot.tanker_id
+      LEFT JOIN vendors v ON v.id = t.vendor_id
+      WHERE ot.session_id = $1 ORDER BY dp.name, ot.trip_seq`, [sessionId])).rows;
+    const pickups = (await pool.query(`
+      SELECT otb.opt_trip_id, otb.seq_no, otb.bmcu_id, otb.expected_qty_litres, otb.leg_km, otb.leg_is_estimated,
+             b.bmcu_code, b.bmcu_name, oi.shift_code
+      FROM optimization_trip_bmcus otb
+      JOIN optimization_trips ot ON ot.id = otb.opt_trip_id
+      JOIN bmcus b ON b.id = otb.bmcu_id
+      LEFT JOIN optimization_inputs oi ON oi.session_id = ot.session_id AND oi.bmcu_id = otb.bmcu_id
+      WHERE ot.session_id = $1 ORDER BY ot.trip_seq, otb.seq_no`, [sessionId])).rows;
+    const byTrip = new Map();
+    for (const p of pickups) { if (!byTrip.has(p.opt_trip_id)) byTrip.set(p.opt_trip_id, []); byTrip.get(p.opt_trip_id).push(p); }
+    const summary = s.summary || {}, cmp = s.comparison || null, C = s.constraints || {};
+    const n = v => (v == null ? null : Number(v));
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Shreeja TMS';
+    // ── Summary ─────────────────────────────────────────────────────────────
+    const ws = wb.addWorksheet('Summary');
+    ws.columns = [{ width: 34 }, { width: 20 }, { width: 20 }, { width: 20 }, { width: 40 }];
+    xlTitle(ws, `Day Optimizer — ${fmtDdMm(s.plan_for_date)} (${s.shifts_milk})  ·  Session #${s.id}`, 5);
+    let r = 3;
+    const kv = (k, v, fmt) => { xlRow(ws, r, [k, v], { 1: fmt }); r++; };
+    kv('Plan date', fmtDdMm(s.plan_for_date)); kv('Shift', s.shifts_milk); kv('Run by', s.created_by_name || '');
+    kv('Run at', s.created_at ? new Date(s.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '');
+    r++; xlRow(ws, r, ['Constraints'], {}, { bold: true, fill: 'FFF1F5F9' }); r++;
+    kv('Fill floor', C.fill_floor != null ? `${Math.round(C.fill_floor * 100)} %` : ''); kv('Max trips per tanker per day', C.max_trips_per_tanker_per_day);
+    kv('Max BMCUs per trip', C.max_bmcus_per_trip); kv('Max km per trip', C.max_trip_km);
+    kv('Plant switch allowed', C.allow_plant_switch ? 'Yes' : 'No'); kv('Time budget (ms) / iterations', `${C.time_budget_ms} / ${C.max_iterations}`);
+    r++;
+    const tot = summary.totals || {};
+    xlHeader(ws, r, ['Totals', 'Optimizer', 'Actual plans', 'Δ (opt − actual)', cmp ? (cmp.source === 'actual_plans' ? `Actual = plans of ${fmtDdMm(cmp.date)}` : `Actual = same weekday last week (${fmtDdMm(cmp.date)})`) : 'No actual plans to compare']); r++;
+    const lines = [
+      ['Trips', tot.trips, cmp?.trips, INT_FMT], ['Litres', tot.litres, cmp?.litres, INT_FMT], ['Km', tot.km, cmp?.km, KM_FMT],
+      ['Cost ₹', tot.cost, cmp?.cost, INR_FMT], ['Cost per litre ₹', tot.cost_per_litre, cmp?.cost_per_litre, '0.0000'],
+      ['Average fill %', tot.avg_fill_pct, cmp?.avg_fill_pct, KM_FMT],
+      ['Tankers used', new Set(trips.map(t => t.tanker_id)).size, null, INT_FMT],
+      ['Trips below fill floor', tot.below_fill_floor_trips, null, INT_FMT], ['Estimated legs', tot.estimated_legs, null, INT_FMT],
+      ['Unserved BMCU pickups', (summary.unserved || []).length, null, INT_FMT],
+    ];
+    for (const [k, a, b, fmt] of lines) {
+      const d = a != null && b != null ? Math.round((n(a) - n(b)) * 10000) / 10000 : null;
+      xlRow(ws, r, [k, n(a), n(b), d], { 1: fmt, 2: fmt, 3: fmt });
+      if (d != null && d !== 0 && !['Litres', 'Average fill %'].includes(k)) ws.getCell(r, 4).font = { color: { argb: d < 0 ? 'FF1E8449' : 'FFC0392B' }, bold: true };
+      r++;
+    }
+    if (cmp?.note) { xlRow(ws, r, ['Note', cmp.note]); r++; }
+    const st = summary.stats;
+    if (st) { r++; kv('Search', `seed ₹${st.seed_cost} → ₹${st.search_cost}; ${st.iterations} iterations, ${st.accepted} accepted, ${st.restarts} restarts, ${st.elapsed_ms} ms`); }
+    for (const w of summary.warnings || []) { kv('Warning', w); }
+    const unserved = summary.unserved || [];
+    r++; xlHeader(ws, r, ['Unserved BMCU', 'Litres', 'Reason', '', '']); r++;
+    if (!unserved.length) { xlRow(ws, r, ['None — every BMCU pickup is served']); r++; }
+    for (const u of unserved) { xlRow(ws, r, [`${u.bmcu_code || ''} ${u.bmcu_name || ''}`.trim(), n(u.litres), u.reason], { 1: INT_FMT }); r++; }
+    const excluded = summary.excluded_tankers || [];
+    r++; xlHeader(ws, r, ['Excluded tanker', 'Reason', '', '', '']); r++;
+    if (!excluded.length) { xlRow(ws, r, ['None']); r++; }
+    for (const e of excluded) { xlRow(ws, r, [e.tanker_number, e.reason]); r++; }
+
+    // ── Trip Wise ───────────────────────────────────────────────────────────
+    const wt = wb.addWorksheet('Trip Wise');
+    const tripHead = ['#', 'Plant', 'Route', 'Tanker', 'Vendor', 'Capacity L', 'State', 'Transport type', 'BMCUs', 'Litres', 'Fill %', 'Km', 'Rate ₹/km', 'Cost ₹', '₹/L', 'Flags', 'BMCU chain'];
+    wt.columns = [6, 18, 22, 14, 18, 11, 16, 20, 8, 11, 8, 9, 10, 12, 8, 24, 60].map(w => ({ width: w }));
+    xlTitle(wt, `Trip Wise — ${fmtDdMm(s.plan_for_date)} (${s.shifts_milk})`, tripHead.length);
+    xlHeader(wt, 3, tripHead); wt.views = [{ state: 'frozen', ySplit: 3 }];
+    const tripFmts = { 5: INT_FMT, 9: INT_FMT, 10: KM_FMT, 11: KM_FMT, 12: INR_FMT, 13: INR_FMT, 14: '0.0000' };
+    let tr = 4;
+    const flagsOf = t => { const f = t.flags || {}; return [f.below_fill_floor && 'below fill floor', f.estimated_legs > 0 && `${f.estimated_legs} est. leg(s)`, f.over_max_km && 'over km limit'].filter(Boolean).join(', '); };
+    let curPlant = null, plantAgg = null;
+    const aggRow = (label, a) => {
+      xlRow(wt, tr, [label, '', '', `${a.tankers.size} tankers`, '', '', '', '', a.bmcus, a.litres, a.cap ? a.litres / a.cap * 100 : null, a.km, '', a.cost, a.litres ? a.cost / a.litres : null], tripFmts, { bold: true, fill: 'FFF1F5F9' });
+      tr++;
+    };
+    const newAgg = () => ({ trips: 0, tankers: new Set(), bmcus: 0, litres: 0, cap: 0, km: 0, cost: 0 });
+    const all = newAgg();
+    for (const t of trips) {
+      if (t.plant_name !== curPlant) { if (plantAgg) aggRow(`${curPlant} total (${plantAgg.trips} trips)`, plantAgg); curPlant = t.plant_name; plantAgg = newAgg(); }
+      const ps = byTrip.get(t.id) || [];
+      xlRow(wt, tr, [t.trip_seq, t.plant_name, t.route_name || '', t.tanker_number, t.vendor || '', n(t.capacity_litres), t.rate_state || '', t.transport_type || '',
+        ps.length, n(t.total_qty_litres), n(t.utilization_pct), n(t.estimated_km), n(t.per_km_rate), n(t.estimated_cost), n(t.per_liter_cost), flagsOf(t),
+        ps.map(p => `${p.bmcu_code} (${Math.round(p.expected_qty_litres)} L, ${Number(p.leg_km || 0).toFixed(1)} km)`).join(' → ')], tripFmts);
+      tr++;
+      for (const a of [plantAgg, all]) { a.trips++; a.tankers.add(t.tanker_id); a.bmcus += ps.length; a.litres += n(t.total_qty_litres) || 0; a.cap += n(t.capacity_litres) || 0; a.km += n(t.estimated_km) || 0; a.cost += n(t.estimated_cost) || 0; }
+    }
+    if (plantAgg) aggRow(`${curPlant} total (${plantAgg.trips} trips)`, plantAgg);
+    aggRow(`GRAND TOTAL (${all.trips} trips)`, all);
+
+    // ── BMCU Pickups ────────────────────────────────────────────────────────
+    const wp = wb.addWorksheet('BMCU Pickups');
+    const pHead = ['Trip #', 'Plant', 'Route', 'Tanker', 'Seq', 'BMCU code', 'BMCU name', 'Shift', 'Litres', 'Leg km', 'Cumulative litres', 'Fill so far %'];
+    wp.columns = [8, 18, 22, 14, 6, 11, 28, 8, 11, 9, 14, 11].map(w => ({ width: w }));
+    xlTitle(wp, `BMCU Pickups — ${fmtDdMm(s.plan_for_date)} (${s.shifts_milk})`, pHead.length);
+    xlHeader(wp, 3, pHead); wp.views = [{ state: 'frozen', ySplit: 3 }];
+    let pr = 4;
+    for (const t of trips) {
+      let cum = 0;
+      for (const p of byTrip.get(t.id) || []) {
+        cum += n(p.expected_qty_litres) || 0;
+        xlRow(wp, pr, [t.trip_seq, t.plant_name, t.route_name || '', t.tanker_number, p.seq_no, p.bmcu_code, p.bmcu_name, p.shift_code || s.shifts_milk,
+          n(p.expected_qty_litres), p.leg_km == null ? null : n(p.leg_km), cum, t.capacity_litres ? cum / n(t.capacity_litres) * 100 : null],
+        { 8: INT_FMT, 9: KM_FMT, 10: INT_FMT, 11: KM_FMT });
+        if (p.leg_is_estimated) wp.getCell(pr, 10).font = { italic: true, color: { argb: 'FF92400E' } };
+        pr++;
+      }
+    }
+
+    // ── Tanker Wise ─────────────────────────────────────────────────────────
+    const wk = wb.addWorksheet('Tanker Wise');
+    const kHead = ['Tanker', 'Vendor', 'Capacity L', 'State', 'Trips', 'Litres', 'Avg fill %', 'Km', 'Cost ₹', '₹/L', 'Routes'];
+    wk.columns = [14, 20, 11, 16, 7, 11, 10, 9, 12, 8, 50].map(w => ({ width: w }));
+    xlTitle(wk, `Tanker Wise — ${fmtDdMm(s.plan_for_date)} (${s.shifts_milk})`, kHead.length);
+    xlHeader(wk, 3, kHead); wk.views = [{ state: 'frozen', ySplit: 3 }];
+    const perTanker = new Map();
+    for (const t of trips) {
+      const k = perTanker.get(t.tanker_id) || { tanker: t.tanker_number, vendor: t.vendor, cap: n(t.capacity_litres), state: t.rate_state, trips: 0, litres: 0, km: 0, cost: 0, routes: [] };
+      k.trips++; k.litres += n(t.total_qty_litres) || 0; k.km += n(t.estimated_km) || 0; k.cost += n(t.estimated_cost) || 0; k.routes.push(`#${t.trip_seq} ${t.route_name || ''}`);
+      perTanker.set(t.tanker_id, k);
+    }
+    let kr = 4;
+    for (const k of [...perTanker.values()].sort((a, b) => a.tanker < b.tanker ? -1 : 1)) {
+      xlRow(wk, kr, [k.tanker, k.vendor || '', k.cap, k.state || '', k.trips, k.litres, k.cap ? k.litres / (k.cap * k.trips) * 100 : null, k.km, k.cost, k.litres ? k.cost / k.litres : null, k.routes.join('; ')],
+        { 2: INT_FMT, 5: INT_FMT, 6: KM_FMT, 7: KM_FMT, 8: INR_FMT, 9: '0.0000' });
+      kr++;
+    }
+    xlRow(wk, kr, ['TOTAL', '', '', '', all.trips, all.litres, all.cap ? all.litres / all.cap * 100 : null, all.km, all.cost, all.litres ? all.cost / all.litres : null, `${perTanker.size} tankers`],
+      { 5: INT_FMT, 6: KM_FMT, 7: KM_FMT, 8: INR_FMT, 9: '0.0000' }, { bold: true, fill: 'FFF1F5F9' });
+
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    res.setHeader('Content-Disposition', `attachment; filename=day_optimizer_${s.plan_for_date}_session${s.id}.xlsx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    console.error('[optimizer-v2] report error:', err);
+    res.status(500).json({ error: 'Failed to build the Day Optimizer report' });
+  }
+});
+
+// =============================================================================
 // POST /api/optimize/prefetch-distances — Google-fetch missing nearby pairs
 // =============================================================================
 router.post('/prefetch-distances', authenticate, canPlan, v2Gate, async (req, res) => {
   try {
-    const radiusKm = parseFloat(process.env.OPTIMIZER_PREFETCH_RADIUS_KM || '80') || 80;
+    const radiusKm = parseFloat(process.env.OPTIMIZER_PREFETCH_RADIUS_KM || '150') || 150;
     const maxCalls = Math.max(1, parseInt(process.env.OPTIMIZER_PREFETCH_MAX || '3000') || 3000);
     const out = await dayData.prefetchDistances({ radiusKm, maxCalls, concurrency: 4, userId: req.user.id });
     console.log(`[optimizer-v2] prefetch fetched=${out.fetched} failed=${out.failed} remaining=${out.remaining}`);

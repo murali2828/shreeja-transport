@@ -258,6 +258,13 @@ export const getDayOptimizerPreview = (p)    => api.get('/optimize/day/preview',
 export const runDayOptimizer        = (d)    => api.post('/optimize/day', d, { timeout: 60_000 });
 export const prefetchOptimizerDistances = () => api.post('/optimize/prefetch-distances', {}, { timeout: 600_000 });
 export const backfillForecast       = (date) => api.post('/optimize/forecast/backfill', null, { params: { date } });
+export const downloadDayOptimizerReport = (sessionId, planDate) =>
+  api.get(`/optimize/${sessionId}/report`, { responseType: 'blob', timeout: 120_000 }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `day_optimizer_${planDate}_session${sessionId}.xlsx`; a.click();
+    URL.revokeObjectURL(url);
+  });
 
 // ── Tanker Rates ──────────────────────────────────────────────────────────────
 export const getTankerRates            = (p)     => api.get('/tanker-rates', { params: p });

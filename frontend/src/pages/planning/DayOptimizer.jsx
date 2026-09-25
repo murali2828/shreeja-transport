@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
-  getDayOptimizerPreview, runDayOptimizer, prefetchOptimizerDistances, saveOptimizerAsPlans,
+  getDayOptimizerPreview, runDayOptimizer, prefetchOptimizerDistances, saveOptimizerAsPlans, downloadDayOptimizerReport,
 } from '../../api/index';
 import { fmtDate } from '../../utils/date';
 
@@ -309,7 +309,7 @@ export default function DayOptimizer() {
     return (
       <div className="space-y-4">
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          <StatCard icon={Route} label="Trips" value={nf(totals.trips)} sub={`${nf(totals.litres)} L`}/>
+          <StatCard icon={Route} label="Trips" value={nf(totals.trips)} sub={`${nf(totals.litres)} L · ${new Set(trips.map(t => t.tanker_id)).size} tankers`}/>
           <StatCard icon={MapPin} label="Total km" value={nf(totals.km, 1)} color="purple"/>
           <StatCard icon={IndianRupee} label="Total cost" value={inr(totals.cost)} color="green"/>
           <StatCard icon={IndianRupee} label="Cost / litre" value={inr(totals.cost_per_litre, 3)} color="green"/>
@@ -362,8 +362,13 @@ export default function DayOptimizer() {
 
         {Object.entries(byPlant).map(([plant, list]) => (
           <div key={plant} className="card">
-            <div className="card-header text-sm font-semibold flex items-center gap-2"><Factory size={14}/> {plant}
-              <span className="text-xs text-gray-500 font-normal">{list.length} trips · {nf(list.reduce((s, t) => s + t.total_qty_litres, 0))} L · {inr(list.reduce((s, t) => s + t.cost, 0))}</span></div>
+            <div className="card-header text-sm font-semibold flex items-center gap-2 flex-wrap"><Factory size={14}/> {plant}
+              {(() => {
+                const litres = list.reduce((s, t) => s + t.total_qty_litres, 0), cost = list.reduce((s, t) => s + t.cost, 0);
+                const km = list.reduce((s, t) => s + t.km, 0), cap = list.reduce((s, t) => s + t.capacity_litres, 0);
+                const tankers = new Set(list.map(t => t.tanker_id)).size;
+                return <span className="text-xs text-gray-500 font-normal">{list.length} trips · {tankers} tankers · {nf(litres)} L · {nf(km, 1)} km · {inr(cost)} · {inr(litres ? cost / litres : 0, 3)}/L · fill {nf(cap ? litres / cap * 100 : 0, 1)} %</span>;
+              })()}</div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="bg-gray-50 border-b"><tr>
@@ -375,8 +380,12 @@ export default function DayOptimizer() {
                     <tr key={t.opt_trip_id} className={`border-b border-gray-50 ${accepted[t.opt_trip_id] === false ? 'opacity-50' : ''}`}>
                       <td className="table-td"><input type="checkbox" checked={accepted[t.opt_trip_id] !== false} onChange={e => setAccepted(p => ({ ...p, [t.opt_trip_id]: e.target.checked }))}/></td>
                       <td className="table-td">{t.trip_seq}</td>
-                      <td className="table-td"><span className="font-mono font-semibold">{t.tanker_number}</span><div className="text-gray-400">{nf(t.capacity_litres)} L · {t.transport_type}</div></td>
-                      <td className="table-td" title={t.tanker_reason}>{t.bmcus.map(b => `${b.bmcu_code} (${nf(b.expected_qty_litres)} L, ${nf(b.leg_km, 1)} km${b.leg_is_estimated ? '~' : ''})`).join(' → ')}
+                      <td className="table-td"><span className="font-mono font-semibold">{t.tanker_number}</span>
+                        <div className="text-gray-600">{t.vendor_name || <span className="text-red-500">no vendor</span>}</div>
+                        <div className="text-gray-400">{nf(t.capacity_litres)} L · {t.rate_state || '—'} · {t.transport_type} · ₹{nf(t.rate_per_km, 2)}/km</div></td>
+                      <td className="table-td" title={t.tanker_reason}>
+                        <div className={`font-semibold ${t.route_name === 'New combination' ? 'text-amber-700' : 'text-sky-800'}`}>Route: {t.route_name || '—'}{t.route_overlap_pct != null && t.route_name !== 'New combination' && <span className="text-gray-400 font-normal"> ({t.route_overlap_pct} % of BMCUs on this route)</span>}</div>
+                        {t.bmcus.map(b => `${b.bmcu_code} (${nf(b.expected_qty_litres)} L, ${nf(b.leg_km, 1)} km${b.leg_is_estimated ? '~' : ''})`).join(' → ')}
                         <span className="text-gray-400"> → plant {nf(t.return_leg.leg_km, 1)} km{t.return_leg.leg_is_estimated ? '~' : ''}</span></td>
                       <td className="table-td text-right font-semibold">{nf(t.total_qty_litres)}</td>
                       <td className="table-td"><FillBar pct={t.fill_pct}/></td>
@@ -412,6 +421,10 @@ export default function DayOptimizer() {
 
         <div className="flex justify-between">
           <button className="btn-secondary flex items-center gap-2" onClick={() => setStep(1)}><ChevronLeft size={14}/> Back to inputs</button>
+          <button className="btn-secondary flex items-center gap-2" disabled={!result.session_id}
+            onClick={() => downloadDayOptimizerReport(result.session_id, planDate).catch(e => toast.error(e.response?.data?.error || e.message))}>
+            <Download size={14}/> Download Excel
+          </button>
           <button className="btn-primary flex items-center gap-2" disabled={saveMut.isPending || acceptedCount === 0}
             onClick={() => { if (window.confirm(`Create ${acceptedCount} draft trip plan(s) for ${fmtDate(planDate)}?`)) saveMut.mutate(); }}>
             <Save size={14}/> {saveMut.isPending ? 'Saving…' : `Save ${acceptedCount} trips as draft plans`}
