@@ -13,8 +13,12 @@
 //              → else 0. Planner overrides win. Persisted in bmcu_demand_forecast.
 //   Catchment  a BMCU's plant = the delivery point it went to most often in the
 //              last 60 days of plans; else the nearest plant by distance.
-//   Fleet      active tankers, not the SALE placeholder, with no open
-//              maintenance / without-driver gate pass covering the date.
+//   Fleet      active tankers, not the SALE placeholder, with no credible
+//              open MAINTENANCE gate pass covering the date (a pass is stale
+//              once the tanker ran again; other pass reasons are ignored).
+//              Planners exclude tankers by hand with the page's Use toggle.
+//   Demand     above the largest available tanker is split into parts by
+//              optimizerV2.splitOversizedNodes, never reported unserved.
 //   Rate state the state most often chosen for the tanker in billing runs
 //              (last 90 days) else derived from the registration prefix.
 // =============================================================================
@@ -124,16 +128,27 @@ async function loadFleet(planDate) {
     FROM tankers t LEFT JOIN vendors v ON v.id = t.vendor_id
     WHERE t.is_active = TRUE AND NOT ${saleTankerNumberSql('t')}
     ORDER BY t.tanker_number`)).rows;
-  // Open maintenance / without-driver gate passes covering the date
-  // (same reasons Tanker Position treats as unavailable).
+  // Only a MAINTENANCE gate pass blocks a tanker (open, or covering the
+  // date). "Tankers without driver" and the other reasons are ignored: the
+  // first production run excluded 16 tankers on such passes that were never
+  // returned although the tankers kept running. A maintenance pass is also
+  // treated as STALE — tanker available, note shown in the preview — when
+  // the tanker ran a non-cancelled trip after the pass was issued (up to the
+  // planning date, or today for a future date).
   const blocked = (await query(`
-    SELECT DISTINCT ON (tanker_id) tanker_id, reason, issued_at
-    FROM non_trip_gate_passes
-    WHERE reason IN ('Maintainance','Tankers without driver')
-      AND issued_at < ($1::date + 1)
-      AND (returned_at IS NULL OR returned_at >= $1::date)
-    ORDER BY tanker_id, issued_at DESC`, [planDate])).rows;
+    SELECT DISTINCT ON (g.tanker_id) g.tanker_id, g.reason, g.issued_at::date AS issued_on,
+           (SELECT MAX(tp.plan_for_date) FROM trip_executions te
+              JOIN trip_plans tp ON tp.id = te.trip_plan_id
+             WHERE tp.tanker_id = g.tanker_id AND te.status <> 'cancelled'
+               AND tp.plan_for_date >= g.issued_at::date
+               AND tp.plan_for_date <= LEAST($1::date, CURRENT_DATE)) AS ran_on
+    FROM non_trip_gate_passes g
+    WHERE g.reason = 'Maintainance'
+      AND g.issued_at < ($1::date + 1)
+      AND (g.returned_at IS NULL OR g.returned_at >= $1::date)
+    ORDER BY g.tanker_id, g.issued_at DESC`, [planDate])).rows;
   const blockedBy = new Map(blocked.map(b => [b.tanker_id, b]));
+  const ddmmyyyy = iso => String(iso).slice(0, 10).split('-').reverse().join('-');
   const rates = await loadRatesForDate(planDate);
   const billingStates = await loadBillingStates(90);
 
@@ -149,11 +164,14 @@ async function loadFleet(planDate) {
       id: t.id, tanker_number: t.tanker_number, capacity_litres: cap, vendor_name: t.vendor_name,
       state, state_source: stateSource,
       rates: { [TT_P2P]: rP2P?.rate_per_km || null, [TT_BMCU]: rBmcu?.rate_per_km || null },
-      available: true, reason: null,
+      available: true, reason: null, note: null,
     };
-    if (gp) {
+    if (gp && gp.ran_on) {
+      row.note = `open maintenance gate pass since ${ddmmyyyy(gp.issued_on)} looks stale — tanker ran on ${ddmmyyyy(gp.ran_on)}; close the pass`;
+    }
+    if (gp && !gp.ran_on) {
       row.available = false;
-      row.reason = gp.reason === 'Maintainance' ? 'Under maintenance (open gate pass)' : 'Without driver (open gate pass)';
+      row.reason = `Under maintenance (gate pass open since ${ddmmyyyy(gp.issued_on)})`;
     } else if (!state) {
       row.available = false; row.reason = 'No billing state and registration prefix not recognised';
     } else if (!rP2P && !rBmcu) {

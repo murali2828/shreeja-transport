@@ -270,7 +270,8 @@ export default function DayOptimizer() {
                       <td className="table-td">{f.state || '—'}{f.state_source === 'registration' && <span className="text-gray-400" title="from registration prefix">*</span>}</td>
                       <td className="table-td text-right">{f.rates['Point to Point'] ?? '—'}</td>
                       <td className="table-td text-right">{f.rates['BMCU/CC to Dairy/CC'] ?? '—'}</td>
-                      <td className="table-td">{f.available ? <span className="badge bg-green-50 text-green-700">available</span> : <span className="text-red-600" title={f.reason}>{f.reason}</span>}</td>
+                      <td className="table-td">{f.available ? <span className="badge bg-green-50 text-green-700">available</span> : <span className="text-red-600" title={f.reason}>{f.reason}</span>}
+                        {f.note && <div className="text-amber-700" title={f.note}><AlertTriangle size={10} className="inline mr-1"/>{f.note}</div>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -302,7 +303,7 @@ export default function DayOptimizer() {
 
   // ─── Step 2: Results ──────────────────────────────────────────────────────
   const renderResults = () => {
-    const { totals, trips, comparison, warnings, unserved, excluded_tankers } = result;
+    const { totals, trips, comparison, warnings, unserved, excluded_tankers, stats } = result;
     const byPlant = {};
     for (const t of trips) (byPlant[t.plant_name] ||= []).push(t);
     return (
@@ -341,9 +342,21 @@ export default function DayOptimizer() {
           </div>
         )}
 
+        {unserved?.length > 0 && (
+          <div className="card p-3 border-red-300 bg-red-50 text-sm text-red-800 flex items-center gap-2">
+            <AlertTriangle size={16}/> <span><b>{unserved.length} BMCU pickup(s) are not served</b> — see the Unserved list below. Raise max trips per tanker, add BMCUs per trip or km per trip, or check the excluded tankers and the Use column in the fleet.</span>
+          </div>
+        )}
         {warnings?.length > 0 && (
           <div className="card p-3 border-amber-200 bg-amber-50 text-xs text-amber-800 space-y-1">
             {warnings.map((w, i) => <div key={i} className="flex items-center gap-2"><AlertTriangle size={12}/> {w}</div>)}
+          </div>
+        )}
+        {stats && (
+          <div className="text-xs text-gray-500 px-1">
+            Search: seed {inr(stats.seed_cost)} → {inr(stats.search_cost)} in {nf(stats.iterations)} iterations, {nf(stats.accepted)} accepted, {stats.restarts} restarts{stats.kicks != null ? `, ${stats.kicks} kicks` : ''}, {nf(stats.elapsed_ms)} ms
+            {stats.moves && <> · moves (accepted/tried): {Object.entries(stats.moves).map(([k, v]) => `${k.replace('_', ' ')} ${v.accepted}/${v.tried}`).join(', ')}</>}
+            {stats.seed_candidates?.length > 0 && <> · seeds: {stats.seed_candidates.map(s => `${nf(s.capacity / 1000)} KL ${inr(s.cost)}${s.chosen ? ' ✓' : ''}`).join(', ')}</>}
           </div>
         )}
 
@@ -373,7 +386,8 @@ export default function DayOptimizer() {
                       <td className="table-td text-right">{nf(t.cost_per_litre, 3)}</td>
                       <td className="table-td">
                         {t.flags.below_fill_floor && <span className="badge bg-amber-50 text-amber-700 mr-1">below floor</span>}
-                        {t.flags.estimated_legs > 0 && <span className="badge bg-gray-100 text-gray-600">{t.flags.estimated_legs} est. leg{t.flags.estimated_legs > 1 ? 's' : ''}</span>}
+                        {t.flags.estimated_legs > 0 && <span className="badge bg-gray-100 text-gray-600 mr-1">{t.flags.estimated_legs} est. leg{t.flags.estimated_legs > 1 ? 's' : ''}</span>}
+                        {t.flags.over_max_km && <span className="badge bg-red-50 text-red-700" title="Single BMCU whose round trip alone exceeds the km limit">over km limit</span>}
                       </td>
                     </tr>
                   ))}
