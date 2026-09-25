@@ -309,7 +309,7 @@ export default function DayOptimizer() {
     return (
       <div className="space-y-4">
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          <StatCard icon={Route} label="Trips" value={nf(totals.trips)} sub={`${nf(totals.litres)} L · ${new Set(trips.map(t => t.tanker_id)).size} tankers`}/>
+          <StatCard icon={Route} label="Trips" value={nf(totals.trips)} sub={`Forecast ${nf(totals.litres)} L · ${new Set(trips.map(t => t.tanker_id)).size} tankers`}/>
           <StatCard icon={MapPin} label="Total km" value={nf(totals.km, 1)} color="purple"/>
           <StatCard icon={IndianRupee} label="Total cost" value={inr(totals.cost)} color="green"/>
           <StatCard icon={IndianRupee} label="Cost / litre" value={inr(totals.cost_per_litre, 3)} color="green"/>
@@ -317,30 +317,45 @@ export default function DayOptimizer() {
           <StatCard icon={Info} label="Estimated legs" value={nf(totals.estimated_legs)} color={totals.estimated_legs ? 'amber' : 'blue'}/>
         </div>
 
-        {comparison && (
-          <div className="card p-4">
-            <div className="text-sm font-semibold mb-2 flex items-center gap-2">
-              Comparison — {comparison.source === 'actual_plans' ? `actual plans for ${fmtDate(comparison.date)}` : `same weekday last week (${fmtDate(comparison.date)})`}
+        {comparison && (() => {
+          // Sessions before 2026-09-25 stored one flat block: treat it as the executed column.
+          const ex = comparison.actual_executed || (comparison.actual_planned ? null : comparison);
+          const pl = comparison.actual_planned || null;
+          const exDelta = ex?.delta || comparison.delta || {};
+          const optTankers = new Set(trips.map(t => t.tanker_id)).size;
+          const rows = [
+            ['Trips', nf(totals.trips), ex && nf(ex.trips), pl && nf(pl.trips), exDelta.trips, '', 0],
+            ['Tankers used', nf(optTankers), ex && nf(ex.tankers_used), pl && nf(pl.tankers_used), exDelta.tankers_used, '', 0],
+            ['Km', nf(totals.km, 1), ex && nf(ex.km, 1), pl && nf(pl.km, 1), exDelta.km, ' km', 1],
+            ['Litres (forecast vs RMRD)', nf(totals.litres), ex && nf(ex.litres), pl && nf(pl.litres), exDelta.litres, ' L', 0, false],
+            ['Cost', inr(totals.cost), ex && inr(ex.cost), pl && inr(pl.cost), exDelta.cost, ' ₹', 0],
+            ['Cost / litre', inr(totals.cost_per_litre, 3), ex && inr(ex.cost_per_litre, 3), pl && inr(pl.cost_per_litre, 3), exDelta.cost_per_litre, ' ₹', 3],
+            ['Avg fill %', nf(totals.avg_fill_pct, 1), ex && nf(ex.avg_fill_pct, 1), pl && nf(pl.avg_fill_pct, 1), exDelta.avg_fill_pct, ' %', 1, false],
+          ];
+          return (
+            <div className="card p-4">
+              <div className="text-sm font-semibold mb-1 flex items-center gap-2">
+                Comparison — {comparison.source === 'actual_plans' ? `actual trips of ${fmtDate(comparison.date)}` : `same weekday last week (${fmtDate(comparison.date)})`}
+              </div>
+              <div className="text-xs text-gray-500 mb-2">
+                Optimizer litres are a forecast. Actual (executed) = {ex?.basis || 'RMRD litres · billed km/amount where billed, else execution km × rate'}.
+                {pl && ' Planned = the planner\'s expected litres, km and cost (plans under-state lifted milk, so ₹/L and fill there are not comparable).'}
+              </div>
+              <table className="text-sm">
+                <thead><tr className="text-xs text-gray-500"><th className="text-left pr-6"></th><th className="text-right pr-6">Optimizer</th><th className="text-right pr-6">Actual (executed)</th><th className="text-right pr-6">Δ</th><th className="text-right text-gray-400">Planned</th></tr></thead>
+                <tbody>
+                  {rows.map(([l, a, b, c, d, u, dg, lower]) => (
+                    <tr key={l}><td className="pr-6 py-0.5 text-gray-600">{l}</td><td className="text-right pr-6 font-semibold">{a}</td><td className="text-right pr-6">{b ?? '—'}</td>
+                      <td className="text-right pr-6"><Delta value={ex ? d : null} unit={u} digits={dg} lowerIsBetter={lower !== false}/></td>
+                      <td className="text-right text-gray-400">{c ?? '—'}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+              {ex?.ack_litres > 0 && <div className="text-xs text-gray-500 mt-2">Acknowledged at plant: {nf(ex.ack_litres)} L{ex.billed_trips != null && ` · ${ex.billed_trips} of ${ex.trips} trips billed`}</div>}
+              {comparison.note && <div className="text-xs text-gray-500 mt-1">{comparison.note}</div>}
             </div>
-            <table className="text-sm">
-              <thead><tr className="text-xs text-gray-500"><th className="text-left pr-6"></th><th className="text-right pr-6">Optimizer</th><th className="text-right pr-6">Actual</th><th className="text-right">Δ</th></tr></thead>
-              <tbody>
-                {[
-                  ['Trips', nf(totals.trips), nf(comparison.trips), comparison.delta.trips, '', 0],
-                  ['Km', nf(totals.km, 1), nf(comparison.km, 1), comparison.delta.km, ' km', 1],
-                  ['Litres', nf(totals.litres), nf(comparison.litres), comparison.delta.litres, ' L', 0, false],
-                  ['Cost', inr(totals.cost), inr(comparison.cost), comparison.delta.cost, ' ₹', 0],
-                  ['Cost / litre', inr(totals.cost_per_litre, 3), inr(comparison.cost_per_litre, 3), comparison.delta.cost_per_litre, ' ₹', 3],
-                  ['Avg fill %', nf(totals.avg_fill_pct, 1), nf(comparison.avg_fill_pct, 1), comparison.delta.avg_fill_pct, ' %', 1, false],
-                ].map(([l, a, b, d, u, dg, lower]) => (
-                  <tr key={l}><td className="pr-6 py-0.5 text-gray-600">{l}</td><td className="text-right pr-6 font-semibold">{a}</td><td className="text-right pr-6">{b}</td>
-                    <td className="text-right"><Delta value={d} unit={u} digits={dg} lowerIsBetter={lower !== false}/></td></tr>
-                ))}
-              </tbody>
-            </table>
-            {comparison.note && <div className="text-xs text-gray-500 mt-2">{comparison.note}</div>}
-          </div>
-        )}
+          );
+        })()}
 
         {unserved?.length > 0 && (
           <div className="card p-3 border-red-300 bg-red-50 text-sm text-red-800 flex items-center gap-2">

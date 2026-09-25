@@ -26,27 +26,67 @@ const ExcelJS = require('exceljs');
 const canPlan = authorizeOrModule('planning', 'admin', 'planner');
 
 // ─── Suggested route name per optimised trip ────────────────────────────────
-// The Route Master whose BMCU set covers the largest share of the trip's
-// BMCUs (ties: the route with fewer extra BMCUs). Below 50 % coverage the
-// trip is a "New combination".
+// Primary source is plan history: for every route_id used by a trip plan in
+// the last ROUTE_HISTORY_DAYS (not cancelled/deleted), the BMCUs those plans
+// carried, weighted 2 when the plan is within the last 30 days else 1. A
+// route's share = the fraction of the trip's BMCUs that ever appeared in its
+// plans; the highest share wins, ties broken by the weighted BMCU score, then
+// by how often the route's plans went to the trip's delivery point. Below
+// 50 % coverage the Route Master's own route_bmcus set is tried the same way
+// (production has 66 routes but only 3 route_bmcus rows, so it rarely
+// helps); below 50 % on both the trip is a "New combination".
 const NEW_COMBINATION = 'New combination';
+const ROUTE_HISTORY_DAYS = 120;
+const ROUTE_MIN_SHARE = 0.5;
 async function suggestRouteNames(trips) {
-  const r = await pool.query(`
+  const hist = await pool.query(`
+    SELECT tp.route_id, rm.route_name, pb.bmcu_id, tp.delivery_point_id,
+           SUM(CASE WHEN tp.plan_for_date >= CURRENT_DATE - 30 THEN 2 ELSE 1 END)::int AS w
+    FROM trip_plans tp
+    JOIN route_masters rm ON rm.id = tp.route_id
+    JOIN trip_plan_bmcus pb ON pb.trip_plan_id = tp.id
+    WHERE tp.plan_for_date >= CURRENT_DATE - $1::int AND tp.status NOT IN ('cancelled','deleted')
+    GROUP BY tp.route_id, rm.route_name, pb.bmcu_id, tp.delivery_point_id`, [ROUTE_HISTORY_DAYS]);
+  const histRoutes = new Map();
+  for (const x of hist.rows) {
+    let rt = histRoutes.get(x.route_id);
+    if (!rt) { rt = { id: x.route_id, name: x.route_name, bmcu: new Map(), dp: new Map() }; histRoutes.set(x.route_id, rt); }
+    rt.bmcu.set(x.bmcu_id, (rt.bmcu.get(x.bmcu_id) || 0) + x.w);
+    if (x.delivery_point_id != null) rt.dp.set(x.delivery_point_id, (rt.dp.get(x.delivery_point_id) || 0) + x.w);
+  }
+  const master = await pool.query(`
     SELECT rm.id, rm.route_name, ARRAY_AGG(rb.bmcu_id) AS bmcu_ids
     FROM route_masters rm JOIN route_bmcus rb ON rb.route_id = rm.id
     WHERE rm.is_active = TRUE GROUP BY rm.id, rm.route_name`);
-  const routes = r.rows.map(x => ({ id: x.id, name: x.route_name, set: new Set(x.bmcu_ids) }));
+  const masterRoutes = master.rows.map(x => ({ id: x.id, name: x.route_name, bmcu: new Map(x.bmcu_ids.map(id => [id, 1])), dp: new Map() }));
+
+  // Best route from a candidate list: share, then weighted score, then delivery-point usage
+  const pick = (routes, ids, dpId) => {
+    let best = null, bestShare = 0, bestScore = 0, bestDp = 0;
+    for (const rt of routes) {
+      let hit = 0, score = 0;
+      for (const id of ids) { const w = rt.bmcu.get(id); if (w) { hit++; score += w; } }
+      if (!hit) continue;
+      const share = hit / ids.size, dpUse = dpId != null ? (rt.dp.get(dpId) || 0) : 0;
+      if (share > bestShare || (share === bestShare && (score > bestScore || (score === bestScore && dpUse > bestDp)))) {
+        best = rt; bestShare = share; bestScore = score; bestDp = dpUse;
+      }
+    }
+    return { best, share: bestShare };
+  };
   for (const t of trips) {
     const ids = new Set(t.bmcus.map(b => b.bmcu_id));
-    let best = null, bestShare = 0, bestExtra = Infinity;
-    for (const rt of routes) {
-      let hit = 0; for (const id of ids) if (rt.set.has(id)) hit++;
-      const share = hit / ids.size, extra = rt.set.size - hit;
-      if (share > bestShare || (share === bestShare && share > 0 && extra < bestExtra)) { best = rt; bestShare = share; bestExtra = extra; }
+    let { best, share } = pick([...histRoutes.values()], ids, t.delivery_point_id);
+    let source = 'history';
+    if (!best || share < ROUTE_MIN_SHARE) {
+      const m = pick(masterRoutes, ids, t.delivery_point_id);
+      if (m.best && m.share >= ROUTE_MIN_SHARE) { best = m.best; share = m.share; source = 'route_master'; }
     }
-    t.route_name = best && bestShare >= 0.5 ? best.name : NEW_COMBINATION;
-    t.route_id = best && bestShare >= 0.5 ? best.id : null;
-    t.route_overlap_pct = Math.round(bestShare * 100);
+    const ok = best && share >= ROUTE_MIN_SHARE;
+    t.route_name = ok ? best.name : NEW_COMBINATION;
+    t.route_id = ok ? best.id : null;
+    t.route_source = ok ? source : null;
+    t.route_overlap_pct = Math.round(share * 100);
   }
 }
 
@@ -126,13 +166,19 @@ router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
     await dayData.saveForecasts(p.plan_for_date, demand, overrides);
     const comparison = await dayData.loadComparison(p.plan_for_date, p.shift, fleet, rates);
     if (comparison) {
+      // Deltas are optimiser − actual; the executed block is the primary one
+      // (₹/L and fill use executed RMRD litres), the flat fields mirror it.
       const d = (a, b) => a == null || b == null ? null : Math.round((a - b) * 100) / 100;
-      comparison.delta = {
-        trips: d(result.totals.trips, comparison.trips), km: d(result.totals.km, comparison.km),
-        cost: d(result.totals.cost, comparison.cost), litres: d(result.totals.litres, comparison.litres),
-        cost_per_litre: d(result.totals.cost_per_litre, comparison.cost_per_litre),
-        avg_fill_pct: d(result.totals.avg_fill_pct, comparison.avg_fill_pct),
-      };
+      const deltaFor = blk => ({
+        trips: d(result.totals.trips, blk.trips), km: d(result.totals.km, blk.km),
+        cost: d(result.totals.cost, blk.cost), litres: d(result.totals.litres, blk.litres),
+        cost_per_litre: d(result.totals.cost_per_litre, blk.cost_per_litre),
+        avg_fill_pct: d(result.totals.avg_fill_pct, blk.avg_fill_pct),
+        tankers_used: d(new Set(result.trips.map(t => t.tanker_id)).size, blk.tankers_used),
+      });
+      if (comparison.actual_executed) comparison.actual_executed.delta = deltaFor(comparison.actual_executed);
+      if (comparison.actual_planned) comparison.actual_planned.delta = deltaFor(comparison.actual_planned);
+      comparison.delta = deltaFor(comparison);
     }
     if (excluded.length) result.warnings.push(`${excluded.length} tanker(s) excluded — see Excluded tankers.`);
     await suggestRouteNames(result.trips);
@@ -260,7 +306,7 @@ router.get('/:sessionId(\\d+)/report', authenticate, canPlan, v2Gate, async (req
     wb.creator = 'Shreeja TMS';
     // ── Summary ─────────────────────────────────────────────────────────────
     const ws = wb.addWorksheet('Summary');
-    ws.columns = [{ width: 34 }, { width: 20 }, { width: 20 }, { width: 20 }, { width: 40 }];
+    ws.columns = [{ width: 34 }, { width: 20 }, { width: 20 }, { width: 20 }, { width: 20 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 60 }];
     xlTitle(ws, `Day Optimizer — ${fmtDdMm(s.plan_for_date)} (${s.shifts_milk})  ·  Session #${s.id}`, 5);
     let r = 3;
     const kv = (k, v, fmt) => { xlRow(ws, r, [k, v], { 1: fmt }); r++; };
@@ -272,22 +318,43 @@ router.get('/:sessionId(\\d+)/report', authenticate, canPlan, v2Gate, async (req
     kv('Plant switch allowed', C.allow_plant_switch ? 'Yes' : 'No'); kv('Time budget (ms) / iterations', `${C.time_budget_ms} / ${C.max_iterations}`);
     r++;
     const tot = summary.totals || {};
-    xlHeader(ws, r, ['Totals', 'Optimizer', 'Actual plans', 'Δ (opt − actual)', cmp ? (cmp.source === 'actual_plans' ? `Actual = plans of ${fmtDdMm(cmp.date)}` : `Actual = same weekday last week (${fmtDdMm(cmp.date)})`) : 'No actual plans to compare']); r++;
+    // Comparison blocks: sessions before 2026-09-25 stored one flat block
+    // (mixed planned/executed figures) — treat it as the executed column.
+    const ex = cmp ? (cmp.actual_executed || (cmp.actual_planned ? null : cmp)) : null;
+    const pl = cmp?.actual_planned || null;
+    const dateLabel = cmp ? (cmp.source === 'actual_plans' ? `Actual = trips of ${fmtDdMm(cmp.date)}` : `Actual = same weekday last week (${fmtDdMm(cmp.date)})`) : 'No actual trips to compare';
+    xlHeader(ws, r, ['Totals', 'Optimizer (forecast)', 'Actual (executed)', 'Δ (opt − executed)', 'Planned', '', '', '', dateLabel]); r++;
     const lines = [
-      ['Trips', tot.trips, cmp?.trips, INT_FMT], ['Litres', tot.litres, cmp?.litres, INT_FMT], ['Km', tot.km, cmp?.km, KM_FMT],
-      ['Cost ₹', tot.cost, cmp?.cost, INR_FMT], ['Cost per litre ₹', tot.cost_per_litre, cmp?.cost_per_litre, '0.0000'],
-      ['Average fill %', tot.avg_fill_pct, cmp?.avg_fill_pct, KM_FMT],
-      ['Tankers used', new Set(trips.map(t => t.tanker_id)).size, null, INT_FMT],
-      ['Trips below fill floor', tot.below_fill_floor_trips, null, INT_FMT], ['Estimated legs', tot.estimated_legs, null, INT_FMT],
-      ['Unserved BMCU pickups', (summary.unserved || []).length, null, INT_FMT],
+      ['Trips', tot.trips, ex?.trips, pl?.trips, INT_FMT], ['Litres (optimizer = forecast; actual = RMRD)', tot.litres, ex?.litres, pl?.litres, INT_FMT],
+      ['Km', tot.km, ex?.km, pl?.km, KM_FMT],
+      ['Cost ₹', tot.cost, ex?.cost, pl?.cost, INR_FMT], ['Cost per litre ₹', tot.cost_per_litre, ex?.cost_per_litre, pl?.cost_per_litre, '0.0000'],
+      ['Average fill %', tot.avg_fill_pct, ex?.avg_fill_pct, pl?.avg_fill_pct, KM_FMT],
+      ['Tankers used', new Set(trips.map(t => t.tanker_id)).size, ex?.tankers_used, pl?.tankers_used, INT_FMT],
+      ['Acknowledged litres', null, ex?.ack_litres, null, INT_FMT],
+      ['Trips below fill floor', tot.below_fill_floor_trips, null, null, INT_FMT], ['Estimated legs', tot.estimated_legs, null, null, INT_FMT],
+      ['Unserved BMCU pickups', (summary.unserved || []).length, null, null, INT_FMT],
     ];
-    for (const [k, a, b, fmt] of lines) {
+    for (const [k, a, b, c, fmt] of lines) {
       const d = a != null && b != null ? Math.round((n(a) - n(b)) * 10000) / 10000 : null;
-      xlRow(ws, r, [k, n(a), n(b), d], { 1: fmt, 2: fmt, 3: fmt });
-      if (d != null && d !== 0 && !['Litres', 'Average fill %'].includes(k)) ws.getCell(r, 4).font = { color: { argb: d < 0 ? 'FF1E8449' : 'FFC0392B' }, bold: true };
+      xlRow(ws, r, [k, n(a), n(b), d, n(c)], { 1: fmt, 2: fmt, 3: fmt, 4: fmt });
+      if (d != null && d !== 0 && !k.startsWith('Litres') && k !== 'Average fill %') ws.getCell(r, 4).font = { color: { argb: d < 0 ? 'FF1E8449' : 'FFC0392B' }, bold: true };
+      ws.getCell(r, 5).font = { color: { argb: 'FF6B7280' } };
       r++;
     }
+    if (ex?.basis) { xlRow(ws, r, ['Actual basis', ex.basis]); r++; }
+    if (pl?.basis) { xlRow(ws, r, ['Planned basis', pl.basis]); r++; }
     if (cmp?.note) { xlRow(ws, r, ['Note', cmp.note]); r++; }
+    if (ex?.trip_list?.length) {
+      r++; xlHeader(ws, r, ['Executed trip — Tanker', 'Plant', 'Route', 'BMCUs', 'Litres (RMRD)', 'Km', 'Cost ₹', 'Cost source', 'BMCU chain']); r++;
+      for (const t of ex.trip_list) {
+        xlRow(ws, r, [t.tanker_number, t.plant_name || '', t.route_name || '', t.bmcu_count, n(t.litres), n(t.km), n(t.cost), t.cost_source === 'billed' ? 'Billed' : t.cost_source === 'rate' ? `Km × rate (${t.km_source} km)` : 'No rate', t.bmcus || ''],
+          { 4: INT_FMT, 5: KM_FMT, 6: INR_FMT });
+        r++;
+      }
+      xlRow(ws, r, ['TOTAL', '', '', ex.trip_list.reduce((s, t) => s + (t.bmcu_count || 0), 0), n(ex.litres), n(ex.km), n(ex.cost), `${ex.billed_trips} billed / ${ex.priced_trips} priced of ${ex.trips}`],
+        { 4: INT_FMT, 5: KM_FMT, 6: INR_FMT }, { bold: true, fill: 'FFF1F5F9' });
+      r++;
+    }
     const st = summary.stats;
     if (st) { r++; kv('Search', `seed ₹${st.seed_cost} → ₹${st.search_cost}; ${st.iterations} iterations, ${st.accepted} accepted, ${st.restarts} restarts, ${st.elapsed_ms} ms`); }
     for (const w of summary.warnings || []) { kv('Warning', w); }

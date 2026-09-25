@@ -143,6 +143,17 @@ adoption" (share of plans created from v2), "Realised saving" (actual cost of
 adopted plans vs the plan they replaced, at the same demand). Weekly summary
 email to planners with the three biggest savings and three biggest misses.
 
+Measurement note (2026-09-25): the Day Optimizer's "Comparison" card and the
+Excel Summary compare the optimiser (whose litres are a *forecast* from RMRD
+history) against the **actual executed** trips of the date, not against the
+trip plans. Plans under-state lifted milk by roughly 19 % (prod 08-09-2026:
+7,13,184 L planned vs 8,50,335 L forecast), so ₹/L and fill against plans were
+misleading. Executed basis per live, non-sale execution: RMRD litres from
+`trip_execution_bmcu_shifts` (dispatch litres as fallback), billed km / amount
+where the trip is in a billing run, else `COALESCE(actual_km, calculated_km)`
+× the Tanker Rate Master rate (same lookup as the optimiser). The planned
+figures stay visible as a muted reference column.
+
 ## 4. Delivery plan (QA)
 
 | Phase | Weeks | Deliverable | Depends on |

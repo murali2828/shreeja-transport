@@ -342,64 +342,167 @@ async function prefetchDistances({ radiusKm, maxCalls, concurrency = 4, userId }
   return { fetched, failed, cached, skipped_far: skippedFar, missing: todo.length, remaining: todo.length - fetched };
 }
 
-// ─── Comparison: what was actually planned for the date ─────────────────────
-// Km = billed km when the trip is in a billing run, else the execution's
-// calculated km, else the plan's expected km. Rate = Tanker Rate Master for
-// the tanker's state / transport type (same lookup the optimiser uses), else
-// the plan's own total_cost. Litres = acknowledged, else executed, else planned.
-async function loadActualComparison(planDate, fleet, rates) {
+// ─── Comparison: what actually happened on the date ─────────────────────────
+// Two blocks, both per non-sale trip with plan_for_date = date:
+//   actual_executed (primary) — one row per live (non-cancelled) execution.
+//     Litres = Σ RMRD from trip_execution_bmcu_shifts joined to live
+//     trip_execution_bmcus (the same rows the demand forecast is built from),
+//     else Σ dispatch qty_litres of the live BMCU rows. Ack litres alongside.
+//     Km = billed km when the execution is in a billing run, else the
+//     execution's actual km, else its calculated km, else the plan's expected km.
+//     Cost = billed amount when billed, else km × Tanker Rate Master rate
+//     (state from billing history / registration prefix, transport type by
+//     BMCU count — the optimiser's own lookup); a trip with neither is
+//     counted but unpriced. Fill = litres / capacity, litre-weighted.
+//   actual_planned (secondary) — the plan rows themselves: expected_total_qty,
+//     expected_km, total_cost (else expected_km × rate). Plans under-state the
+//     milk that is lifted, so ₹/L and fill on this block are not comparable
+//     with the optimiser; it is shown muted for reference only.
+const EXECUTED_BASIS = 'RMRD litres · billed km/amount where billed, else execution km × Tanker Rate Master rate';
+const PLANNED_BASIS = 'Plan expected litres, km and cost as entered by the planner';
+
+function rateStateFor(tankerNumber, fleetByNo, billingStates) {
+  return fleetByNo.get(tankerNumber)?.state || billingStates.get(tankerNumber) || stateFromRegistration(tankerNumber) || null;
+}
+
+async function loadExecutedComparison(planDate, fleet, rates, billingStates) {
+  const rows = (await query(`
+    SELECT te.id AS execution_id, te.status, tp.id AS plan_id, tp.trip_no, t.tanker_number, t.capacity_litres,
+           tp.expected_km, rm.route_name, dp.name AS plant_name, te.actual_km, te.calculated_km,
+           (SELECT COUNT(*) FROM trip_execution_bmcus eb WHERE eb.execution_id = te.id AND eb.is_deleted = FALSE)::int AS bmcu_count,
+           (SELECT STRING_AGG(b.bmcu_code, ' → ' ORDER BY eb.seq_no)
+              FROM trip_execution_bmcus eb JOIN bmcus b ON b.id = eb.bmcu_id
+             WHERE eb.execution_id = te.id AND eb.is_deleted = FALSE) AS bmcu_chain,
+           (SELECT SUM(s.rmrd_qty) FROM trip_execution_bmcu_shifts s
+              JOIN trip_execution_bmcus eb ON eb.execution_id = s.execution_id AND eb.seq_no = s.bmcu_seq_no AND eb.is_deleted = FALSE
+             WHERE s.execution_id = te.id) AS rmrd_litres,
+           (SELECT SUM(eb.qty_litres) FROM trip_execution_bmcus eb WHERE eb.execution_id = te.id AND eb.is_deleted = FALSE) AS dispatch_litres,
+           (SELECT SUM(a.qty_litres) FROM trip_acknowledgements a WHERE a.execution_id = te.id) AS ack_litres,
+           brt.billed_km, brt.amount AS billed_amount, brt.rate_per_km AS billed_rate
+    FROM trip_executions te
+    JOIN trip_plans tp ON tp.id = te.trip_plan_id
+    LEFT JOIN tankers t ON t.id = tp.tanker_id
+    LEFT JOIN route_masters rm ON rm.id = tp.route_id
+    LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
+    LEFT JOIN LATERAL (
+      SELECT b.billed_km, b.amount, b.rate_per_km FROM billing_run_trips b
+      WHERE b.execution_id = te.id ORDER BY b.id DESC LIMIT 1) brt ON TRUE
+    WHERE tp.plan_for_date = $1::date AND te.status <> 'cancelled'
+      AND NOT ${saleTankerSql('tp', 't')}
+    ORDER BY tp.trip_no, tp.id`, [planDate])).rows;
+  if (!rows.length) return null;
+  const fleetByNo = new Map(fleet.map(f => [f.tanker_number, f]));
+  const tankers = new Set();
+  let km = 0, cost = 0, litres = 0, ackLitres = 0, cap = 0, priced = 0, billed = 0;
+  const tripList = [];
+  for (const r of rows) {
+    tankers.add(r.tanker_number);
+    const capL = parseInt(r.capacity_litres) || 0;
+    const tripL = num(r.rmrd_litres) ?? num(r.dispatch_litres) ?? 0;
+    const tripAck = num(r.ack_litres) ?? 0;
+    let tripKm, kmSource;
+    if (r.billed_km != null) { tripKm = num(r.billed_km); kmSource = 'billed'; }
+    else if (r.actual_km != null) { tripKm = num(r.actual_km); kmSource = 'execution'; }
+    else if (r.calculated_km != null) { tripKm = num(r.calculated_km); kmSource = 'execution'; }
+    else { tripKm = num(r.expected_km) ?? 0; kmSource = 'plan'; }
+    let tripCost = null, costSource = 'none', ratePerKm = null;
+    if (r.billed_amount != null) { tripCost = num(r.billed_amount); costSource = 'billed'; ratePerKm = num(r.billed_rate); billed++; }
+    else {
+      const state = rateStateFor(r.tanker_number, fleetByNo, billingStates);
+      const rate = state ? pickRate(rates, state, transportTypeFor(r.bmcu_count || 1), capL) : null;
+      if (rate) { ratePerKm = Number(rate.rate_per_km); tripCost = tripKm * ratePerKm; costSource = 'rate'; }
+    }
+    if (tripCost != null) { cost += tripCost; priced++; }
+    km += tripKm; litres += tripL; ackLitres += tripAck; cap += capL;
+    tripList.push({
+      execution_id: r.execution_id, plan_id: r.plan_id, status: r.status, tanker_number: r.tanker_number,
+      capacity_litres: capL, plant_name: r.plant_name, route_name: r.route_name, bmcu_count: r.bmcu_count,
+      bmcus: r.bmcu_chain || '', litres: r2(tripL), ack_litres: r2(tripAck), km: r1(tripKm), km_source: kmSource,
+      cost: tripCost == null ? null : r2(tripCost), cost_source: costSource, rate_per_km: ratePerKm,
+      fill_pct: capL > 0 ? r1(tripL / capL * 100) : null,
+    });
+  }
+  const trips = rows.length;
+  const notes = [];
+  if (priced < trips) notes.push(`${trips - priced} executed trip(s) had no billed amount and no rate — excluded from cost`);
+  if (billed < trips) notes.push(`${trips - billed} of ${trips} trips not yet billed: their cost is execution km × rate`);
+  return {
+    basis: EXECUTED_BASIS, date: planDate,
+    trips, tankers_used: tankers.size, km: r1(km), litres: r2(litres), ack_litres: r2(ackLitres), cost: r2(cost),
+    cost_per_litre: litres > 0 ? Math.round(cost / litres * 10000) / 10000 : 0,
+    avg_fill_pct: cap > 0 ? r1(litres / cap * 100) : 0,
+    priced_trips: priced, billed_trips: billed,
+    note: notes.length ? notes.join('. ') : null,
+    trip_list: tripList,
+  };
+}
+
+async function loadPlannedComparison(planDate, fleet, rates, billingStates) {
   const rows = (await query(`
     SELECT tp.id, tp.tanker_id, t.tanker_number, t.capacity_litres, tp.expected_km, tp.expected_total_qty, tp.total_cost,
-           tp.delivery_point_id, dp.name AS plant_name,
-           (SELECT COUNT(*) FROM trip_plan_bmcus pb WHERE pb.trip_plan_id = tp.id)::int AS bmcu_count,
-           te.id AS execution_id, te.calculated_km, te.total_qty_litres AS exec_litres,
-           (SELECT SUM(qty_litres) FROM trip_acknowledgements a WHERE a.execution_id = te.id) AS ack_litres,
-           brt.billed_km, brt.amount AS billed_amount, brt.rate_per_km AS billed_rate
+           (SELECT COUNT(*) FROM trip_plan_bmcus pb WHERE pb.trip_plan_id = tp.id)::int AS bmcu_count
     FROM trip_plans tp
     LEFT JOIN tankers t ON t.id = tp.tanker_id
-    LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
-    LEFT JOIN trip_executions te ON te.trip_plan_id = tp.id AND te.status <> 'cancelled'
-    LEFT JOIN billing_run_trips brt ON brt.execution_id = te.id
     WHERE tp.plan_for_date = $1::date AND tp.status NOT IN ('cancelled','deleted')
       AND NOT ${saleTankerSql('tp', 't')}
     ORDER BY tp.trip_no, tp.id`, [planDate])).rows;
   if (!rows.length) return null;
   const fleetByNo = new Map(fleet.map(f => [f.tanker_number, f]));
+  const tankers = new Set();
   let trips = 0, km = 0, cost = 0, litres = 0, cap = 0, priced = 0;
   for (const r of rows) {
-    trips++;
-    const tripKm = num(r.billed_km) ?? num(r.calculated_km) ?? num(r.expected_km) ?? 0;
-    const tripL = num(r.ack_litres) ?? num(r.exec_litres) ?? num(r.expected_total_qty) ?? 0;
-    let tripCost = null;
-    if (r.billed_amount != null) tripCost = num(r.billed_amount);
-    else {
-      const f = fleetByNo.get(r.tanker_number);
-      const state = f?.state || stateFromRegistration(r.tanker_number);
+    trips++; tankers.add(r.tanker_number);
+    const tripKm = num(r.expected_km) ?? 0;
+    const tripL = num(r.expected_total_qty) ?? 0;
+    let tripCost = num(r.total_cost);
+    if (tripCost == null) {
+      const state = rateStateFor(r.tanker_number, fleetByNo, billingStates);
       const rate = state ? pickRate(rates, state, transportTypeFor(r.bmcu_count || 1), parseInt(r.capacity_litres) || 0) : null;
       if (rate) tripCost = tripKm * rate.rate_per_km;
-      else if (r.total_cost != null) tripCost = num(r.total_cost);
     }
     if (tripCost != null) { cost += tripCost; priced++; }
     km += tripKm; litres += tripL; cap += parseInt(r.capacity_litres) || 0;
   }
   return {
-    source: 'actual_plans', date: planDate,
-    trips, km: r1(km), litres: r2(litres), cost: r2(cost),
+    basis: PLANNED_BASIS, date: planDate,
+    trips, tankers_used: tankers.size, km: r1(km), litres: r2(litres), cost: r2(cost),
     cost_per_litre: litres > 0 ? Math.round(cost / litres * 10000) / 10000 : 0,
     avg_fill_pct: cap > 0 ? r1(litres / cap * 100) : 0,
     priced_trips: priced,
-    note: priced < trips ? `${trips - priced} trip(s) had no rate and are excluded from cost` : null,
+    note: priced < trips ? `${trips - priced} planned trip(s) had no cost and no rate — excluded from cost` : null,
+  };
+}
+
+// Shape stored in optimization_sessions.comparison (since 2026-09-25):
+//   { source, date, basis, note, actual_executed: {...}, actual_planned: {...},
+//     trips, km, litres, cost, cost_per_litre, avg_fill_pct }   ← flat fields
+// mirror actual_executed (or actual_planned when nothing was executed) so
+// readers of the older flat shape keep working. routes/optimize.js adds
+// `delta` (flat + actual_executed.delta) against the optimiser totals.
+async function loadComparisonFor(planDate, fleet, rates, billingStates) {
+  const executed = await loadExecutedComparison(planDate, fleet, rates, billingStates);
+  const planned = await loadPlannedComparison(planDate, fleet, rates, billingStates);
+  if (!executed && !planned) return null;
+  const primary = executed || planned;
+  return {
+    source: 'actual_plans', date: planDate,
+    basis: executed ? 'executed' : 'planned',
+    actual_executed: executed, actual_planned: planned,
+    trips: primary.trips, tankers_used: primary.tankers_used, km: primary.km, litres: primary.litres, cost: primary.cost,
+    cost_per_litre: primary.cost_per_litre, avg_fill_pct: primary.avg_fill_pct, priced_trips: primary.priced_trips,
+    note: executed ? executed.note : [planned.note, 'No executions recorded for this date — showing planned figures'].filter(Boolean).join('. '),
   };
 }
 
 async function loadComparison(planDate, shift, fleet, rates) {
-  let cmp = await loadActualComparison(planDate, fleet, rates);
+  const billingStates = await loadBillingStates().catch(() => new Map());
+  let cmp = await loadComparisonFor(planDate, fleet, rates, billingStates);
   if (!cmp) {
     const lastWeek = addDays(planDate, -7);
-    cmp = await loadActualComparison(lastWeek, fleet, rates);
+    cmp = await loadComparisonFor(lastWeek, fleet, rates, billingStates);
     if (cmp) { cmp.source = 'same_weekday_last_week'; }
   }
-  if (cmp && shift !== 'BOTH') cmp.note = [cmp.note, 'Actual plans cover both shifts; this run covers ' + shift].filter(Boolean).join('. ');
+  if (cmp && shift !== 'BOTH') cmp.note = [cmp.note, 'Actual trips cover both shifts; this run covers ' + shift].filter(Boolean).join('. ');
   return cmp;
 }
 

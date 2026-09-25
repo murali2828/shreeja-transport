@@ -7,6 +7,10 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- Day Optimizer comparison is now on an actual **executed** basis: per live, non-sale execution of the date — RMRD litres (dispatch litres as fallback, acknowledged litres alongside), billed km / amount where the trip is in a billing run, else execution km × Tanker Rate Master rate (cost source labelled per trip); trips and tankers used; litre-weighted fill. The planner's expected figures are kept as a muted "Planned" column (`comparison.actual_planned`); `optimization_sessions.comparison` now stores `{ actual_executed, actual_planned, … }` with the flat fields mirroring the executed block, and the page / Excel Summary render older flat sessions unchanged. Optimiser litres are labelled "Forecast" on the totals bar and comparison (2026-09-25).
+- Day Optimizer route names come from plan history (last 120 days of trip plans × BMCUs, recent plans weighted higher, ties by delivery point) instead of `route_bmcus`, which has 3 rows for 66 routes on production; the Route Master set is a secondary source, both need ≥ 50 % of the trip's BMCUs, else "New combination" (2026-09-25).
+
 ### Added
 - Day Optimizer: route-wise results — suggested Route Master name per trip ("New combination" below 50 % overlap) and vendor stored on `optimization_trips` (migration 045) and shown on the page with tanker state, rate, per-plant / overall totals (trips, tankers used, litres, km, cost, ₹/L, fill); Excel download `GET /api/optimize/:sessionId/report` (Summary, Trip Wise, BMCU Pickups, Tanker Wise); `OPTIMIZER_PREFETCH_RADIUS_KM` default 150 (2026-09-25).
 - Day Optimizer: offline replay `backend/scripts/optimizer_v2_replay.js` against a production CSV extract; per-move search stats and seed candidates on the page (2026-09-25).
