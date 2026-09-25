@@ -129,7 +129,7 @@ Day Optimizer; schema: migration 044.
 - **`OPTIMIZER_V2_ENABLED`** (`true` on QA, unset/false on production): mounts the
   endpoints and shows the sidebar entry (the login response carries
   `optimizer_v2_enabled`). Off → `503 FEATURE_DISABLED`; nothing else changes.
-- **`OPTIMIZER_PREFETCH_RADIUS_KM`** (default 80) and **`OPTIMIZER_PREFETCH_MAX`**
+- **`OPTIMIZER_PREFETCH_RADIUS_KM`** (default 150) and **`OPTIMIZER_PREFETCH_MAX`**
   (default 3000): "Prefetch missing distances" fetches from Google Routes every
   BMCU↔BMCU / BMCU↔plant pair without a Distance Master row whose straight-line
   distance is within the radius, at most this many calls per click, concurrency 4,
@@ -137,7 +137,10 @@ Day Optimizer; schema: migration 044.
   the call reports `error` and fetches nothing.
 - Inputs it relies on: BMCU and plant coordinates, Tanker Rate Master rows valid on
   the plan date for every capacity class × state, vendors mapped, tankers under
-  maintenance / without driver recorded via Other Gate Pass. Tankers with no usable
+  maintenance recorded via Other Gate Pass reason "Maintainance" (only this reason
+  blocks a tanker, and only while the tanker has not run since the pass was issued;
+  "Tankers without driver" and other reasons are ignored — use the Use toggle on the
+  page to exclude a tanker by hand). Tankers with no usable
   rate are listed as excluded with the reason.
 - Demand forecast rows are written to `bmcu_demand_forecast` on every run;
   `POST /api/optimize/forecast/backfill?date=YYYY-MM-DD` fills `actual_litres`

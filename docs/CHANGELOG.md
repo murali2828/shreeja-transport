@@ -8,7 +8,10 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
 ### Added
-- Day Optimizer (fleet v2), behind `OPTIMIZER_V2_ENABLED`: plans one date (AM / PM / both) for all BMCUs across all plants with the whole available fleet, minimising Σ km × Tanker Rate Master rate; demand forecast per BMCU × shift with planner override (`bmcu_demand_forecast`), fleet availability from open maintenance / without-driver gate passes, plant catchments from history, comparison against the actual plans of the date, adopt as draft plans; `POST /api/optimize/day`, `GET /day/preview`, `POST /prefetch-distances` (Google-fills missing nearby pairs into Distance Master), `POST /forecast/backfill`; Planning → Day Optimizer page (migration 044) (2026-09-25).
+- Day Optimizer: route-wise results — suggested Route Master name per trip ("New combination" below 50 % overlap) and vendor stored on `optimization_trips` (migration 045) and shown on the page with tanker state, rate, per-plant / overall totals (trips, tankers used, litres, km, cost, ₹/L, fill); Excel download `GET /api/optimize/:sessionId/report` (Summary, Trip Wise, BMCU Pickups, Tanker Wise); `OPTIMIZER_PREFETCH_RADIUS_KM` default 150 (2026-09-25).
+- Day Optimizer: offline replay `backend/scripts/optimizer_v2_replay.js` against a production CSV extract; per-move search stats and seed candidates on the page (2026-09-25).
+
+- Day Optimizer (fleet v2), behind `OPTIMIZER_V2_ENABLED`: plans one date (AM / PM / both) for all BMCUs across all plants with the whole available fleet, minimising Σ km × Tanker Rate Master rate; demand forecast per BMCU × shift with planner override (`bmcu_demand_forecast`), fleet availability from open maintenance gate passes, plant catchments from history, comparison against the actual plans of the date, adopt as draft plans; `POST /api/optimize/day`, `GET /day/preview`, `POST /prefetch-distances` (Google-fills missing nearby pairs into Distance Master), `POST /forecast/backfill`; Planning → Day Optimizer page (migration 044) (2026-09-25).
 - BMCU master: optional Chilling Capacity (L) and Lifting Policy fields for the coming lifting advisor (migration 044) (2026-09-25).
 - `services/rates.js`: Tanker Rate Master lookup shared by billing and the optimiser (billing behaviour unchanged) (2026-09-25).
 - Billing: missing-coordinates check — banner on the run and on the fortnight before Execute, listing BMCUs/points without lat-lng (2026-09-19).
@@ -18,6 +21,8 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 - Billing: `carried_forward` stored per trip (migration 042) (2026-09-17).
 
 ### Changed
+- Day Optimizer core after the first production run (0 moves accepted, 27 pickups unserved): single-BMCU trips over the km limit allowed and flagged, local feasibility + local tanker assignment per move, insert-unserved move, cross-exchange, iterated local search with kicks, seed at every capacity class, trips no tanker can take are split, oversized demand split into parts, unserved penalty capped; defaults 8 BMCUs / 550 km per trip (calibrated on 90 days of plans) (2026-09-25).
+- Day Optimizer availability: only a `Maintainance` gate pass blocks a tanker, and it is ignored as stale once the tanker ran again (note in the preview); "Tankers without driver" and other reasons no longer exclude tankers (2026-09-25).
 - One live execution per plan: re-start of closed trips blocked, unique partial index, duplicates auto-cancelled; `cancelled` allowed in the status CHECK (migration 043) (2026-09-17).
 - Billing excludes cancelled executions from run selection (2026-09-17).
 - Change requests: one diff engine covering every editable field; no-op requests rejected; start/delivery point read from `trip_plans` in the snapshot (2026-09-15).

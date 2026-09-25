@@ -3,7 +3,7 @@
 ## Stack
 - Backend: Node 20, Express 4, node-postgres (`pg`) with raw parameterised SQL, no ORM — `backend/`
 - Frontend: React 18 + Vite 5 + Tailwind 3 + TanStack Query v5 + axios — `frontend/`
-- DB: Postgres 16; SQL migrations in `backend/migrations/` auto-run at backend start (latest: 044)
+- DB: Postgres 16; SQL migrations in `backend/migrations/` auto-run at backend start (latest: 045)
 - Deploy: Docker Compose (db + backend + frontend/nginx), two stacks on one server (QA, PROD)
 - No test framework; CI (`.github/workflows/ci.yml`) only syntax-checks backend and builds frontend
 
@@ -36,7 +36,7 @@
 - Detail: @docs/CONVENTIONS.md
 
 ## Must-not-break rules
-- Never edit an applied migration; add a new `NNN_name.sql` (next: 045); migrations run in a transaction each
+- Never edit an applied migration; add a new `NNN_name.sql` (next: 046); migrations run in a transaction each
 - `KG_FACTOR = 1.0285` (litres→kg) is shared with Assure — change only in lockstep, never silently
 - Billing is fortnightly (1–15 / 16–end); billing date = `plan_for_date + BILLING_DATE_OFFSET_DAYS`; ack cutoff 23:59:59; honour `BILLING_CARRY_FORWARD_FLOOR`
 - Sale tankers (`trip_plans.is_sale_tanker` OR tanker number `SALE%`, `utils/saleTanker.js`) stay out of vendor billing and utilisation

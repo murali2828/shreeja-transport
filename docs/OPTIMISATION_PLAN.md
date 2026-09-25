@@ -88,13 +88,13 @@ Ireland) for the once-versus-twice daily lifting model.
 ### 3.2 Route + tanker optimiser v2 (daily)
 
 Inputs: date, plants in play, BMCU demand per shift, available tankers (active,
-not in maintenance, not without driver, from Tanker Position), rates per state
+not on a credible open maintenance gate pass, planner exclusions), rates per state
 and capacity class, Distance Master with Google km (now complete for plant legs).
 
 Objective: minimise Σ trip cost = km × rate(tanker, state) + optional per-trip
 fixed cost, subject to: tanker capacity (with a fill floor, default 85 %),
-max BMCUs per trip (default 6), max trip km or hours, one tanker at most N trips
-per day (default 2, from history), BMCU must be lifted in its policy window,
+max BMCUs per trip (default 8), max trip km (default 550) or hours, one tanker at
+most N trips per day (default 2, from history), BMCU must be lifted in its policy window,
 plant intake limits if configured.
 
 Method:
@@ -168,6 +168,47 @@ untouched until sign-off.
 | 2. Optimiser v2 | Delivered on `qa` as the **Day Optimizer (fleet v2)** — whole day, all plants, whole fleet, cost = Σ km × Tanker Rate Master rate; Clarke-Wright seed + cost-aware assignment + local search; `POST /api/optimize/day`, `/day/preview`, `/prefetch-distances`; sessions carry `algorithm`, `constraints`, `comparison`, `summary` | `services/optimizerV2.js`, `services/rates.js`, `routes/optimize.js`, `scripts/optimizer_v2_selftest.js` |
 | 3. UI + comparison | Delivered on `qa`: Planning → Day Optimizer page (inputs, results by plant, comparison vs actual plans or same weekday last week, adopt as draft plans). The existing Route Optimizer page is untouched. | `frontend/src/pages/planning/DayOptimizer.jsx` |
 | 4–7 | Not started | |
+
+### First production run findings (plan date 09-09-2026, both shifts, 25 Sep 2026)
+
+The first real run was worse than the planners: 41 trips, 13,216 km, 6.66 lakh L
+served, ₹5,28,570, 27 BMCU pickups unserved, 16 tankers excluded, and the local
+search accepted 0 of 150,000 moves. Root causes, reproduced offline with
+`backend/scripts/optimizer_v2_replay.js` on a 90-day production extract (Haversine
+distances for both sides, so the comparison is fair):
+
+1. **Search vetoed itself.** The seed contained single-BMCU trips whose round trip
+   alone exceeds the 450 km limit (far BMCUs such as 3654 / 3103). The feasibility
+   check ran over the whole solution, so every candidate — even one that never
+   touched those trips — was "infeasible" and rejected. Fix: a single-BMCU trip over
+   the limit is allowed and flagged `over_max_km`; feasibility and tanker assignment
+   are local to the trips a move touches; an explicit insert-unserved move runs first
+   while anything is unserved; iterated local search kicks from the best solution
+   when stale; per-move stats are reported.
+2. **Seed capacity.** Clarke-Wright at the largest tanker (30 KL) built loads only
+   three tankers could carry. Fix: seed at every capacity class (plus 22 KL and the
+   median), keep the cheapest after assignment; a trip no tanker can take is split
+   instead of reported unserved; demand above the largest tanker is split into parts.
+3. **Stale gate passes.** 16 tankers were excluded on "Tankers without driver" /
+   maintenance passes that were never returned although the tankers kept running.
+   Decision (user, 25 Sep): only a `Maintainance` pass blocks a tanker, and it is
+   ignored as stale once the tanker ran a non-cancelled trip after it was issued
+   (note shown in the preview); other reasons are ignored; planners exclude by hand.
+4. **Constraint defaults.** Planners run up to 8 BMCUs per trip and 4–6 trips a day
+   above 450 km. At 6 / 450 the far BMCUs become forced solo trips and the optimiser
+   cannot beat them; defaults are now 8 BMCUs / 550 km (operations to confirm, §6.1).
+
+Replay results (same Haversine × 1.3 model for both; page defaults after the fix):
+
+| Date | Planners: trips / km / cost / fill | Optimiser before fix | Optimiser after fix |
+|---|---|---|---|
+| 09-09-2026 | 41 / 11,705 / ₹5,47,596 / 97.4 % | 33 trips, 45 unserved, 0 accepted | 41 / 11,332 / ₹5,12,589 / 96.1 %, 0 unserved, 550 accepted |
+| 20-08-2026 | 39 / 11,401 / ₹5,28,357 / 95.8 % | 33 trips, 45 unserved, 0 accepted | 39 / 10,659 / ₹4,82,729 / 95.1 %, 0 unserved, 784 accepted |
+| 02-09-2026 | 40 / 11,098 / ₹5,10,123 / 93.3 % | 40 trips, 29 unserved, 0 accepted | 39 / 11,504 / ₹5,04,637 / 93.0 %, 0 unserved, 1,004 accepted |
+
+Fleet in the replay = the tankers that actually ran that day (≤ 2 trips each), rates
+learned from the extract. Run it: `node backend/scripts/optimizer_v2_replay.js
+backend/scripts/fixtures/cal.csv 2026-09-09 [--max-bmcus=6 --max-km=450 --trips]`.
 
 Differences from the plan text above: v2 lives in its own page and service
 instead of a "v2" toggle on the Route Optimizer page; a BMCU is one node per
