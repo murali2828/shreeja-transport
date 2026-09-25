@@ -115,7 +115,7 @@ export default function DayOptimizer() {
   };
   const totalDemand = useMemo(() => (preview?.demand || []).reduce((s, d) => s + litresOf(d), 0), [preview, demandEdits]); // eslint-disable-line react-hooks/exhaustive-deps
   const availableFleet = (preview?.fleet || []).filter(f => f.available && !excludedTankers[f.id]);
-  const fleetCapacity = availableFleet.reduce((s, f) => s + f.capacity_litres * (constraints.max_trips_per_tanker_per_day || 2), 0);
+  const fleetCapacity = availableFleet.reduce((s, f) => s + f.capacity_litres * (constraints.max_trips_per_tanker_per_day || 1), 0);
 
   const prefetchMut = useMutation({
     mutationFn: () => prefetchOptimizerDistances().then(r => r.data),
@@ -214,7 +214,7 @@ export default function DayOptimizer() {
             Include sale-tanker milk
           </label>
         </div>
-        <div className="text-xs text-gray-400 mt-2">Defaults: fill floor 85 %, 8 BMCUs, 550 km, 2 trips per tanker per day; sale-tanker milk excluded from the forecast. Cost = km × Tanker Rate Master rate (Point to Point for one BMCU, else BMCU/CC to Dairy/CC).</div>
+        <div className="text-xs text-gray-400 mt-2">Defaults: fill floor 85 %, 8 BMCUs, 550 km, 1 trip per tanker per day (a second trip is not feasible after loading, unloading and cleaning); sale-tanker milk excluded from the forecast. Cost = km × Tanker Rate Master rate (Point to Point for one BMCU, else BMCU/CC to Dairy/CC).</div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">

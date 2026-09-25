@@ -275,3 +275,12 @@ half their per-lift volume. The remaining bias is about +5 %; the planner's over
 demand table is the correction for known exceptions. Shift codes are blank on all execution
 rows in production, so AM/PM forecasts are the same daily series; "Both" is the meaningful scope.
 
+### Operations decision: one trip per tanker per day (26 Sep 2026)
+
+A second trip in the day is not feasible: loading at the BMCUs, unloading at the plant and
+tanker cleaning fill the day. Default `max_trips_per_tanker_per_day` is now 1 (still editable
+per run for exceptional short routes). Evidence on 08-09-2026, vendor-only basis, actual
+38 trips / 11,410 km / ₹5,23,271: optimiser at 1 trip per tanker 41 trips / 10,951 km /
+₹5,03,627 (−₹19,644, −459 km, fill 93.7 % vs 91.6 %); at 2 trips it would have been
+₹4,82,206, which is not operable.
+

@@ -47,7 +47,7 @@ const { clarkeWrightSavings, nearestNeighbourOrder } = require('./optimizerCore'
 
 const DEFAULT_CONSTRAINTS = Object.freeze({
   fill_floor: 0.85,                // preferred minimum load / capacity
-  max_trips_per_tanker_per_day: 2,
+  max_trips_per_tanker_per_day: 1, // operations (26-09-2026): a second trip is not feasible — loading, unloading and cleaning fill the day
   // Calibrated on 90 days of production plans (scripts/optimizer_v2_replay.js):
   // planners run up to 8 BMCUs per trip and 4–6 trips a day beyond 450 km.
   // At 6 / 450 the far BMCUs become forced solo trips and the optimiser
