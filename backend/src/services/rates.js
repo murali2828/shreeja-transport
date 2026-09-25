@@ -12,9 +12,7 @@ const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
 // for the tanker yet).
 const REG_PREFIX_STATE = { AP: 'Andhra Pradesh', TN: 'Tamil Nadu', KA: 'Karnataka', TS: 'Telangana', TG: 'Telangana' };
 
-function transportTypeFor(bmcuCount) {
-  return bmcuCount <= 1 ? 'Point to Point' : 'BMCU/CC to Dairy/CC';
-}
+const { transportTypeFor } = require('./optimizerV2'); // 1 BMCU → Point to Point, else BMCU/CC to Dairy/CC
 
 // Rate lookup: state × transport type × capacity KL, period covering planDate.
 async function findRate(state, transportType, capacityLitres, planDate) {
