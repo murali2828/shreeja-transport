@@ -117,6 +117,62 @@ side comparison to the existing plan for that date, one-click "Adopt as plan"
 (already exists as save-as-plans), and an explanation per trip of why that tanker
 was chosen.
 
+### 3.2b Plan to plant requirements (delivered on `qa`, 26 Sep 2026)
+
+By default every BMCU's milk goes to its catchment plant (the delivery point it went
+to most often in the last 60 days). In this mode the planner enters the litres each
+plant **requires** for the day and the portal decides which BMCUs supply which plant,
+then runs the same whole-fleet routing (§3.2) per plant group with plant switching
+off. Code: `services/plantAllocation.js` (pure, DB-free), wired in `routes/optimize.js`
+`POST /api/optimize/day`; page: Planning → Day Optimizer → "Plan to plant requirements".
+
+Inputs (`POST /api/optimize/day` body, all optional):
+
+| Field | Meaning | Default |
+|---|---|---|
+| `mode` | `catchment` (current behaviour) or `plant_requirements` | `catchment` |
+| `plant_requirements[]` | `{ delivery_point_id, required_litres, priority (1 = highest), locked }`; plants not listed require 0 (send nothing); `locked` keeps the plant's catchment BMCUs and only adds | required = catchment forecast on the page, priority 99, unlocked |
+| `allocation` | `max_extra_km_per_bmcu`, `keep_history_bonus_pct`, `shortfall_rule` (`priority` / `proportional`) | 60 km, 5 %, `priority` |
+| `pinned_bmcu_ids[]` | BMCUs that must keep their usual plant (planner veto from the results) | none |
+
+`GET /day/preview` returns per plant `catchment_forecast_litres` (what its catchment
+BMCUs forecast for the shift scope) and `has_coords`; a plant without coordinates
+cannot take a requirement (400).
+
+Algorithm (deterministic greedy; ₹/km proxy = litre-weighted mean BMCU rate of the
+available fleet, used only to rank moves):
+
+1. Start from the catchments; a BMCU whose catchment plant is not in the list starts
+   at the nearest listed plant. If Σ required > Σ forecast supply, trim requirements
+   first: `priority` cuts the lowest-priority (largest number) plants to zero first;
+   `proportional` scales every plant by supply / required. The cut is reported as
+   `shortfall` per plant.
+2. While a plant is short of its (trimmed) target and another has more than it needs:
+   for every BMCU in a surplus, unlocked plant that is not pinned, and every short
+   plant, `extra_km = d(BMCU, new plant) − d(BMCU, old plant)` on the delivery leg;
+   skip beyond `max_extra_km_per_bmcu`; marginal cost = `extra_km × ₹/km` +
+   `keep_history_bonus_pct` % of the usual delivery leg's cost; useful litres = what
+   the short plant gains minus any gap the move opens at the old plant (a BMCU larger
+   than the deficit gets credit for the deficit only). Choose the lowest marginal cost
+   per useful litre, ties to the larger BMCU; move the whole BMCU. A BMCU moves at
+   most once, so the loop terminates.
+3. BMCUs still sitting at a plant that requires nothing are placed anyway: nearest
+   plant (by extra km) that still has room, else the nearest plant within the km
+   limit flagged `oversupplied`, else the nearest plant of all flagged
+   `beyond_max_extra_km`. Milk is never dropped.
+
+Outputs (response `allocation`, persisted in `optimization_sessions.summary.allocation`;
+inputs in `constraints.mode / plant_requirements / allocation / pinned_bmcu_ids`):
+per plant `required`, `effective_required`, `shortfall`, `allocated`,
+`delivered_by_plan` (Σ routed trip litres — lower than allocated only when pickups are
+unserved), `unmet`, `oversupplied`, `moved_in`, `moved_out`, `unmet_reason`; `moves[]`
+with `bmcu`, from → to, `litres`, `extra_km`, `marginal_cost`, `reason`, `flag`;
+`notes[]`; `totals`. The page shows a Plant allocation panel and the reassigned
+BMCUs with a "keep usual plant" checkbox that re-runs with that BMCU pinned; the Excel
+report gains a "Plant Allocation" sheet. Residual deficits or overshoots smaller than
+one BMCU's litres are expected (whole BMCUs move). Self-test:
+`node backend/scripts/plant_allocation_selftest.js`.
+
 ### 3.3 Lifting advisor
 
 For each BMCU, from 8 weeks of RMRD history: average litres per shift, variance,
