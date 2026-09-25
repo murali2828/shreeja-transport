@@ -8,8 +8,8 @@ paths:
 
 - Migrations are `backend/migrations/NNN_snake_case.sql`, applied in filename order by
   `config/migrate.js` at backend start, one transaction each, tracked in `schema_migrations`.
-- Never edit, rename or delete an applied migration (latest applied: 043). Fixes are new
-  files (pattern: 023 fixes 021; 043 widens a CHECK from 001). Next number: 044.
+- Never edit, rename or delete an applied migration (latest applied: 044). Fixes are new
+  files (pattern: 023 fixes 021; 043 widens a CHECK from 001). Next number: 045.
 - Every migration is idempotent where Postgres allows it (`IF NOT EXISTS`, `DROP … IF EXISTS`,
   `ON CONFLICT DO NOTHING`) and starts with a header comment stating the business reason.
 - Index expressions must be IMMUTABLE (no `timestamptz::date`); use partial indexes for

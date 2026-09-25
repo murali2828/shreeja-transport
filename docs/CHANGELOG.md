@@ -8,6 +8,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
 ### Added
+- Day Optimizer (fleet v2), behind `OPTIMIZER_V2_ENABLED`: plans one date (AM / PM / both) for all BMCUs across all plants with the whole available fleet, minimising Σ km × Tanker Rate Master rate; demand forecast per BMCU × shift with planner override (`bmcu_demand_forecast`), fleet availability from open maintenance / without-driver gate passes, plant catchments from history, comparison against the actual plans of the date, adopt as draft plans; `POST /api/optimize/day`, `GET /day/preview`, `POST /prefetch-distances` (Google-fills missing nearby pairs into Distance Master), `POST /forecast/backfill`; Planning → Day Optimizer page (migration 044) (2026-09-25).
+- BMCU master: optional Chilling Capacity (L) and Lifting Policy fields for the coming lifting advisor (migration 044) (2026-09-25).
+- `services/rates.js`: Tanker Rate Master lookup shared by billing and the optimiser (billing behaviour unchanged) (2026-09-25).
 - Billing: missing-coordinates check — banner on the run and on the fortnight before Execute, listing BMCUs/points without lat-lng (2026-09-19).
 - Billing: Recalc Distances action refreshes System/Google/Master km and legs of an unsubmitted run without touching billed km, rate or amount (2026-09-19).
 - Audit log records the login id on every action; JWT now carries `user_id` (2026-09-18).

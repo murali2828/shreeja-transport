@@ -57,6 +57,9 @@ with login id) and its field-level Changes view.
 | 429 "Too many login attempts" | rate limit (20 / 15 min per IP) | wait, or check for a shared NAT IP hammering login |
 | Billing page says module not enabled (503) | `BILLING_ENABLED` unset | set `BILLING_ENABLED=true` in the tier's env, `up -d` |
 | Billing run refuses period | not an exact fortnight (1–15 / 16–end) | pick the fortnight; see ADR-011 |
+| Day Optimizer menu missing / API 503 `FEATURE_DISABLED` | `OPTIMIZER_V2_ENABLED` unset | set `OPTIMIZER_V2_ENABLED=true` in the tier's env, `up -d`; users log in again to see the menu |
+| Day Optimizer: "No available tankers with a valid rate" | Tanker Rate Master has no row for that capacity × state on the date, or tankers' state unknown | add the rate rows (Masters → Tanker Rates); state comes from billing history or the registration prefix (AP/TN/KA/TS) |
+| Day Optimizer: many "estimated legs" | Distance Master pairs missing | click Prefetch missing distances (needs `GOOGLE_MAPS_API_KEY`); fill coordinates for nodes listed under "need coordinates" |
 | Billing banner "missing coordinates" | BMCU/point without lat-lng | fill coordinates in Masters, use Recalc Distances on the run |
 | Trip appears twice in billing | pre-043 duplicate execution | migration 043 cancels duplicates; check `cancel_reason` on the cancelled row |
 | Cannot start execution on a plan | a live execution already exists (unique index) | cancel the old execution first |
@@ -84,6 +87,11 @@ Passphrase and FTP password live in the IT vault, not in git.
 - Symptom: legs flagged estimated, `km_estimated_leg_count > 0`, log `[roadDistance] Google Routes API HTTP 4xx/5xx`.
 - Check: `GOOGLE_MAPS_API_KEY` set; key has Routes API enabled and billing active in Google Cloud; outbound HTTPS from the container.
 - Effect: falls back to Haversine × 1.3; Distance Master entries are unaffected. Once fixed, use Recalc Distances on the billing run / Google refresh on Distance Master.
+
+**Day Optimizer prefetch (Google Routes)**
+- Symptom: Prefetch returns `failed > 0` or `error: GOOGLE_MAPS_API_KEY is not set`; log `[optimizer-v2] prefetch …`.
+- Check: same as Google Routes above. Each click makes at most `OPTIMIZER_PREFETCH_MAX` calls; click again until `remaining` is 0.
+- Effect: runs still work on Haversine estimates (legs flagged "est."), so costs are approximate until pairs are cached.
 
 **WheelsEye GPS**
 - Symptom: Live Tracking empty or stale; `/api/tracking/status` shows `lastError`; log `[wheelseye] …`.

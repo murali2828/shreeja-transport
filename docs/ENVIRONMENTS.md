@@ -118,3 +118,28 @@ reconciliation. Contract: `docs/assure-handover/API_SPEC_v1.md`; code:
   `[assure] GET /trips key=primary ip=… rows=… status=… ms=…`.
 - Acceptance check from any machine that can reach the host:
   `TMS_URL=https://qatms.shreejamilk.com ASSURE_API_KEY=… docs/assure-handover/scripts/verify_assure_api.sh`
+
+## Day Optimizer (fleet v2) — `/api/optimize/day*`
+
+Whole-day, whole-fleet, all-plant trip planning that minimises km × Tanker Rate
+Master rate (docs/OPTIMISATION_PLAN.md §3.2). Code: `backend/src/services/optimizerV2.js`
+(algorithm), `dayOptimizerData.js` (inputs), `routes/optimize.js`; page: Planning →
+Day Optimizer; schema: migration 044.
+
+- **`OPTIMIZER_V2_ENABLED`** (`true` on QA, unset/false on production): mounts the
+  endpoints and shows the sidebar entry (the login response carries
+  `optimizer_v2_enabled`). Off → `503 FEATURE_DISABLED`; nothing else changes.
+- **`OPTIMIZER_PREFETCH_RADIUS_KM`** (default 80) and **`OPTIMIZER_PREFETCH_MAX`**
+  (default 3000): "Prefetch missing distances" fetches from Google Routes every
+  BMCU↔BMCU / BMCU↔plant pair without a Distance Master row whose straight-line
+  distance is within the radius, at most this many calls per click, concurrency 4,
+  cached with the usual Google attribution. Needs `GOOGLE_MAPS_API_KEY`; without it
+  the call reports `error` and fetches nothing.
+- Inputs it relies on: BMCU and plant coordinates, Tanker Rate Master rows valid on
+  the plan date for every capacity class × state, vendors mapped, tankers under
+  maintenance / without driver recorded via Other Gate Pass. Tankers with no usable
+  rate are listed as excluded with the reason.
+- Demand forecast rows are written to `bmcu_demand_forecast` on every run;
+  `POST /api/optimize/forecast/backfill?date=YYYY-MM-DD` fills `actual_litres`
+  from executed RMRD once the day is closed (call it from the operator's shell or
+  a later job; there is no scheduler yet).

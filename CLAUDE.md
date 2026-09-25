@@ -3,7 +3,7 @@
 ## Stack
 - Backend: Node 20, Express 4, node-postgres (`pg`) with raw parameterised SQL, no ORM — `backend/`
 - Frontend: React 18 + Vite 5 + Tailwind 3 + TanStack Query v5 + axios — `frontend/`
-- DB: Postgres 16; SQL migrations in `backend/migrations/` auto-run at backend start (latest: 043)
+- DB: Postgres 16; SQL migrations in `backend/migrations/` auto-run at backend start (latest: 044)
 - Deploy: Docker Compose (db + backend + frontend/nginx), two stacks on one server (QA, PROD)
 - No test framework; CI (`.github/workflows/ci.yml`) only syntax-checks backend and builds frontend
 
@@ -21,7 +21,7 @@
 - Auth: JWT (8h) in `middleware/auth.js` — `authenticate`, `authorize(roles)`, `authorizeModule`, `authorizeOrModule`; `roles` table holds per-module permissions; admin always bypasses
 - `middleware/auditLog.js` records every mutating call to `audit_logs` + field diffs to `data_change_logs`
 - Domain flow: trip_plans → trip_executions (one live per plan) → trip_acknowledgements → billing_runs (fortnightly)
-- Shared logic lives in `services/` (executionData, distanceLookup, roadDistance, optimizerCore, wheelseye, changeTracker)
+- Shared logic lives in `services/` (executionData, distanceLookup, roadDistance, optimizerCore, optimizerV2 + dayOptimizerData, rates, wheelseye, changeTracker)
 - Distance cascade: `distance_master` → Google Routes API (cached back) → Haversine × `ROAD_DISTANCE_FACTOR`
 - Background jobs: `jobs/docAlerts.js` (document expiry mail), `jobs/wheelseyePoll.js` (GPS every 120s)
 - Integrations: Google Routes, WheelsEye GPS, Assure read-only API (`routes/integrations.js`, X-Assure-Key), SMTP
@@ -32,11 +32,11 @@
 - CommonJS backend, ESM/JSX frontend; 2-space indent, single quotes, semicolons
 - Routers own their auth middleware; errors are `res.status(4xx|5xx).json({ error })`; logs prefixed `[module]`
 - Dates: DB `DATE` returned as `YYYY-MM-DD` strings (type parser in `config/db.js`); display DD-MM-YYYY; TZ Asia/Kolkata
-- Feature flags/tuning via env only (`BILLING_ENABLED`, `WHEELSEYE_*`, `BILLING_*`); no secrets in code
+- Feature flags/tuning via env only (`BILLING_ENABLED`, `OPTIMIZER_V2_ENABLED`, `WHEELSEYE_*`, `BILLING_*`, `OPTIMIZER_*`); no secrets in code
 - Detail: @docs/CONVENTIONS.md
 
 ## Must-not-break rules
-- Never edit an applied migration; add a new `NNN_name.sql` (next: 044); migrations run in a transaction each
+- Never edit an applied migration; add a new `NNN_name.sql` (next: 045); migrations run in a transaction each
 - `KG_FACTOR = 1.0285` (litres→kg) is shared with Assure — change only in lockstep, never silently
 - Billing is fortnightly (1–15 / 16–end); billing date = `plan_for_date + BILLING_DATE_OFFSET_DAYS`; ack cutoff 23:59:59; honour `BILLING_CARRY_FORWARD_FLOOR`
 - Sale tankers (`trip_plans.is_sale_tanker` OR tanker number `SALE%`, `utils/saleTanker.js`) stay out of vendor billing and utilisation

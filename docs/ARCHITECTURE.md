@@ -35,7 +35,7 @@ A longer, older narrative lives in the root [`ARCHITECTURE.md`](../ARCHITECTURE.
 | `/api/vendors`, `/api/tanker-rates`, `/api/documents` | own files | vendor master, per-km rates (024), tanker statutory documents + uploads (`UPLOAD_DIR`) | masters module |
 | `/api/distances` | `routes/distances.js` | Distance Master CRUD, Excel template/upload, Google refresh | masters module |
 | `/api/plans` | `routes/plans.js` | trip plan CRUD, publish, coverage, movement-plan export, plan email config | `authorizeOrModule('planning', ...)` |
-| `/api/optimize` | `routes/optimize.js` | Clarke-Wright optimizer sessions, save-as-plans, compare | planning |
+| `/api/optimize` | `routes/optimize.js` | Clarke-Wright optimizer sessions (v1), save-as-plans, compare; **Day Optimizer (fleet v2)**: `POST /day`, `GET /day/preview`, `POST /prefetch-distances`, `POST /forecast/backfill` — mounted only when `OPTIMIZER_V2_ENABLED=true` (503 `FEATURE_DISABLED` otherwise) | planning |
 | `/api/executions` | `routes/executions.js` | start/save/submit-ack/acknowledge/cancel execution; third-party sales; missed-BMCU remarks | `authorizeOrModule('execution', ...)` |
 | `/api/trip-docs` | `routes/tripDocs.js` | gate pass / COA / unloading print logging, non-trip gate passes, Tanker Position dashboard + Excel | execution |
 | `/api/change-requests` | `routes/changeRequests.js` | post-closure corrections with approver email + single-use token decision (`POST /decide`) | execution; token for decide |
@@ -49,7 +49,10 @@ Services (`backend/src/services`, no HTTP):
 
 - `executionData.js` — `KG_FACTOR = 1.0285`, `calcKgs/KgFat/KgSnf`, `computeExecutionDistance`, `applyExecutionData` (single write path used by executions and change-request approval).
 - `distanceLookup.js` / `roadDistance.js` — Distance Master read/write with pair normalisation (`uq_distance_pair`), Google Routes `computeRouteMatrix` call, master cache for batch jobs.
-- `optimizerCore.js` — Clarke-Wright savings optimizer and tanker assignment.
+- `optimizerCore.js` — Clarke-Wright savings optimizer and tanker assignment (v1, also the seed of v2).
+- `optimizerV2.js` — Day Optimizer core (DB-free): per-plant Clarke-Wright seed, cost-aware tanker assignment (km × Tanker Rate Master rate by transport type, fill floor, trips per tanker per day), local search (relocate/swap/2-opt/merge/split) with seeded restarts. `scripts/optimizer_v2_selftest.js` exercises it without a DB.
+- `dayOptimizerData.js` — builds the v2 instance from the DB: demand forecast (`bmcu_demand_forecast`), plant catchments, fleet availability (open maintenance / without-driver gate passes), rate state per tanker, distance coverage, Google prefetch, comparison with actual plans.
+- `rates.js` — Tanker Rate Master lookup (`findRate`, moved from billing; `loadRatesForDate`, `pickRate`, billing-state per tanker) shared by billing and the optimiser.
 - `changeTracker.js` — before/after snapshots and field diffs for `data_change_logs`.
 - `tripAnalysis.js` — GPS trail vs planned route: stops, geofence visits.
 - `wheelseye.js` — WheelsEye `currentLoc` fetch + sync into GPS tables.
@@ -98,11 +101,11 @@ attribution) → Haversine × `ROAD_DISTANCE_FACTOR` (default 1.3), flagged as e
 
 ## Data model summary
 
-Tables (from `backend/migrations/001`–`043`), grouped:
+Tables (from `backend/migrations/001`–`044`), grouped:
 
 - **Identity**: `users` (login `user_id`, bcrypt `password_hash`, `role`, `is_active`, `must_change_password`), `roles` (name, `permissions` JSON per module: masters/planning/execution/billing/reports), `password_reset_tokens` (created at runtime by `routes/auth.js`, not by a migration).
-- **Masters**: `tankers` (capacity, chambers, vendor, rates), `vendors`, `tanker_rates` (per-km by state/type), `tanker_documents`, `bmcus` (lat/lng), `starting_points`, `testing_points`, `delivery_points`, `route_masters` + `route_bmcus`, `distance_master` (unique normalised pair, `distance_km`, `google_km`), `report_email_config`, `plan_email_configs`, `app_settings` (e.g. vendor-email toggle).
-- **Planning**: `trip_plans` (`plan_for_date`, tanker, route, start/delivery points, expected km/cost, `is_sale_tanker`, status draft/published/cancelled/deleted, `created_by`), `trip_plan_bmcus`, optimizer tables `optimization_sessions/inputs/trips/trip_bmcus`.
+- **Masters**: `tankers` (capacity, chambers, vendor, rates), `vendors`, `tanker_rates` (per-km by state/type), `tanker_documents`, `bmcus` (lat/lng, 044: `chilling_capacity_litres`, `lift_policy`), `starting_points`, `testing_points`, `delivery_points`, `route_masters` + `route_bmcus`, `distance_master` (unique normalised pair, `distance_km`, `google_km`), `report_email_config`, `plan_email_configs`, `app_settings` (e.g. vendor-email toggle).
+- **Planning**: `trip_plans` (`plan_for_date`, tanker, route, start/delivery points, expected km/cost, `is_sale_tanker`, status draft/published/cancelled/deleted, `created_by`), `trip_plan_bmcus`, optimizer tables `optimization_sessions/inputs/trips/trip_bmcus` (044: `algorithm`, `constraints`, `shift_scope`, `comparison`, `summary` on sessions; per-trip `delivery_point_id`, `start_point_id`, `transport_type`, `rate_state`, `flags`), `bmcu_demand_forecast` (044: forecast + actual litres per BMCU × shift × date).
 - **Execution**: `trip_executions` (status in_progress→saved→pending_ack→closed, or cancelled; unique live per plan), `trip_execution_bmcus`, `trip_execution_bmcu_shifts`, `trip_execution_bmcu_entries` (balance milk, new MPP, internal shifting raw/chilled), `trip_third_party_sales`, `trip_acknowledgements` (per chamber, `entered_by`), `bmcu_missed_remarks`, `trip_document_prints`, `non_trip_gate_passes`.
 - **Billing**: `billing_runs` (fortnight from/to, status), `billing_run_trips` (billed km, rate, amount, legs JSON, `carried_forward`), `billing_run_tolls`, `billing_run_approvals` (3 levels, email tokens).
 - **Governance**: `execution_change_requests`, `audit_logs`, `data_change_logs`, `schema_migrations`.

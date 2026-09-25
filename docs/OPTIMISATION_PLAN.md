@@ -160,6 +160,20 @@ About 9 to 10 weeks to production, with phases 2 and 4 in parallel. Every phase
 lands on `qa` behind a feature flag `OPTIMIZER_V2_ENABLED` so production is
 untouched until sign-off.
 
+### Status (25 Sep 2026)
+
+| Phase | Status | Where |
+|---|---|---|
+| 1. Demand model + BMCU policy master | Delivered on `qa` (forecast table `bmcu_demand_forecast`, weighted 14-day / 60-day / plan-qty cascade, planner override, `POST /api/optimize/forecast/backfill`; BMCU chilling capacity + lifting policy fields) | migration 044, `services/dayOptimizerData.js`, Masters → BMCUs |
+| 2. Optimiser v2 | Delivered on `qa` as the **Day Optimizer (fleet v2)** — whole day, all plants, whole fleet, cost = Σ km × Tanker Rate Master rate; Clarke-Wright seed + cost-aware assignment + local search; `POST /api/optimize/day`, `/day/preview`, `/prefetch-distances`; sessions carry `algorithm`, `constraints`, `comparison`, `summary` | `services/optimizerV2.js`, `services/rates.js`, `routes/optimize.js`, `scripts/optimizer_v2_selftest.js` |
+| 3. UI + comparison | Delivered on `qa`: Planning → Day Optimizer page (inputs, results by plant, comparison vs actual plans or same weekday last week, adopt as draft plans). The existing Route Optimizer page is untouched. | `frontend/src/pages/planning/DayOptimizer.jsx` |
+| 4–7 | Not started | |
+
+Differences from the plan text above: v2 lives in its own page and service
+instead of a "v2" toggle on the Route Optimizer page; a BMCU is one node per
+run (shift scope AM, PM or BOTH = AM + PM lifted together), matching how trips
+actually run; the per-trip fixed cost and plant intake limits are not modelled.
+
 ## 5. Risks and how they are handled
 
 - **Forecast error on a rainy day or festival.** Planner override always wins;

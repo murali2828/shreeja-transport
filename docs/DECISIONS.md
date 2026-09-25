@@ -96,3 +96,8 @@ Format: `## ADR-NNN: Title (YYYY-MM-DD)` → Context / Decision / Consequences.
 - Context: team capacity; verification happens on QA by business users.
 - Decision: CI runs `node -c` over `backend/src` and `npm run build` for the frontend; UAT on qatms is the functional gate.
 - Consequences: regressions are caught by users; keep changes small and push to QA often. Revisit if a test framework is adopted.
+
+## ADR-019: Day Optimizer (fleet v2) minimises km × rate behind `OPTIMIZER_V2_ENABLED` (2026-09-25)
+- Context: the v1 Route Optimizer minimises km for one plant and one capacity; vendor cost is per km by state and tanker size, so the cheap plan is not the short plan (docs/OPTIMISATION_PLAN.md).
+- Decision: a separate DB-free core (`services/optimizerV2.js`): Clarke-Wright seed per plant, cost-aware assignment against the Tanker Rate Master (`services/rates.js`, shared with billing), local search with seeded restarts; inputs from history (demand = weighted 14-day RMRD, catchment = most-used plant, availability = open maintenance / without-driver gate passes, rate state = billing history else registration prefix); results stored in the existing optimizer tables (migration 044) so save-as-plans is reused; whole feature gated by `OPTIMIZER_V2_ENABLED` and only ever creates draft plans.
+- Consequences: a tanker without a rate row for its capacity × state is excluded, not guessed; Distance Master coverage drives accuracy (prefetch endpoint fills nearby pairs from Google); defaults (fill floor 85 %, 6 BMCUs, 450 km, 2 trips/tanker/day) are tunable per run and should be reviewed after UAT (plan §6).
