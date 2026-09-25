@@ -80,7 +80,7 @@ router.post('/login', async (req, res) => {
     } catch (err) {
       console.error('[auth] role permissions lookup failed:', err.message);
     }
-    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: user.role, permissions, must_change_password: mustChange, billing_enabled: process.env.BILLING_ENABLED === 'true' } });
+    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: user.role, permissions, must_change_password: mustChange, billing_enabled: process.env.BILLING_ENABLED === 'true', optimizer_v2_enabled: process.env.OPTIMIZER_V2_ENABLED === 'true' } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

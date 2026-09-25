@@ -18,6 +18,186 @@ const {
   nearestNeighbourOrder, computeRouteKm, clarkeWrightSavings,
   assignTankers, effectiveRate,
 } = require('../services/optimizerCore');
+const { runFleetOptimizer, DEFAULT_CONSTRAINTS } = require('../services/optimizerV2');
+const dayData = require('../services/dayOptimizerData');
+
+const canPlan = authorizeOrModule('planning', 'admin', 'planner');
+
+// ─── Day Optimizer (fleet v2) gate — OPTIMIZER_V2_ENABLED=true mounts it ─────
+const V2_ENABLED = () => process.env.OPTIMIZER_V2_ENABLED === 'true';
+function v2Gate(_req, res, next) {
+  if (!V2_ENABLED()) return res.status(503).json({ error: 'Day Optimizer is not enabled in this environment', code: 'FEATURE_DISABLED' });
+  next();
+}
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const SHIFT_SCOPES = ['AM', 'PM', 'BOTH'];
+function parseDayParams(src) {
+  const plan_for_date = String(src.plan_for_date || '').slice(0, 10);
+  const shift = String(src.shift || 'BOTH').toUpperCase();
+  if (!ISO_DATE.test(plan_for_date) || isNaN(Date.parse(plan_for_date + 'T00:00:00Z')))
+    return { error: 'plan_for_date must be YYYY-MM-DD' };
+  if (!SHIFT_SCOPES.includes(shift)) return { error: 'shift must be AM, PM or BOTH' };
+  return { plan_for_date, shift };
+}
+
+// =============================================================================
+// GET /api/optimize/day/preview?plan_for_date&shift — inputs the planner reviews
+// =============================================================================
+router.get('/day/preview', authenticate, canPlan, v2Gate, async (req, res) => {
+  const p = parseDayParams(req.query);
+  if (p.error) return res.status(400).json({ error: p.error });
+  try {
+    const radius = parseFloat(process.env.OPTIMIZER_PREFETCH_RADIUS_KM || '80') || 80;
+    const { bmcus, plants, catchments, fleet, excluded, demand, distMap } = await dayData.buildInstance(p.plan_for_date, p.shift, []);
+    const plantById = Object.fromEntries(plants.map(pl => [pl.id, pl]));
+    res.json({
+      plan_for_date: p.plan_for_date, shift: p.shift,
+      constraints: DEFAULT_CONSTRAINTS,
+      demand: demand.filter(d => p.shift === 'BOTH' || d.shift === p.shift).map(d => ({
+        ...d, plant_id: catchments[d.bmcu_id]?.plant_id || null,
+        plant_name: plantById[catchments[d.bmcu_id]?.plant_id]?.name || null,
+        catchment_method: catchments[d.bmcu_id]?.method,
+      })),
+      fleet, excluded_tankers: excluded,
+      plants: plants.map(pl => ({ id: pl.id, name: pl.name, has_coords: pl.has_coords, start_point: pl.start?.name || null,
+        bmcu_count: bmcus.filter(b => catchments[b.id]?.plant_id === pl.id).length })),
+      distance_coverage: dayData.distanceCoverage(bmcus, plants, catchments, distMap, radius),
+    });
+  } catch (err) {
+    console.error('[optimizer-v2] preview error:', err);
+    res.status(500).json({ error: 'Failed to build Day Optimizer preview' });
+  }
+});
+
+// =============================================================================
+// POST /api/optimize/day  { plan_for_date, shift, constraints?, demand_overrides?, exclude_tanker_ids? }
+// =============================================================================
+router.post('/day', authenticate, canPlan, v2Gate, async (req, res) => {
+  const p = parseDayParams(req.body || {});
+  if (p.error) return res.status(400).json({ error: p.error });
+  const { constraints = {}, demand_overrides = [], exclude_tanker_ids = [] } = req.body || {};
+  if (!Array.isArray(demand_overrides) || !Array.isArray(exclude_tanker_ids))
+    return res.status(400).json({ error: 'demand_overrides and exclude_tanker_ids must be arrays' });
+  const overrides = demand_overrides.filter(o => o && o.bmcu_id && ['AM', 'PM'].includes(o.shift) && Number.isFinite(parseFloat(o.litres)));
+  const excludeIds = new Set(exclude_tanker_ids.map(Number));
+  try {
+    const built = await dayData.buildInstance(p.plan_for_date, p.shift, overrides);
+    const { instance, plants, fleet, excluded, rates, demand } = built;
+    for (const t of instance.tankers.filter(t => excludeIds.has(t.id)))
+      excluded.push({ tanker_id: t.id, tanker_number: t.tanker_number, reason: 'Excluded by planner' });
+    instance.tankers = instance.tankers.filter(t => !excludeIds.has(t.id));
+    const demandNodes = instance.nodes.filter(n => n.litres > 0);
+    if (!demandNodes.length) return res.status(400).json({ error: `No demand for ${p.plan_for_date} ${p.shift}: no RMRD history, plan quantities or overrides for any active BMCU` });
+    if (!instance.tankers.length) return res.status(400).json({ error: 'No available tankers with a valid rate for this date — see excluded tankers in the preview' });
+    if (!instance.plants.length) return res.status(400).json({ error: 'No plant catchment could be resolved — check delivery point coordinates' });
+
+    // Cap the time budget so the request stays well inside proxy/DB timeouts
+    const c = { ...constraints };
+    c.time_budget_ms = Math.min(Math.max(parseInt(c.time_budget_ms) || DEFAULT_CONSTRAINTS.time_budget_ms, 500), 20000);
+    const result = runFleetOptimizer(instance, c);
+
+    await dayData.saveForecasts(p.plan_for_date, demand, overrides);
+    const comparison = await dayData.loadComparison(p.plan_for_date, p.shift, fleet, rates);
+    if (comparison) {
+      const d = (a, b) => a == null || b == null ? null : Math.round((a - b) * 100) / 100;
+      comparison.delta = {
+        trips: d(result.totals.trips, comparison.trips), km: d(result.totals.km, comparison.km),
+        cost: d(result.totals.cost, comparison.cost), litres: d(result.totals.litres, comparison.litres),
+        cost_per_litre: d(result.totals.cost_per_litre, comparison.cost_per_litre),
+        avg_fill_pct: d(result.totals.avg_fill_pct, comparison.avg_fill_pct),
+      };
+    }
+    if (excluded.length) result.warnings.push(`${excluded.length} tanker(s) excluded — see Excluded tankers.`);
+
+    // Persist the session in the existing optimizer tables
+    const client = await pool.connect();
+    let sessionId;
+    try {
+      await client.query('BEGIN');
+      const shiftsMilk = dayData.shiftLabel(p.shift);
+      const sess = await client.query(
+        `INSERT INTO optimization_sessions
+           (plan_for_date, delivery_point_id, start_point_id, shifts_milk, strategy, algorithm, constraints, shift_scope,
+            input_bmcu_count, input_total_qty, result_trip_count, result_total_km, result_total_cost, km_coverage_pct,
+            comparison, summary, status, created_by)
+         VALUES ($1,NULL,NULL,$2,'fleet_v2','fleet_v2',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'completed',$13) RETURNING id`,
+        [p.plan_for_date, shiftsMilk, JSON.stringify(result.constraints), p.shift,
+         demandNodes.length, result.totals.litres, result.totals.trips, result.totals.km, result.totals.cost,
+         result.totals.estimated_legs ? null : 100,
+         comparison ? JSON.stringify(comparison) : null,
+         JSON.stringify({ totals: result.totals, unserved: result.unserved, excluded_tankers: excluded, warnings: result.warnings, stats: result.stats }),
+         req.user.id]);
+      sessionId = sess.rows[0].id;
+      for (const n of demandNodes)
+        await client.query(
+          'INSERT INTO optimization_inputs (session_id, bmcu_id, expected_qty_litres, shift_code) VALUES ($1,$2,$3,$4)',
+          [sessionId, n.bmcu_id, n.litres, shiftsMilk]);
+      for (const t of result.trips) {
+        const tr = await client.query(
+          `INSERT INTO optimization_trips
+             (session_id, trip_seq, tanker_id, tanker_number, capacity_litres, per_km_rate, total_qty_litres, utilization_pct,
+              estimated_km, estimated_cost, per_liter_cost, km_is_estimated, delivery_point_id, start_point_id,
+              transport_type, rate_state, flags, shift_code)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+          [sessionId, t.trip_seq, t.tanker_id, t.tanker_number, t.capacity_litres, t.rate_per_km, t.total_qty_litres, t.fill_pct,
+           t.km, t.cost, t.cost_per_litre, t.flags.estimated_legs > 0, t.delivery_point_id, t.start_point_id,
+           t.transport_type, t.rate_state, JSON.stringify(t.flags), shiftsMilk.slice(0, 5)]);
+        t.opt_trip_id = tr.rows[0].id;
+        for (const b of t.bmcus)
+          await client.query(
+            `INSERT INTO optimization_trip_bmcus (opt_trip_id, seq_no, bmcu_id, expected_qty_litres, leg_km, leg_is_estimated)
+             VALUES ($1,$2,$3,$4,$5,$6)`,
+            [t.opt_trip_id, b.seq_no, b.bmcu_id, b.expected_qty_litres, b.leg_km, b.leg_is_estimated]);
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally { client.release(); }
+
+    res.json({
+      session_id: sessionId, plan_for_date: p.plan_for_date, shift: p.shift,
+      constraints: result.constraints,
+      plants: plants.filter(pl => instance.plants.some(ip => ip.id === pl.id)).map(pl => ({ id: pl.id, name: pl.name })),
+      trips: result.trips, totals: result.totals, unserved: result.unserved,
+      excluded_tankers: excluded, warnings: result.warnings, comparison, stats: result.stats,
+    });
+  } catch (err) {
+    console.error('[optimizer-v2] run error:', err);
+    res.status(500).json({ error: 'Day Optimizer run failed' });
+  }
+});
+
+// =============================================================================
+// POST /api/optimize/prefetch-distances — Google-fetch missing nearby pairs
+// =============================================================================
+router.post('/prefetch-distances', authenticate, canPlan, v2Gate, async (req, res) => {
+  try {
+    const radiusKm = parseFloat(process.env.OPTIMIZER_PREFETCH_RADIUS_KM || '80') || 80;
+    const maxCalls = Math.max(1, parseInt(process.env.OPTIMIZER_PREFETCH_MAX || '3000') || 3000);
+    const out = await dayData.prefetchDistances({ radiusKm, maxCalls, concurrency: 4, userId: req.user.id });
+    console.log(`[optimizer-v2] prefetch fetched=${out.fetched} failed=${out.failed} remaining=${out.remaining}`);
+    res.json({ radius_km: radiusKm, max_calls: maxCalls, ...out });
+  } catch (err) {
+    console.error('[optimizer-v2] prefetch error:', err);
+    res.status(500).json({ error: 'Prefetch failed' });
+  }
+});
+
+// =============================================================================
+// POST /api/optimize/forecast/backfill?date=YYYY-MM-DD — fill actual_litres
+// =============================================================================
+router.post('/forecast/backfill', authenticate, canPlan, v2Gate, async (req, res) => {
+  const date = String(req.query.date || req.body?.date || '').slice(0, 10);
+  if (!ISO_DATE.test(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  try {
+    const updated = await dayData.backfillActuals(date);
+    res.json({ date, updated });
+  } catch (err) {
+    console.error('[optimizer-v2] backfill error:', err);
+    res.status(500).json({ error: 'Backfill failed' });
+  }
+});
 
 // =============================================================================
 // POST /api/optimize/run
@@ -302,8 +482,16 @@ router.post('/:sessionId/save-as-plans', authenticate, authorizeOrModule('planni
         'SELECT per_km_rate, rate_per_km_bmcu, capacity_litres FROM tankers WHERE id=$1', [tankerId]
       );
       const tanker       = tRes.rows[0];
-      const perKmRate    = tanker ? (effectiveRate(tanker) || parseFloat(optTrip.per_km_rate) || 0)
+      // Fleet v2 priced the trip from the Tanker Rate Master — keep that rate
+      // unless the planner swapped the tanker; v1 keeps the tanker-master rate.
+      const isV2         = session.algorithm === 'fleet_v2';
+      const keepV2Rate   = isV2 && String(tankerId) === String(optTrip.tanker_id) && parseFloat(optTrip.per_km_rate) > 0;
+      const perKmRate    = keepV2Rate ? parseFloat(optTrip.per_km_rate)
+                         : tanker ? (effectiveRate(tanker) || parseFloat(optTrip.per_km_rate) || 0)
                                   : (parseFloat(optTrip.per_km_rate) || 0);
+      // Multi-plant (v2) sessions carry the plant per trip; v1 uses the session's.
+      const deliveryPointId = optTrip.delivery_point_id || session.delivery_point_id;
+      const startPointId    = optTrip.start_point_id    || session.start_point_id;
       const totalCost    = expectedKm * perKmRate;
       const perLitreCost = optTrip.total_qty_litres > 0 ? totalCost / optTrip.total_qty_litres : 0;
       const utilPct      = tanker?.capacity_litres > 0
@@ -321,7 +509,7 @@ router.post('/:sessionId/save-as-plans', authenticate, authorizeOrModule('planni
         [
           new Date().toISOString().slice(0, 10),
           session.plan_for_date, tripNo++,
-          tankerId, session.start_point_id, session.delivery_point_id,
+          tankerId, startPointId, deliveryPointId,
           session.shifts_milk, expectedKm,
           Math.round(utilPct * 10) / 10,
           optTrip.total_qty_litres,
@@ -329,7 +517,7 @@ router.post('/:sessionId/save-as-plans', authenticate, authorizeOrModule('planni
           Math.round(perLitreCost * 10000) / 10000,
           ov.driver_name || null,
           ov.loader_name || null,
-          ov.remarks || `Optimizer (${session.strategy}) — Session #${sessionId}`,
+          ov.remarks || (isV2 ? `Day Optimizer — Session #${sessionId}` : `Optimizer (${session.strategy}) — Session #${sessionId}`),
           req.user.id
         ]
       );
