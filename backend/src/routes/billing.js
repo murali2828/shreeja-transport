@@ -85,14 +85,25 @@ router.put('/vendor-email-settings', authenticate, authorize('admin'), async (re
 
 const canBill = ['admin', 'biller'];
 
-// Toll challan uploads: one PDF/image per tanker per run, ≤5MB
+// Toll challan uploads: one PDF/image per tanker per run. Scanned FASTag
+// statements run to 8–12 MB, so the limit is 15 MB (nginx allows 20 MB);
+// size/type failures come back as a readable 413/400 instead of a bare
+// "Request failed with status code 413".
 const multer = require('multer');
+const CHALLAN_MAX_MB = parseInt(process.env.CHALLAN_MAX_MB || '15', 10) || 15;
 const CHALLAN_FILTER = (req, file, cb) => {
   const ok = /\.(pdf|jpg|jpeg|png)$/i.test(file.originalname || '');
   cb(ok ? null : new Error('Challan must be a PDF or JPG/PNG image'), ok);
 };
-const challanUpload = multer({ storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: CHALLAN_FILTER });
+const challanMulter = multer({ storage: multer.memoryStorage(),
+  limits: { fileSize: CHALLAN_MAX_MB * 1024 * 1024 }, fileFilter: CHALLAN_FILTER });
+// Express-style wrapper so multer errors become JSON with a clear message.
+const challanUpload = { single: field => (req, res, next) => challanMulter.single(field)(req, res, err => {
+  if (!err) return next();
+  if (err.code === 'LIMIT_FILE_SIZE')
+    return res.status(413).json({ error: `File is larger than ${CHALLAN_MAX_MB} MB — compress the PDF (or scan at lower resolution) and try again` });
+  return res.status(400).json({ error: err.message || 'Upload rejected' });
+}) };
 
 // Run grand total = km-based trip amounts + toll challan reimbursements
 async function refreshRunTotal(runId) {
