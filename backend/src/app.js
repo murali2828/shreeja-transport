@@ -94,13 +94,36 @@ app.use('/api/integrations/assure', require('./routes/integrations'));
 app.use('/api/*', (_req, res) => res.status(404).json({ error: 'API route not found' }));
 
 // ─── Global error handler (must be registered LAST) ──────────────────────────
-app.use((err, _req, res, _next) => {
-  console.error('[App Error]', err);
-  // Never leak internals (SQL/table/constraint names) to clients in production.
-  const msg = process.env.NODE_ENV === 'production'
-    ? 'Internal server error'
-    : (err.message || 'Internal server error');
-  res.status(500).json({ error: msg });
+// Every failure reaches the browser as JSON { error, code?, ref? } with a
+// message a user can act on. Known client-side causes get their real reason;
+// unexpected failures get a reference id that is also in the server log, so
+// support can find the stack trace without the user seeing internals.
+app.use((err, req, res, _next) => {
+  const mb = n => `${Math.round(n / 1024 / 1024)} MB`;
+  // multer (file uploads)
+  if (err && err.name === 'MulterError') {
+    const map = {
+      LIMIT_FILE_SIZE: `File is too large${err.limit ? ` (limit ${mb(err.limit)})` : ''} — compress it and try again`,
+      LIMIT_FILE_COUNT: 'Too many files in one upload',
+      LIMIT_UNEXPECTED_FILE: `Unexpected file field "${err.field || ''}"`,
+    };
+    return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: map[err.code] || `Upload rejected: ${err.message}`, code: err.code });
+  }
+  // body-parser: payload size / bad JSON
+  if (err && err.type === 'entity.too.large')
+    return res.status(413).json({ error: `Request is too large${err.limit ? ` (limit ${mb(err.limit)})` : ''} — reduce the data or file size`, code: 'PAYLOAD_TOO_LARGE' });
+  if (err && err.type === 'entity.parse.failed')
+    return res.status(400).json({ error: 'Request body is not valid JSON', code: 'BAD_JSON' });
+  // errors thrown with an explicit HTTP code by route/service code
+  const status = Number.isInteger(err?.code) && err.code >= 400 && err.code < 600 ? err.code
+               : Number.isInteger(err?.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
+  if (status < 500)
+    return res.status(status).json({ error: err.message || 'Request rejected' });
+  // unexpected: log with a reference id; tell the user what failed and how to report it
+  const ref = Date.now().toString(36).toUpperCase().slice(-6) + Math.random().toString(36).slice(2, 5).toUpperCase();
+  console.error(`[App Error] ref=${ref} ${req.method} ${req.originalUrl}`, err);
+  const detail = process.env.NODE_ENV === 'production' ? '' : ` — ${err.message || ''}`;
+  res.status(500).json({ error: `Something went wrong on the server while processing ${req.method} ${req.originalUrl.replace(/^\/api/, '')}. Reference ${ref}${detail}`, code: 'INTERNAL', ref });
 });
 
 const PORT = process.env.PORT || 5000;

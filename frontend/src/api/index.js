@@ -11,6 +11,39 @@ api.interceptors.request.use(config => {
 });
 
 // Auto logout on 401
+// Turn every failure into a message the user can act on. Callers already do
+// `toast.error(e.response?.data?.error || e.message)`, so setting both here
+// upgrades every screen at once: the server's own reason when it sent one,
+// otherwise a plain-English explanation of the status / network condition.
+export function describeError(err) {
+  const res = err?.response;
+  const data = res?.data;
+  const serverMsg = (data && typeof data === 'object' && data.error) ? data.error
+    : (typeof data === 'string' && data.length < 300 && !/<html/i.test(data)) ? data : null;
+  if (serverMsg) return serverMsg;
+  if (!res) {
+    if (err?.code === 'ECONNABORTED' || /timeout/i.test(err?.message || '')) return 'The server took too long to respond — check your connection and try again';
+    return 'Cannot reach the server — check your network or VPN and try again';
+  }
+  const byStatus = {
+    400: 'The request was not accepted — check the values you entered',
+    401: 'Your session has expired — please log in again',
+    403: 'You do not have permission for this action',
+    404: 'The item you asked for was not found (it may have been deleted)',
+    408: 'The request timed out — try again',
+    409: 'This conflicts with an existing record — refresh and try again',
+    413: 'The file or data you sent is too large — compress the file (limit is set per upload) and try again',
+    415: 'This file type is not accepted',
+    422: 'The values you entered could not be processed',
+    429: 'Too many requests in a short time — wait a minute and try again',
+    500: 'Something went wrong on the server — try again, and report the time and screen if it repeats',
+    502: 'The server is restarting or unavailable — try again in a minute',
+    503: 'This feature is switched off or the server is temporarily unavailable',
+    504: 'The server took too long to respond — try again',
+  };
+  return byStatus[res.status] || `Request failed (HTTP ${res.status})`;
+}
+
 api.interceptors.response.use(
   res => res,
   err => {
@@ -19,6 +52,14 @@ api.interceptors.response.use(
       localStorage.removeItem('user');
       window.location.href = '/login';
     }
+    try {
+      const msg = describeError(err);
+      err.message = msg;
+      if (err.response) {
+        if (!err.response.data || typeof err.response.data !== 'object') err.response.data = {};
+        if (!err.response.data.error) err.response.data.error = msg;
+      }
+    } catch { /* never mask the original error */ }
     return Promise.reject(err);
   }
 );
