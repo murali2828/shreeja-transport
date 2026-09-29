@@ -63,7 +63,8 @@ with login id) and its field-level Changes view.
 | Billing banner "missing coordinates" | BMCU/point without lat-lng | fill coordinates in Masters, use Recalc Distances on the run |
 | Trip appears twice in billing | pre-043 duplicate execution | migration 043 cancels duplicates; check `cancel_reason` on the cancelled row |
 | Cannot start execution on a plan | a live execution already exists (unique index) | cancel the old execution first |
-| Document/challan upload rejected | >10 MB (documents) / >5 MB (challans) or wrong type | resize/convert the file |
+| Document/challan upload rejected with a size message | >10 MB (documents) / >15 MB (challans, `CHALLAN_MAX_MB`) or wrong type | compress/convert the file |
+| Upload fails with a bare `413` before any app message | host nginx `client_max_body_size` missing (default 1 MB) — both `sites-enabled/tms…` and `qatms…` need `client_max_body_size 20M;` in the **443** server block (added 2026-09-29) | add the line, `nginx -t && systemctl reload nginx` |
 | `[DB SLOW]` lines, timeouts at 30 s | heavy report over a long range | narrow the range; check indexes (migrations 026, 039) |
 | Uploads gone after restore | uploads volume not restored | `deploy/restore.sh uploads <tier> --latest` |
 | Disk full | Docker images/logs or backups | `docker system prune` (images only), check `BACKUP_DIR` retention |

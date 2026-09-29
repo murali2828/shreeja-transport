@@ -36,6 +36,8 @@ passed QA.
 1. **DNS:** add an `A` record for `qatms.shreejamilk.com` → server public IP.
 2. **Reverse proxy:** install the host nginx config that routes both domains —
    see `deploy/reverse-proxy.conf.example`. Then issue TLS certs with certbot.
+   Every `server` block (80 and 443) must carry `client_max_body_size 20M;` —
+   without it nginx rejects uploads over 1 MB with a bare 413 before the app sees them.
 3. **QA env file:** `cp .env.qa.example .env.qa` and fill in QA values (use a
    separate DB password, JWT secret, and ideally a test email inbox).
 
