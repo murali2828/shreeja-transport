@@ -7,7 +7,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { ChevronDown, ChevronRight, Download, Send, Trash2, Play, ArrowLeft, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Send, Trash2, Play, ArrowLeft, RefreshCw, RotateCcw, Undo2 } from 'lucide-react';
 import api from '../../api';
 import { useAuth } from '../../hooks/useAuth';
 import { fmtDate } from '../../utils/date';
@@ -112,28 +112,46 @@ export default function TankerBilling() {
   const submitMut = useMutation({
     mutationFn: (body) => api.post(`/billing/runs/${openRunId}/submit`, body || {}),
     onSuccess: r => {
-      if (r.data.carried_forward?.length)
-        toast(`⚠ ${r.data.carried_forward.length} tanker(s) had no toll challan — ${r.data.carried_trips} trip(s) removed from this run and will be carried forward: ${r.data.carried_forward.join(', ')}`,
-              { duration: 12000, icon: '⚠️' });
-      if (r.data.status === 'draft')
-        toast.error('No tankers had a valid toll challan — nothing was submitted. Add toll challans and submit again.', { duration: 10000 });
+      // Trips are never dropped for a missing toll challan (2026-09-29): only
+      // the toll carries forward, uploaded against this period in the next cycle.
+      const pending = r.data.tolls_pending || [];
+      if (pending.length)
+        toast(`Submitted. Toll challans pending for ${pending.length} tanker(s) — upload them in the next cycle: ${pending.join(', ')}`,
+              { duration: 12000, icon: 'ℹ️' });
       else
         toast.success('Submitted — approval email sent to Mahesh K (Level 1)');
       qc.invalidateQueries(['billing-run', openRunId]);
       qc.invalidateQueries(['billing-runs']);
     },
-    onError: e => {
-      const d = e.response?.data;
-      if (d?.code === 'TOLLS_MISSING') {
-        const ok = window.confirm(
-          `${d.tankers.length} tanker(s) have NO toll challan in this run (${d.trips} trip(s)):\n\n${d.tankers.join(', ')}\n\n` +
-          `Cancel = go back and upload their challans (Toll Challans tab).\n` +
-          `OK = REMOVE those ${d.trips} trip(s) from this run and carry them forward to the next fortnight — their keyed km/state on this run will be discarded.`);
-        if (ok) submitMut.mutate({ confirm_carry_forward: true });
-        return;
-      }
-      toast.error(d?.error || e.message, { duration: 8000 });
+    onError: e => toast.error(e.response?.data?.error || e.message, { duration: 8000 }),
+  });
+
+  const withdrawMut = useMutation({
+    mutationFn: () => api.post(`/billing/runs/${openRunId}/withdraw`),
+    onSuccess: () => {
+      toast.success('Withdrawn from approval — the run is a draft again; the Level 1 email links are void');
+      qc.invalidateQueries(['billing-run', openRunId]);
+      qc.invalidateQueries(['billing-runs']);
     },
+    onError: e => toast.error(e.response?.data?.error || e.message, { duration: 8000 }),
+  });
+
+  // Trips of this run's period that are in NO billing run (e.g. dropped by
+  // the old Submit) — offered back on draft runs.
+  const { data: readdPreview } = useQuery({
+    queryKey: ['billing-readd-preview', openRunId, run?.updated_at],
+    queryFn: () => api.get(`/billing/runs/${openRunId}/readd-preview`).then(r => r.data),
+    enabled: !!openRunId && canEdit && ['draft', 'rejected', 'pending_vendor'].includes(run?.status),
+  });
+  const readdMut = useMutation({
+    mutationFn: () => api.post(`/billing/runs/${openRunId}/readd-trips`),
+    onSuccess: r => {
+      toast.success(`${r.data.added} trip(s) re-added across ${r.data.tankers.length} tanker(s) — key their state / km as usual`, { duration: 10000 });
+      qc.invalidateQueries(['billing-run', openRunId]);
+      qc.invalidateQueries(['billing-summary']);
+      qc.invalidateQueries(['billing-runs']);
+    },
+    onError: e => toast.error(e.response?.data?.error || e.message, { duration: 8000 }),
   });
 
   const [vendorFilter, setVendorFilter] = useState([]); // [{id, vendor_name}] — empty = all vendors
@@ -319,6 +337,20 @@ export default function TankerBilling() {
             <RefreshCw size={13} className={recalcMut.isPending ? 'animate-spin' : ''}/> {recalcMut.isPending ? 'Recalculating…' : 'Recalc Distances'}
           </button>
         )}
+        {editable && readdPreview?.missing > 0 && (
+          <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={readdMut.isPending}
+            title={`${readdPreview.missing} acknowledged trip(s) of this period are in no billing run (tankers: ${readdPreview.tankers.join(', ')}). Re-add them to this run exactly as Execute would; existing lines are untouched.`}
+            onClick={() => window.confirm(`Re-add ${readdPreview.missing} unbilled trip(s) of ${fmtDate(run.from_date)} → ${fmtDate(run.to_date)} to this run?\n\nTankers: ${readdPreview.tankers.join(', ')}\n\nExisting lines keep their keyed values; the re-added lines need state / km keyed again.`) && readdMut.mutate()}>
+            <RotateCcw size={13}/> {readdMut.isPending ? 'Re-adding…' : `Re-add unbilled trips of this period (${readdPreview.missing})`}
+          </button>
+        )}
+        {canEdit && run.status === 'pending_l1' && !(run.approvals || []).some(a => a.decided_at) && (
+          <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={withdrawMut.isPending}
+            title="Take the run back from Level 1 before the approver decides — it returns to Draft, the approval email links become void, and you can edit and resubmit"
+            onClick={() => window.confirm('Withdraw this run from approval? It returns to Draft and the Level 1 approval links stop working. You can edit and resubmit.') && withdrawMut.mutate()}>
+            <Undo2 size={13}/> {withdrawMut.isPending ? 'Withdrawing…' : 'Withdraw from approval'}
+          </button>
+        )}
         {editable && ['draft', 'rejected', 'pending_vendor'].includes(run.status) && (
           <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={pushVendorMut.isPending}
                   title={vendorFilter.length
@@ -492,7 +524,8 @@ export default function TankerBilling() {
       )}
 
       {tab === 'tolls' && (
-        <TollPanel runId={openRunId} tolls={run?.tolls || []} tankers={summary?.tankers || []} editable={editable}/>
+        <TollPanel runId={openRunId} tolls={run?.tolls || []} pendingEarlier={run?.tolls_pending_earlier || []}
+                   tankers={summary?.tankers || []} editable={editable}/>
       )}
 
       {tab === 'vendors' && unassignedTankers.length > 0 && editable && (
@@ -557,21 +590,28 @@ export default function TankerBilling() {
   );
 }
 
-// One toll-gate challan (document + amount) per tanker for the whole
-// fortnight; the amount is reimbursed to the vendor on top of trip amounts.
-function TollPanel({ runId, tolls, tankers, editable }) {
+// One toll-gate challan (document + amount) per tanker per period; the
+// amount is reimbursed to the vendor on top of trip amounts. A missing
+// challan never blocks submit or drops trips (2026-09-29): it is uploaded in
+// a later run against the earlier period ("Pending from earlier cycles")
+// and paid in that run's total.
+function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState({}); // tanker -> {amount, remarks, file}
-  const byTanker = new Map(tolls.map(t => [t.tanker_number, t]));
+  const [form, setForm] = useState({}); // key -> {amount, remarks, file}; key = tanker or `${tanker}|${for_run_id}`
+  const byTanker = new Map(tolls.filter(t => !t.for_run_id).map(t => [t.tanker_number, t]));
+  const carriedIn = tolls.filter(t => t.for_run_id);
   const setF = (tn, k, v) => setForm(p => ({ ...p, [tn]: { ...p[tn], [k]: v } }));
+  const periodLabel = t => `for run #${t.for_run_id ?? t.run_id} · ${fmtDate(t.for_from_date ?? t.from_date)} → ${fmtDate(t.for_to_date ?? t.to_date)}`;
   const refresh = () => {
     qc.invalidateQueries(['billing-run', runId]);
     qc.invalidateQueries(['billing-summary']);
     qc.invalidateQueries(['billing-runs']);
   };
-  const save = tn => {
-    const f = form[tn] || {};
-    const existing = byTanker.get(tn);
+  // forRunId set = challan for an EARLIER run's period, paid in this run.
+  const save = (tn, forRunId = null) => {
+    const key = forRunId ? `${tn}|${forRunId}` : tn;
+    const f = form[key] || {};
+    const existing = forRunId ? carriedIn.find(t => t.tanker_number === tn && t.for_run_id === forRunId) : byTanker.get(tn);
     const amount = f.amount !== undefined ? f.amount : existing?.amount;
     if (amount === undefined || amount === '' || +amount < 0)
       return toast.error('Enter the toll challan amount');
@@ -581,15 +621,15 @@ function TollPanel({ runId, tolls, tankers, editable }) {
     fd.append('tanker_number', tn);
     fd.append('amount', amount);
     fd.append('remarks', f.remarks !== undefined ? f.remarks : (existing?.remarks || ''));
+    if (forRunId) fd.append('for_run_id', forRunId);
     if (f.file) fd.append('file', f.file);
     api.post(`/billing/runs/${runId}/tolls`, fd)
-      .then(() => { toast.success(`Toll challan saved for ${tn}`); setForm(p => ({ ...p, [tn]: undefined })); refresh(); })
+      .then(() => { toast.success(`Toll challan saved for ${tn}${forRunId ? ` (run #${forRunId})` : ''}`); setForm(p => ({ ...p, [key]: undefined })); refresh(); })
       .catch(e => toast.error(e.response?.data?.error || e.message));
   };
-  const del = tn => {
-    const ex = byTanker.get(tn);
+  const del = (tn, ex = byTanker.get(tn)) => {
     if (!ex) return;
-    window.confirm(`Remove the toll challan for ${tn}?`) &&
+    window.confirm(`Remove the toll challan for ${tn}${ex.for_run_id ? ` (run #${ex.for_run_id})` : ''}?`) &&
       api.delete(`/billing/runs/${runId}/tolls/${ex.id}`)
         .then(refresh)
         .catch(e => toast.error(e.response?.data?.error || e.message));
@@ -626,8 +666,9 @@ function TollPanel({ runId, tolls, tankers, editable }) {
   return (
     <div className="card overflow-hidden">
       <div className="px-3 py-2 text-xs text-gray-600 bg-blue-50/60 flex flex-wrap items-center gap-3">
-        <span>One challan per tanker for the fortnight (PDF/JPG/PNG, max 5 MB). The amount is added to the
-        vendor's payable and goes through the same approval chain. · Total tolls: <b>₹ {nf(tollTotal)}</b></span>
+        <span>One challan per tanker for the fortnight (PDF/JPG/PNG, max 15 MB). The amount is added to the
+        vendor's payable and goes through the same approval chain. A missing challan never blocks submit or
+        removes trips — the toll is uploaded in the next cycle against this period. · Total tolls: <b>₹ {nf(tollTotal)}</b></span>
         {editable && (
           <label className="btn-secondary text-[11px] px-2 py-1 cursor-pointer whitespace-nowrap"
                  title="Upload a FASTag statement PDF (ICICI E-Statement or account summary) — per-tanker toll amounts are read and filled automatically">
@@ -692,8 +733,78 @@ function TollPanel({ runId, tolls, tankers, editable }) {
             );
           })}
           {!tankers.length && <tr><td colSpan={6} className="px-3 py-4 text-gray-400">No tankers in this run.</td></tr>}
+          {carriedIn.map(ex => (
+            <tr key={`c-${ex.id}`} className="border-t border-gray-100 bg-amber-50/40">
+              <td className="px-3 py-1.5 font-semibold text-[#005ba3]">{ex.tanker_number}
+                <span className="ml-1 px-1 rounded bg-amber-500 text-white text-[10px]" title="Challan for an earlier period, paid in this run">{periodLabel(ex)}</span></td>
+              <td className="px-3 py-1.5">{tankers.find(t => t.tanker_number === ex.tanker_number)?.vendor_name || '—'}</td>
+              <td className="px-3 py-1.5 text-right">{nf(ex.amount)}</td>
+              <td className="px-3 py-1.5">{ex.has_file
+                ? <button className="text-[#005ba3] underline" onClick={() => download(ex)}>{ex.file_name || 'challan'}</button> : '—'}</td>
+              <td className="px-3 py-1.5">{ex.remarks || '—'}</td>
+              <td className="px-3 py-1.5 whitespace-nowrap">
+                {editable && (
+                  <button className="p-1 text-gray-400 hover:text-red-600" title="Remove challan" onClick={() => del(ex.tanker_number, ex)}>
+                    <Trash2 size={12}/>
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
+
+      {/* Tankers of earlier submitted / approved runs still owing a challan —
+          uploaded here against that period and paid in this run. */}
+      {pendingEarlier.length > 0 && (
+        <div className="border-t border-amber-200">
+          <div className="px-3 py-2 text-xs bg-amber-50 text-amber-900">
+            <b>Pending from earlier cycles</b> — {pendingEarlier.length} tanker-period(s) had no toll challan when their run was
+            submitted. Upload the challan here: it is recorded against that period and paid in <b>this</b> run's total.
+          </div>
+          <table className="w-full text-xs">
+            <thead className="bg-blue-50 text-left text-gray-600">
+              <tr>{['Tanker', 'Vendor', 'Period', 'Toll Amount (₹)', 'Challan', 'Remarks', ''].map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {pendingEarlier.map(p => {
+                const key = `${p.tanker_number}|${p.run_id}`;
+                const f = form[key] || {};
+                return (
+                  <tr key={key} className="border-t border-gray-100">
+                    <td className="px-3 py-1.5 font-semibold text-[#005ba3]">{p.tanker_number}</td>
+                    <td className="px-3 py-1.5">{p.vendor_name || '—'}</td>
+                    <td className="px-3 py-1.5">Run #{p.run_id} · {fmtDate(p.from_date)} → {fmtDate(p.to_date)}</td>
+                    <td className="px-3 py-1.5 text-right">
+                      {editable
+                        ? <input type="number" step="0.01" min="0" className="input py-0.5 px-1 text-xs w-28 text-right"
+                                 value={f.amount ?? ''} onChange={e => setF(key, 'amount', e.target.value)}/>
+                        : '—'}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      {editable
+                        ? <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="text-[11px]"
+                                 onChange={e => setF(key, 'file', e.target.files[0])}/>
+                        : 'pending'}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      {editable
+                        ? <input type="text" className="input py-0.5 px-1 text-xs w-40" placeholder="remarks"
+                                 value={f.remarks ?? ''} onChange={e => setF(key, 'remarks', e.target.value)}/>
+                        : '—'}
+                    </td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
+                      {editable && (
+                        <button className="btn-secondary text-[11px] px-2 py-0.5" onClick={() => save(p.tanker_number, p.run_id)}>Save</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
