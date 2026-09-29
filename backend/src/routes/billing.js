@@ -123,56 +123,37 @@ function recomputeAmount(trip) {
     : null;
 }
 
-// ── POST /api/billing/runs  { from_date, to_date } — execute a fortnight ────
-router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
-  const { from_date, to_date } = req.body;
-  if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date are required' });
-  if (to_date < from_date)    return res.status(400).json({ error: 'to_date is before from_date' });
-  // Billing is strictly fortnightly: 1st–15th, or 16th–month end.
-  {
-    const [fy, fm, fd] = from_date.split('-').map(Number);
-    const [ty, tm, td] = to_date.split('-').map(Number);
-    const sameMonth = fy === ty && fm === tm;
-    const monthEnd = new Date(Date.UTC(fy, fm, 0)).getUTCDate(); // last day of from-month
-    const firstFn  = sameMonth && fd === 1  && td === 15;
-    const secondFn = sameMonth && fd === 16 && td === monthEnd;
-    if (!firstFn && !secondFn)
-      return res.status(400).json({ error: `Billing periods are fortnights only: 1–15 or 16–${monthEnd} of a month` });
-  }
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const run = await client.query(`
-      INSERT INTO billing_runs (from_date, to_date, created_by, created_by_name)
-      VALUES ($1,$2,$3,$4) RETURNING id`,
-      [from_date, to_date, req.user.id, req.user.user_id || req.user.full_name || null]);
-    const runId = run.rows[0].id;
-
-    // Trips with acknowledgement data — the fortnight's own trips PLUS
-    // carry-forward: earlier trips (up to 31 days back) whose acknowledgement
-    // arrived late and which were never included in any other billing run,
-    // e.g. planned on the 15th but acknowledged on the 16th/17th. Rates for
-    // carried trips still apply by their own PLANNING date.
-    //
-    // BILLING_CARRY_FORWARD_FLOOR (env, optional, 'YYYY-MM-DD'): the
-    // carry-forward window never reaches earlier than this BILLING date
-    // (plan_for_date + BILLING_DATE_OFFSET_DAYS), regardless of the 31-day
-    // lookback. For the Sep 2026 parallel run with the transport billing team
-    // it is '2026-09-01' so nothing from August is swept in. Set on production only, to '2026-08-16' —
-    // billing cycles for 2nd fortnight July 2026 through 1st fortnight
-    // August 2026 were intentionally never run, and those unbilled trips
-    // must NOT be swept into the 2nd fortnight August 2026 run. Once every
-    // run's own 31-day lookback naturally stays at/after this floor (i.e.
-    // from the run after 2nd fortnight August 2026 onward), this setting
-    // becomes a permanent no-op and can be left in place or removed.
-    // BILLING_DATE_OFFSET_DAYS (env, default 0): the transport billing team
-    // bills a trip on its DELIVERY date, which is the milk-lifting date
-    // (= trip_plans.plan_for_date) + 1. With offset 1 a run for 1–15 Sep
-    // selects plan_for_date 31 Aug – 14 Sep, matching the team's "Sep 1st FN"
-    // tanker cards exactly (verified row for row on 17 Sep 2026). Set to 1 on
-    // both tiers; leave 0 only for a fortnight defined on lifting dates.
-    const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
-    const trips = await client.query(`
+// ── Eligible trips of a fortnight (shared by Execute and Re-add) ─────────────
+// Trips with acknowledgement data — the fortnight's own trips PLUS
+// carry-forward: earlier trips (up to 31 days back) whose acknowledgement
+// arrived late and which were never included in any other billing run,
+// e.g. planned on the 15th but acknowledged on the 16th/17th. Rates for
+// carried trips still apply by their own PLANNING date.
+//
+// BILLING_CARRY_FORWARD_FLOOR (env, optional, 'YYYY-MM-DD'): the
+// carry-forward window never reaches earlier than this BILLING date
+// (plan_for_date + BILLING_DATE_OFFSET_DAYS), regardless of the 31-day
+// lookback. For the Sep 2026 parallel run with the transport billing team
+// it is '2026-09-01' so nothing from August is swept in. Set on production only, to '2026-08-16' —
+// billing cycles for 2nd fortnight July 2026 through 1st fortnight
+// August 2026 were intentionally never run, and those unbilled trips
+// must NOT be swept into the 2nd fortnight August 2026 run. Once every
+// run's own 31-day lookback naturally stays at/after this floor (i.e.
+// from the run after 2nd fortnight August 2026 onward), this setting
+// becomes a permanent no-op and can be left in place or removed.
+// BILLING_DATE_OFFSET_DAYS (env, default 0): the transport billing team
+// bills a trip on its DELIVERY date, which is the milk-lifting date
+// (= trip_plans.plan_for_date) + 1. With offset 1 a run for 1–15 Sep
+// selects plan_for_date 31 Aug – 14 Sep, matching the team's "Sep 1st FN"
+// tanker cards exactly (verified row for row on 17 Sep 2026). Set to 1 on
+// both tiers; leave 0 only for a fortnight defined on lifting dates.
+//
+// NOT EXISTS on billing_run_trips means the same query also yields exactly
+// the trips a run LOST (e.g. dropped by the pre-2026-09-29 Submit) when it
+// is re-run for that run's period — that is what Re-add relies on.
+async function selectEligibleTrips(client, from_date, to_date) {
+  const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
+  const trips = await client.query(`
       SELECT te.id AS execution_id, tp.plan_for_date::text AS plan_for_date,
              (tp.plan_for_date + ($5::int) < $1::date) AS carried_forward,
              t.tanker_number, t.capacity_litres, t.vendor_id,
@@ -229,44 +210,122 @@ router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), asy
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
       ORDER BY tp.plan_for_date, t.tanker_number`,
       [from_date, to_date, `${to_date} 23:59:59`, process.env.BILLING_CARRY_FORWARD_FLOOR || null, offsetDays]);
+  return trips.rows;
+}
 
-    // Preload the whole Distance Master once — avoids ~5 SELECTs per trip
-    // (an N+1 of thousands of round-trips on a full fortnight).
-    const masterCache = await loadMasterDistanceCache(client);
+// Insert eligible trips as billing lines of runId (system distance with leg
+// breakdown, google reference km, transport type, sale flag, carry-forward).
+// Returns the number of new-combination legs. Caller owns the transaction.
+async function insertRunTrips(client, runId, trips, userId) {
+  // Preload the whole Distance Master once — avoids ~5 SELECTs per trip
+  // (an N+1 of thousands of round-trips on a full fortnight).
+  const masterCache = await loadMasterDistanceCache(client);
 
-    let newCombos = 0;
-    for (const tr of trips.rows) {
-      // System distance with leg breakdown (Master → Google → estimate)
-      const dist = await computeExecutionDistance(client, tr.execution_id, req.user.id, masterCache);
-      newCombos += dist.legs.filter(l => l.is_new).length;
-      const sumBy = src => rN(dist.legs.filter(l => l.source === src).reduce((s, l) => s + l.km, 0));
-      // Google KM is the reference distance for the whole trip regardless of
-      // which source (master/google/estimated) the BILLED km came from — a
-      // leg on a manually-entered Master distance still carries its own
-      // google_km reference once fetched.
-      const googleRefKm = rN(dist.legs.reduce((s, l) => s + (l.google_km || 0), 0));
-      const transportType = tr.bmcu_count > 1 ? 'BMCU/CC to Dairy/CC' : 'Point to Point';
-      await client.query(`
-        INSERT INTO billing_run_trips
-          (run_id, execution_id, plan_for_date, tanker_number, capacity_litres,
-           vendor_id, vendor_name, route_name, start_point, delivery_point,
-           bmcu_count, ack_litres, ack_kgs, ack_fat_pct, ack_snf_pct, transport_type,
-           system_km, google_km, master_km, estimated_km, billed_km, legs,
-           is_sale_tanker, excluded, carried_forward)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
-        [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
-         tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
-         tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), rN(tr.ack_fat_pct, 3), rN(tr.ack_snf_pct, 3), transportType,
-         rN(dist.total_km), googleRefKm, sumBy('master'), sumBy('estimated'),
-         rN(dist.total_km), JSON.stringify(dist.legs),
-         !!tr.is_sale_tanker, !!tr.is_sale_tanker, !!tr.carried_forward]);
-    }
+  let newCombos = 0;
+  for (const tr of trips) {
+    // System distance with leg breakdown (Master → Google → estimate)
+    const dist = await computeExecutionDistance(client, tr.execution_id, userId, masterCache);
+    newCombos += dist.legs.filter(l => l.is_new).length;
+    const sumBy = src => rN(dist.legs.filter(l => l.source === src).reduce((s, l) => s + l.km, 0));
+    // Google KM is the reference distance for the whole trip regardless of
+    // which source (master/google/estimated) the BILLED km came from — a
+    // leg on a manually-entered Master distance still carries its own
+    // google_km reference once fetched.
+    const googleRefKm = rN(dist.legs.reduce((s, l) => s + (l.google_km || 0), 0));
+    const transportType = tr.bmcu_count > 1 ? 'BMCU/CC to Dairy/CC' : 'Point to Point';
+    await client.query(`
+      INSERT INTO billing_run_trips
+        (run_id, execution_id, plan_for_date, tanker_number, capacity_litres,
+         vendor_id, vendor_name, route_name, start_point, delivery_point,
+         bmcu_count, ack_litres, ack_kgs, ack_fat_pct, ack_snf_pct, transport_type,
+         system_km, google_km, master_km, estimated_km, billed_km, legs,
+         is_sale_tanker, excluded, carried_forward)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
+      [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
+       tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
+       tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), rN(tr.ack_fat_pct, 3), rN(tr.ack_snf_pct, 3), transportType,
+       rN(dist.total_km), googleRefKm, sumBy('master'), sumBy('estimated'),
+       rN(dist.total_km), JSON.stringify(dist.legs),
+       !!tr.is_sale_tanker, !!tr.is_sale_tanker, !!tr.carried_forward]);
+  }
+  return newCombos;
+}
+
+// ── POST /api/billing/runs  { from_date, to_date } — execute a fortnight ────
+router.post('/runs', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
+  const { from_date, to_date } = req.body;
+  if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date are required' });
+  if (to_date < from_date)    return res.status(400).json({ error: 'to_date is before from_date' });
+  // Billing is strictly fortnightly: 1st–15th, or 16th–month end.
+  {
+    const [fy, fm, fd] = from_date.split('-').map(Number);
+    const [ty, tm, td] = to_date.split('-').map(Number);
+    const sameMonth = fy === ty && fm === tm;
+    const monthEnd = new Date(Date.UTC(fy, fm, 0)).getUTCDate(); // last day of from-month
+    const firstFn  = sameMonth && fd === 1  && td === 15;
+    const secondFn = sameMonth && fd === 16 && td === monthEnd;
+    if (!firstFn && !secondFn)
+      return res.status(400).json({ error: `Billing periods are fortnights only: 1–15 or 16–${monthEnd} of a month` });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const run = await client.query(`
+      INSERT INTO billing_runs (from_date, to_date, created_by, created_by_name)
+      VALUES ($1,$2,$3,$4) RETURNING id`,
+      [from_date, to_date, req.user.id, req.user.user_id || req.user.full_name || null]);
+    const runId = run.rows[0].id;
+    const trips = await selectEligibleTrips(client, from_date, to_date);
+    const newCombos = await insertRunTrips(client, runId, trips, req.user.id);
     await client.query('COMMIT');
-    res.json({ id: runId, trips: trips.rows.length, new_combinations: newCombos });
+    res.json({ id: runId, trips: trips.length, new_combinations: newCombos });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Billing run create error:', err);
     res.status(500).json({ error: 'Failed to create billing run' });
+  } finally { client.release(); }
+});
+
+// ── Re-add unbilled trips of a run's own period ─────────────────────────────
+// Recovery for a run that lost lines (the pre-2026-09-29 Submit deleted the
+// trips of tankers without a toll challan; production run #15 lost 219 of
+// 666). Same eligibility query and insert path as Execute for the run's
+// from/to (same offset, floor, ack cutoff, NOT EXISTS in billing_run_trips),
+// so only trips in NO run come back. Keyed state/km on existing lines are
+// untouched; the re-added lines start unkeyed like a fresh Execute
+// (scripts/restore_run_keyed.js restores them from a CSV).
+const EDITABLE = ['draft', 'rejected', 'pending_vendor'];
+router.get('/runs/:id/readd-preview', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const run = (await client.query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [req.params.id])).rows[0];
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    const trips = await selectEligibleTrips(client, run.from_date, run.to_date);
+    res.json({ missing: trips.length, tankers: [...new Set(trips.map(t => t.tanker_number))].sort() });
+  } catch (err) {
+    console.error('Billing readd-preview error:', err);
+    res.status(500).json({ error: 'Failed to check unbilled trips' });
+  } finally { client.release(); }
+});
+
+router.post('/runs/:id/readd-trips', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const runId = req.params.id;
+    const run = (await client.query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (!EDITABLE.includes(run.status))
+      return res.status(400).json({ error: 'Trips can only be re-added to a draft / rejected run — withdraw it from approval first' });
+    await client.query('BEGIN');
+    const trips = await selectEligibleTrips(client, run.from_date, run.to_date);
+    const newCombos = await insertRunTrips(client, runId, trips, req.user.id);
+    await client.query('COMMIT');
+    await refreshRunTotal(runId);
+    res.json({ added: trips.length, tankers: [...new Set(trips.map(t => t.tanker_number))].sort(), new_combinations: newCombos });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Billing readd-trips error:', err);
+    res.status(500).json({ error: 'Failed to re-add trips' });
   } finally { client.release(); }
 });
 
