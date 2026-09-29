@@ -340,6 +340,11 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
     await client.query('UPDATE trip_plans SET start_point_id=$1 WHERE id=$2',
       [start_point_id || null, exec.rows[0].trip_plan_id]);
   }
+  // Both points chosen by the executor → remember it (migration 047), so the
+  // form shows them on the next open instead of asking again.
+  if (start_point_id && delivery_point_id) {
+    await client.query('UPDATE trip_executions SET points_confirmed=TRUE WHERE id=$1', [execId]);
+  }
 
   const statusSql = setSavedStatus ? ", status='saved'" : '';
   const r = await client.query(

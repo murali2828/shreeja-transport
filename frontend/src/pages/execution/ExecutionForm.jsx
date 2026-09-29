@@ -711,6 +711,19 @@ export default function ExecutionForm() {
   // COA/Unload (tanker arriving at the plant). Both blank = server NOW().
   const [outDate, setOutDate] = useState(''); const [outTime, setOutTime] = useState('');
   const [inDate, setInDate] = useState('');   const [inTime, setInTime] = useState('');
+  // Once OUT (gate pass) / IN (COA) are recorded, show the recorded values in
+  // the fields and lock them, instead of asking again on every open.
+  const tsParts = iso => {
+    if (!iso) return ['', ''];
+    const d = new Date(iso); if (isNaN(d)) return ['', ''];
+    const p = n => String(n).padStart(2, '0');
+    return [`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`, `${p(d.getHours())}:${p(d.getMinutes())}`];
+  };
+  const outLocked = !!docStatus.gate_pass, inLocked = !!docStatus.coa;
+  useEffect(() => {
+    if (docStatus.gate_pass) { const [d, t] = tsParts(docStatus.gate_pass.first_printed_at); setOutDate(d); setOutTime(t); }
+    if (docStatus.coa) { const [d, t] = tsParts(docStatus.coa.first_printed_at); setInDate(d); setInTime(t); }
+  }, [docStatus.gate_pass?.first_printed_at, docStatus.coa?.first_printed_at]);
   // (date, "HH:MM") → ISO string, null when both blank; throws on bad input.
   const parseTypedTs = (date, time, label) => {
     const d = String(date || '').trim(), t = String(time || '').trim();
@@ -825,7 +838,7 @@ export default function ExecutionForm() {
       // an in-progress trip starts blank until re-selected — but only on
       // the FIRST load, so a later refetch (e.g. after Save) doesn't wipe
       // out what the executor just picked.
-      if (exec.status === 'closed') {
+      if (exec.status === 'closed' || exec.points_confirmed) {
         setDeliveryPointId(String(exec.delivery_point_id || ''));
         setStartPointId(String(exec.start_point_id || ''));
       } else if (!pointsInitRef.current) {
@@ -1159,9 +1172,9 @@ export default function ExecutionForm() {
             <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
                    title="Tanker OUT — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click Gate Pass.">
               OUT<span className="text-red-400">*</span>
-              <input type="date" className="input py-0.5 px-1 text-[11px]" max={today}
+              <input type="date" className="input py-0.5 px-1 text-[11px]" max={today} disabled={outLocked}
                      value={outDate} onChange={e => setOutDate(e.target.value)}/>
-              <input type="text" placeholder="HH:MM" maxLength={5}
+              <input type="text" placeholder="HH:MM" maxLength={5} disabled={outLocked}
                      className="input py-0.5 px-1 text-[11px] w-16"
                      value={outTime} onChange={e => setOutTime(e.target.value)}/>
             </label>
@@ -1175,9 +1188,9 @@ export default function ExecutionForm() {
             <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
                    title="Tanker IN (arrival at the plant) — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click COA or Unload.">
               IN<span className="text-red-400">*</span>
-              <input type="date" className="input py-0.5 px-1 text-[11px]" max={today}
+              <input type="date" className="input py-0.5 px-1 text-[11px]" max={today} disabled={inLocked}
                      value={inDate} onChange={e => setInDate(e.target.value)}/>
-              <input type="text" placeholder="HH:MM" maxLength={5}
+              <input type="text" placeholder="HH:MM" maxLength={5} disabled={inLocked}
                      className="input py-0.5 px-1 text-[11px] w-16"
                      value={inTime} onChange={e => setInTime(e.target.value)}/>
             </label>
