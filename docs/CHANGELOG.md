@@ -7,7 +7,11 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- Billing: a missing toll challan never removes a tanker's trips from a run (owner rule, 2026-09-29). Submit keeps every line, returns `tolls_pending` and lists those tankers in the L1 mail; the toll is uploaded in a later run against the earlier period (`billing_run_tolls.for_run_id`, migration 046; unique key now per run × tanker × period) and paid in that run's total. Toll Challans tab shows "Pending from earlier cycles" and labels carried-in challans; vendor cards / Excel show the period each challan covers (2026-09-29).
+
 ### Added
+- Billing: `POST /runs/:id/withdraw` — take an undecided pending_l1 run back to draft (approval rows deleted); `GET /runs/:id/readd-preview` + `POST /runs/:id/readd-trips` — re-add the period's trips that are in no run, through the same selection / insert code as Execute; buttons on the run header. RUNBOOK section "Recover a billing run that lost trips" (2026-09-29).
 - Day Optimizer: "Plan to plant requirements" mode — the planner enters the litres each plant requires (default = its catchment forecast, priority, locked); `services/plantAllocation.js` decides which BMCUs supply which plant (greedy min extra km × ₹/km per litre, max extra km per BMCU 60, keep-history bonus 5 %, shortfall rule priority / proportional, planner pins), then the whole-fleet routing runs per plant with plant switching off. `POST /api/optimize/day` takes `mode`, `plant_requirements`, `allocation`, `pinned_bmcu_ids`; the preview returns `catchment_forecast_litres` per plant; results show a Plant allocation panel and the reassigned BMCUs with a "keep usual plant" veto that re-runs; Excel sheet "Plant Allocation"; session `constraints` / `summary.allocation` persist it; `scripts/plant_allocation_selftest.js` (2026-09-26).
 
 ### Changed

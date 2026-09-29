@@ -114,6 +114,30 @@ Passphrase and FTP password live in the IT vault, not in git.
 - Check: 503 → `ASSURE_API_KEY` blank; 401 → key mismatch (rotate via `ASSURE_API_KEY_NEXT`); 403 → caller IP not in `ASSURE_ALLOWED_IPS`; 429 → over 120 req/min. Log line `[assure] GET /trips key=… ip=… status=…` per call.
 - Effect: TMS users unaffected; only Assure's reconciliation pull is delayed.
 
+## Recover a billing run that lost trips
+
+Before 2026-09-29 Submit deleted the trips of tankers without a toll challan (run #14
+lost 592, run #15 lost 219 of 666). Trips are never dropped any more; to put the lost
+lines back on the same run:
+
+1. Billing → open the run. If it is **Awaiting L1** and nobody has decided, click
+   **Withdraw from approval** (`POST /api/billing/runs/:id/withdraw`) — status returns to
+   Draft, the L1 email links die. If an approver already decided, ask the approver to
+   reject it instead (rejected runs are editable too).
+2. Click **Re-add unbilled trips of this period (N)** (`POST /api/billing/runs/:id/readd-trips`).
+   N comes from `GET /runs/:id/readd-preview`: acknowledged trips of the run's fortnight
+   (same offset / floor / ack cutoff as Execute) that are in no billing run. Existing lines
+   keep their keyed state / km; the re-added lines come back unkeyed, like a fresh Execute.
+3. Restore the keyed values of the re-added lines from the biller's CSV (columns
+   `plan_for_date,tanker_number,state,transport_type,billed_km,remarks`):
+   ```bash
+   docker exec -i shreeja-backend node scripts/restore_run_keyed.js <run_id> < keyed.csv
+   ```
+   Rows already keyed are matched too but only overwrite with non-empty CSV values.
+4. Check the run total on screen, upload any toll challans now available, Submit. Tankers
+   still without a challan are listed as "Toll challans pending" (response, L1 mail); their
+   toll is uploaded in the next cycle under Toll Challans → **Pending from earlier cycles**.
+
 ## Routine tasks
 
 - New user / role: Masters → Users / Roles (admin). Custom roles get module permissions.
