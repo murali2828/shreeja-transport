@@ -431,7 +431,7 @@ router.get('/runs/:id', authenticate, authorizeOrModule('billing', ...canBill, '
     res.json({ ...run.rows[0], trips: trips.rows, approvals: approvals.rows,
       tolls: await tollRowsOfRun(run.rows[0].id),
       tolls_pending_earlier: await pendingEarlierTolls(run.rows[0]) });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error('Billing run detail error:', err); res.status(500).json({ error: err.message }); }
 });
 
 // ── POST /api/billing/runs/:id/assign-vendor — fix a tanker with no vendor
@@ -584,7 +584,7 @@ async function pendingTollTankers(runId) {
 // in draft / rejected take their tolls directly, so they are not listed.
 async function pendingEarlierTolls(run) {
   const r = await query(`
-    SELECT DISTINCT t.tanker_number, MAX(t.vendor_name) AS vendor_name,
+    SELECT t.tanker_number, MAX(t.vendor_name) AS vendor_name,
            br.id AS run_id, br.from_date::text AS from_date, br.to_date::text AS to_date
     FROM billing_runs br
     JOIN billing_run_trips t ON t.run_id = br.id AND t.excluded = FALSE
