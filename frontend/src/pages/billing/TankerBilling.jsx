@@ -305,6 +305,7 @@ export default function TankerBilling() {
   const missing = trips.filter(t => !t.is_sale_tanker && (!val(t, 'state') || t.rate_per_km == null)).length;
   const unassignedTankers = [...new Set(trips.filter(t => !t.is_sale_tanker && !val(t, 'excluded') && !t.vendor_id).map(t => t.tanker_number))];
   const newComboCount = trips.reduce((s, t) => {
+    if (t.is_sale_tanker) return s; // sale-tanker legs are not paid or approved
     const legs = Array.isArray(t.legs) ? t.legs : (t.legs ? JSON.parse(t.legs) : []);
     return s + legs.filter(l => l.is_new).length;
   }, 0);

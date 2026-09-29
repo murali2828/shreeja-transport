@@ -942,9 +942,14 @@ router.get('/runs/:id/report', authenticate, authorizeOrModule('billing', ...can
 // New route combinations (legs whose pair was absent from the Distance
 // Master when the run executed) — surfaced to the approval chain so approving
 // the run is the competent-authority approval of these combinations.
+// Sale-tanker trips (Milma collections, third-party sales) are not paid by
+// Shreeja and their plants (Milma Plant, "Third Party Sale") have no
+// coordinates, so their legs are neither approvable nor Google-measurable —
+// they are left out of the list and the count.
 function collectNewCombos(trips) {
   const combos = [];
   for (const t of trips) {
+    if (t.is_sale_tanker || /^SALE/i.test(t.tanker_number || '')) continue;
     const legs = Array.isArray(t.legs) ? t.legs : JSON.parse(t.legs || '[]');
     for (const l of legs) if (l.is_new)
       combos.push({ date: t.plan_for_date, tanker: t.tanker_number,
