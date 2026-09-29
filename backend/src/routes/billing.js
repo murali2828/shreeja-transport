@@ -428,10 +428,9 @@ router.get('/runs/:id', authenticate, authorizeOrModule('billing', ...canBill, '
     const approvals = await query(`
       SELECT level, approver_email, status, remarks, decided_at
       FROM billing_run_approvals WHERE run_id = $1 ORDER BY level`, [req.params.id]);
-    const tolls = await query(`
-      SELECT id, tanker_number, amount, remarks, file_name, (file_data IS NOT NULL) AS has_file
-      FROM billing_run_tolls WHERE run_id = $1 ORDER BY tanker_number`, [req.params.id]);
-    res.json({ ...run.rows[0], trips: trips.rows, approvals: approvals.rows, tolls: tolls.rows });
+    res.json({ ...run.rows[0], trips: trips.rows, approvals: approvals.rows,
+      tolls: await tollRowsOfRun(run.rows[0].id),
+      tolls_pending_earlier: await pendingEarlierTolls(run.rows[0]) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -545,7 +544,9 @@ router.delete('/runs/:id', authenticate, authorizeOrModule('billing', ...canBill
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Toll gate challans — ONE per tanker per run ──────────────────────────────
+// ── Toll gate challans — one per tanker per period; a missing challan never
+// blocks submit or drops trips, it is uploaded in a later run with for_run_id
+// (migration 046) and paid there ─────────────────────────────────────────────
 async function assertEditableRun(runId, res) {
   const run = (await query('SELECT status FROM billing_runs WHERE id=$1', [runId])).rows[0];
   if (!run) { res.status(404).json({ error: 'Run not found' }); return false; }
@@ -556,27 +557,105 @@ async function assertEditableRun(runId, res) {
   return true;
 }
 
-// Upsert: attach/replace the fortnight's challan + amount for one tanker
+// A toll "for" a run's period is a row with run_id = that run and no
+// for_run_id (its own cycle) OR a row anywhere with for_run_id = that run
+// (uploaded and paid in a later cycle, migration 046). A challan counts only
+// with an amount > 0 and a file attached.
+const TOLL_FOR_RUN_SQL = `
+  SELECT tanker_number FROM billing_run_tolls
+  WHERE amount > 0 AND file_data IS NOT NULL
+    AND ((run_id = $1 AND for_run_id IS NULL) OR for_run_id = $1)`;
+
+// Tankers with billable (non-excluded, non-sale) trips in runId that still
+// have no valid toll challan for runId's period.
+async function pendingTollTankers(runId) {
+  const r = await query(`
+    SELECT DISTINCT t.tanker_number FROM billing_run_trips t
+    WHERE t.run_id = $1 AND t.excluded = FALSE
+      AND NOT (COALESCE(t.is_sale_tanker, FALSE) OR t.tanker_number ILIKE 'SALE%')
+      AND t.tanker_number NOT IN (${TOLL_FOR_RUN_SQL})
+    ORDER BY t.tanker_number`, [runId]);
+  return r.rows.map(x => x.tanker_number);
+}
+
+// Earlier runs (submitted or beyond, from_date before this run's, last 90
+// days) whose tankers still owe a toll challan — the biller uploads them in
+// THIS run with for_run_id and they are paid in this run's total. Runs still
+// in draft / rejected take their tolls directly, so they are not listed.
+async function pendingEarlierTolls(run) {
+  const r = await query(`
+    SELECT DISTINCT t.tanker_number, MAX(t.vendor_name) AS vendor_name,
+           br.id AS run_id, br.from_date::text AS from_date, br.to_date::text AS to_date
+    FROM billing_runs br
+    JOIN billing_run_trips t ON t.run_id = br.id AND t.excluded = FALSE
+      AND NOT (COALESCE(t.is_sale_tanker, FALSE) OR t.tanker_number ILIKE 'SALE%')
+    WHERE br.id <> $1
+      AND br.status IN ('pending_l1','pending_l2','pending_l3','approved')
+      AND br.from_date < $2::date
+      AND br.from_date >= $2::date - INTERVAL '90 days'
+      AND NOT EXISTS (
+        SELECT 1 FROM billing_run_tolls x
+        WHERE x.tanker_number = t.tanker_number AND x.amount > 0 AND x.file_data IS NOT NULL
+          AND ((x.run_id = br.id AND x.for_run_id IS NULL) OR x.for_run_id = br.id))
+    GROUP BY t.tanker_number, br.id, br.from_date, br.to_date
+    ORDER BY br.from_date, t.tanker_number`, [run.id, run.from_date]);
+  return r.rows;
+}
+
+// GET /runs/:id/tolls — challan rows of this run (own period + carried in)
+// plus the earlier-cycle tankers still owing a challan.
+router.get('/runs/:id/tolls', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+  try {
+    const run = (await query('SELECT id, from_date::text AS from_date FROM billing_runs WHERE id=$1', [req.params.id])).rows[0];
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    res.json({ tolls: await tollRowsOfRun(run.id), pending_earlier: await pendingEarlierTolls(run) });
+  } catch (err) { res.status(500).json({ error: 'Failed to load toll challans' }); }
+});
+
+async function tollRowsOfRun(runId) {
+  return (await query(`
+    SELECT x.id, x.tanker_number, x.amount, x.remarks, x.file_name, (x.file_data IS NOT NULL) AS has_file,
+           x.for_run_id, fr.from_date::text AS for_from_date, fr.to_date::text AS for_to_date
+    FROM billing_run_tolls x LEFT JOIN billing_runs fr ON fr.id = x.for_run_id
+    WHERE x.run_id = $1 ORDER BY x.tanker_number, x.for_run_id NULLS FIRST`, [runId])).rows;
+}
+
+// Upsert: attach/replace the challan + amount for one tanker. Optional
+// for_run_id = an EARLIER run's period this challan covers (must be genuinely
+// pending there); the row is still paid in THIS run's total.
 router.post('/runs/:id/tolls', authenticate, authorizeOrModule('billing', ...canBill), challanUpload.single('file'), async (req, res) => {
   try {
     if (!(await assertEditableRun(req.params.id, res))) return;
     const { tanker_number, amount, remarks } = req.body;
+    const forRunId = req.body.for_run_id ? parseInt(req.body.for_run_id, 10) : null;
     const amt = rN(amount);
     if (!tanker_number || amt == null || amt < 0)
       return res.status(400).json({ error: 'Tanker and a non-negative toll amount are required' });
-    const inRun = await query(
-      'SELECT 1 FROM billing_run_trips WHERE run_id=$1 AND tanker_number=$2 LIMIT 1',
-      [req.params.id, tanker_number]);
-    if (!inRun.rows.length)
-      return res.status(400).json({ error: `Tanker ${tanker_number} has no trips in this run` });
+    if (forRunId) {
+      if (!Number.isInteger(forRunId) || forRunId === Number(req.params.id))
+        return res.status(400).json({ error: 'for_run_id must be an earlier billing run' });
+      const run = (await query('SELECT id, from_date::text AS from_date FROM billing_runs WHERE id=$1', [req.params.id])).rows[0];
+      const pending = (await pendingEarlierTolls(run)).find(p => p.run_id === forRunId && p.tanker_number === tanker_number);
+      if (!pending && !(await query('SELECT 1 FROM billing_run_tolls WHERE run_id=$1 AND tanker_number=$2 AND for_run_id=$3',
+          [req.params.id, tanker_number, forRunId])).rows.length)
+        return res.status(400).json({ error: `Tanker ${tanker_number} has no toll pending for run #${forRunId}` });
+    } else {
+      const inRun = await query(
+        'SELECT 1 FROM billing_run_trips WHERE run_id=$1 AND tanker_number=$2 LIMIT 1',
+        [req.params.id, tanker_number]);
+      if (!inRun.rows.length)
+        return res.status(400).json({ error: `Tanker ${tanker_number} has no trips in this run` });
+    }
     const f = req.file;
-    const existing = await query('SELECT file_data IS NOT NULL AS has_file FROM billing_run_tolls WHERE run_id=$1 AND tanker_number=$2', [req.params.id, tanker_number]);
+    const existing = await query(
+      'SELECT file_data IS NOT NULL AS has_file FROM billing_run_tolls WHERE run_id=$1 AND tanker_number=$2 AND for_run_id IS NOT DISTINCT FROM $3',
+      [req.params.id, tanker_number, forRunId]);
     if (!f && !existing.rows[0]?.has_file)
       return res.status(400).json({ error: `${tanker_number}: a toll challan attachment (PDF/JPG/PNG) is mandatory — choose a file before saving` });
     const r = await query(`
-      INSERT INTO billing_run_tolls (run_id, tanker_number, amount, remarks, file_name, file_mime, file_data, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      ON CONFLICT (run_id, tanker_number) DO UPDATE SET
+      INSERT INTO billing_run_tolls (run_id, tanker_number, amount, remarks, file_name, file_mime, file_data, created_by, for_run_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ON CONFLICT (run_id, tanker_number, COALESCE(for_run_id, 0)) DO UPDATE SET
         amount=$3, remarks=$4,
         file_name=COALESCE($5, billing_run_tolls.file_name),
         file_mime=COALESCE($6, billing_run_tolls.file_mime),
@@ -584,7 +663,7 @@ router.post('/runs/:id/tolls', authenticate, authorizeOrModule('billing', ...can
         updated_at=NOW()
       RETURNING id`,
       [req.params.id, tanker_number, amt, remarks || null,
-       f ? f.originalname : null, f ? f.mimetype : null, f ? f.buffer : null, req.user.id]);
+       f ? f.originalname : null, f ? f.mimetype : null, f ? f.buffer : null, req.user.id, forRunId]);
     await refreshRunTotal(req.params.id);
     res.json({ id: r.rows[0].id, ok: true });
   } catch (err) {
@@ -620,7 +699,7 @@ router.post('/runs/:id/fastag', authenticate, authorizeOrModule('billing', ...ca
       await query(`
         INSERT INTO billing_run_tolls (run_id, tanker_number, amount, remarks, file_name, file_mime, file_data, created_by)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-        ON CONFLICT (run_id, tanker_number) DO UPDATE SET
+        ON CONFLICT (run_id, tanker_number, COALESCE(for_run_id, 0)) DO UPDATE SET
           amount=$3, remarks=$4, file_name=$5, file_mime=$6, file_data=$7, updated_at=NOW()`,
         [req.params.id, tanker, v.toll_amount,
          `FASTag statement (${format}): ${v.trips} toll trips`,
@@ -688,7 +767,9 @@ async function runSummaries(runId, { vendorIds } = {}) {
 
   // Merge toll challans: per tanker directly; per vendor via the tanker's
   // vendor. total_payable = km-based amount + toll reimbursement.
-  const tolls = await query('SELECT tanker_number, amount FROM billing_run_tolls WHERE run_id=$1', [runId]);
+  // A tanker may carry two rows: its own period and an earlier period's
+  // challan uploaded here (for_run_id) — both are paid in this run.
+  const tolls = await query('SELECT tanker_number, SUM(amount) AS amount FROM billing_run_tolls WHERE run_id=$1 GROUP BY tanker_number', [runId]);
   const tollBy = new Map(tolls.rows.map(r => [r.tanker_number, parseFloat(r.amount) || 0]));
   const vendorToll = new Map();
   for (const t of tankers.rows) {
@@ -787,12 +868,16 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     rN(vendors.reduce((s, v) => s + (+v.toll_amount || 0), 0)),
     rN(vendors.reduce((s, v) => s + (+v.total_payable || 0), 0))]).font = { bold: true };
 
-  const tollRows = (await query(
-    'SELECT tanker_number, amount, remarks, file_name FROM billing_run_tolls WHERE run_id=$1 ORDER BY tanker_number', [runId])).rows;
+  const tollRows = await tollRowsOfRun(runId);
   const wsT = wb.addWorksheet('Toll Challans');
-  head(wsT, ['Tanker', 'Toll Amount (₹)', 'Challan File', 'Remarks']);
-  tollRows.forEach(t => wsT.addRow([t.tanker_number, rN(t.amount), t.file_name || '—', t.remarks || '']));
-  wsT.addRow(['TOTAL', rN(tollRows.reduce((s, t) => s + (+t.amount || 0), 0)), '', '']).font = { bold: true };
+  head(wsT, ['Tanker', 'Period Covered', 'Toll Amount (₹)', 'Challan File', 'Remarks']);
+  tollRows.forEach(t => wsT.addRow([t.tanker_number, tollPeriodLabel(t, run), rN(t.amount), t.file_name || '—', t.remarks || '']));
+  wsT.addRow(['TOTAL', '', rN(tollRows.reduce((s, t) => s + (+t.amount || 0), 0)), '', '']).font = { bold: true };
+  const pendingTolls = await pendingTollTankers(runId);
+  if (pendingTolls.length) {
+    wsT.addRow([]);
+    wsT.addRow([`Toll challans pending for ${pendingTolls.length} tanker(s) — to be uploaded and paid in the next cycle: ${pendingTolls.join(', ')}`]).font = { italic: true };
+  }
 
   const wsD = wb.addWorksheet('Date Wise');
   head(wsD, ['Date', 'Trips', 'Tankers', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']);
@@ -839,7 +924,15 @@ function collectNewCombos(trips) {
   return combos;
 }
 
-function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = []) {
+// Label for the period a toll challan covers: the run's own fortnight, or
+// the earlier run it was carried from ("for run #15 · 01-09-2026 → 15-09-2026").
+function tollPeriodLabel(toll, run) {
+  return toll.for_run_id
+    ? `for run #${toll.for_run_id} · ${fmtDateDisplay(toll.for_from_date)} → ${fmtDateDisplay(toll.for_to_date)}`
+    : `${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}`;
+}
+
+function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = [], tollsPending = []) {
   const base = BASE_URL();
   // Both links land on the no-login frontend decision page, which shows the
   // run details and only fires the actual state-changing POST /decide when
@@ -873,6 +966,12 @@ function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = [
           c.google_km != null ? nf(c.google_km) : '—', esc(c.source)])).join('')}
         ${newCombos.length > 30 ? row([`… and ${newCombos.length - 30} more — see the attached report`, '', '', '', '', '', '']) : ''}
       </table>` : ''}
+      ${tollsPending.length ? `
+      <p style="font-size:13px;font-weight:700;margin:16px 0 6px;color:#b45309;">
+        Toll challans pending (to be paid in the next cycle) — ${tollsPending.length} tanker(s)</p>
+      <p style="font-size:12px;margin:0;">${tollsPending.map(esc).join(', ')}</p>
+      <p style="font-size:11px;color:#6b7280;margin:4px 0 0;">Trip payment for these tankers is included above; only the toll
+        reimbursement is carried forward and will be paid in the next fortnight once the challan is uploaded against this period.</p>` : ''}
       <div style="margin:22px 0;text-align:center;">
         <a href="${approveUrl}" style="background:#16a34a;color:#fff;padding:11px 30px;border-radius:8px;text-decoration:none;font-weight:700;margin-right:14px;">✓ APPROVE</a>
         <a href="${rejectUrl}"  style="background:#dc2626;color:#fff;padding:11px 30px;border-radius:8px;text-decoration:none;font-weight:700;">✗ REJECT</a>
@@ -893,7 +992,7 @@ async function sendApprovalEmail(runId, level) {
     from: process.env.SMTP_FROM,
     to: approver.email,
     subject: `Tanker Payment Approval L${level} — Run #${runId} (${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}) · ₹ ${nf(run.total_amount)}`,
-    html: approvalEmailHtml(run, tankers, vendors, approver, ap.rows[0].token, collectNewCombos(trips)),
+    html: approvalEmailHtml(run, tankers, vendors, approver, ap.rows[0].token, collectNewCombos(trips), await pendingTollTankers(runId)),
     attachments: [{ filename: `tanker_billing_${run.from_date}_${run.to_date}.xlsx`, content: buf }],
   });
   await query(`UPDATE billing_run_approvals SET status='pending' WHERE run_id=$1 AND level=$2`, [runId, level]);
@@ -927,8 +1026,13 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
       ? `No billable trips for the selected vendor(s) in this run.`
       : `No billable trips in this run — all ${allTrips.length} trip(s) are Sale Tanker / excluded. Nothing to push to vendors.`];
 
-  const tollRows = (await query('SELECT tanker_number, amount FROM billing_run_tolls WHERE run_id=$1', [runId])).rows;
-  const tollBy = new Map(tollRows.map(r => [r.tanker_number, parseFloat(r.amount) || 0]));
+  // Per tanker: own-period challan plus any earlier period's challan paid here.
+  const tollRows = await tollRowsOfRun(runId);
+  const tollBy = new Map();
+  for (const r of tollRows) {
+    if (!tollBy.has(r.tanker_number)) tollBy.set(r.tanker_number, []);
+    tollBy.get(r.tanker_number).push({ amount: parseFloat(r.amount) || 0, period: tollPeriodLabel(r, run) });
+  }
 
   // BMCU pickup sequence per trip (code + name, in order) for the tanker card.
   const bmcuByExec = {};
@@ -958,7 +1062,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
   for (const [key, v] of byVendor) {
     const tripTotal = v.trips.reduce((s, t) => s + (t.excluded ? 0 : (parseFloat(t.amount) || 0)), 0);
     const vendorTankers = [...new Set(v.trips.map(t => t.tanker_number))];
-    const vendorTolls = vendorTankers.filter(tn => tollBy.has(tn)).map(tn => ({ tanker: tn, amount: tollBy.get(tn) }));
+    const vendorTolls = vendorTankers.flatMap(tn => (tollBy.get(tn) || []).map(x => ({ tanker: tn, ...x })));
     const tollTotal = vendorTolls.reduce((s, t) => s + t.amount, 0);
     const total = tripTotal + tollTotal;
     if (!v.email) {
@@ -1003,7 +1107,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
     ws.addRow(['TRIPS TOTAL', '', '', '', '', '', '', '',
       rN(v.trips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '', rN(tripTotal), '']).font = { bold: true };
     vendorTolls.forEach(t =>
-      ws.addRow(['TOLL CHALLAN', t.tanker, '', '', '', '', '', '', '', '', rN(t.amount), '']));
+      ws.addRow(['TOLL CHALLAN', t.tanker, '', '', '', '', '', '', '', '', rN(t.amount), t.period]));
     ws.addRow(['TOTAL PAYABLE', '', '', '', '', '', '', '', '', '', rN(total), '']).font = { bold: true };
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
 
@@ -1121,45 +1225,17 @@ router.post('/runs/:id/submit', authenticate, authorizeOrModule('billing', ...ca
     if (noVendor.length > 0)
       return res.status(400).json({ error: `No vendor mapped for tanker(s): ${noVendor.join(', ')} — assign a vendor on the Vendor Wise tab before submitting` });
 
-    // Mandatory toll: every tanker with non-excluded trips must have a toll
-    // challan (amount + statement file). Tankers without one are pulled out
-    // of THIS run — their trips return to the unbilled pool and get carried
-    // forward automatically the next time a fortnight is executed.
-    const tankers = (await query(
-      `SELECT DISTINCT tanker_number FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE`, [runId])).rows
-      .map(r => r.tanker_number);
-    const validTolls = new Set((await query(
-      `SELECT tanker_number FROM billing_run_tolls
-       WHERE run_id=$1 AND amount > 0 AND file_data IS NOT NULL`, [runId])).rows.map(r => r.tanker_number));
-    const carried = tankers.filter(tn => !validTolls.has(tn));
-    let carriedTrips = 0;
-    // Dropping trips is destructive: it discards the biller's keyed km / state
-    // on every trip of those tankers (run #14, 2026-09-21 lost 592 trips this
-    // way). So it only happens when the biller has seen the list and confirmed.
-    if (carried.length && req.body?.confirm_carry_forward !== true) {
-      const n = (await query(
-        `SELECT COUNT(*)::int AS n FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE AND tanker_number = ANY($2)`,
-        [runId, carried])).rows[0].n;
-      return res.status(409).json({
-        error: `${carried.length} tanker(s) have no toll challan (${n} trip(s)). Upload their challans on the Toll Challans tab, or confirm to carry those trips forward to the next fortnight.`,
-        code: 'TOLLS_MISSING', tankers: carried, trips: n,
-      });
-    }
-    if (carried.length) {
-      const del = await query(
-        `DELETE FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE AND tanker_number = ANY($2) RETURNING id`,
-        [runId, carried]);
-      carriedTrips = del.rows.length;
-    }
-
+    // Toll challans are NOT a submit blocker (owner, 2026-09-29): a missing
+    // challan never removes a tanker's trips — trip payment always goes
+    // through and only the toll carries forward, to be uploaded against this
+    // period in the next cycle (billing_run_tolls.for_run_id, migration 046)
+    // and paid there. Submit never deletes billing_run_trips.
+    const tollsPending = await pendingTollTankers(runId);
     const remaining = (await query(
       `SELECT COUNT(*)::int AS n FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE`, [runId])).rows[0].n;
+    if (remaining === 0)
+      return res.status(400).json({ error: 'No billable trips in this run — nothing to submit' });
     await refreshRunTotal(runId);
-    if (remaining === 0) {
-      await query(`UPDATE billing_runs SET status='draft', updated_at=NOW() WHERE id=$1`, [runId]);
-      return res.json({ ok: true, status: 'draft', carried_forward: carried, carried_trips: carriedTrips,
-        message: 'Every tanker in this run is missing its toll challan — nothing was submitted. All trips remain unbilled and will be carried forward the next time you execute a fortnight.' });
-    }
 
     // (Re)create the approval chain with fresh tokens — resubmission restarts from L1
     await query('DELETE FROM billing_run_approvals WHERE run_id=$1', [runId]);
@@ -1171,11 +1247,40 @@ router.post('/runs/:id/submit', authenticate, authorizeOrModule('billing', ...ca
     }
     await query(`UPDATE billing_runs SET status='pending_l1', submitted_at=NOW(), updated_at=NOW() WHERE id=$1`, [runId]);
     await sendApprovalEmail(runId, 1);
-    res.json({ ok: true, status: 'pending_l1', carried_forward: carried, carried_trips: carriedTrips });
+    res.json({ ok: true, status: 'pending_l1', tolls_pending: tollsPending });
   } catch (err) {
     console.error('Billing submit error:', err);
     res.status(500).json({ error: 'Failed to submit for approval' });
   }
+});
+
+// ── POST /api/billing/runs/:id/withdraw — take a run back from L1 ───────────
+// Only while the L1 approver has not decided (no approval row decided). The
+// run returns to draft so lines / tolls can be edited (e.g. re-add lost
+// trips); the approval tokens are deleted, so the L1 email links die.
+// Resubmit recreates the chain from L1 as usual.
+router.post('/runs/:id/withdraw', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const runId = req.params.id;
+    const run = (await client.query('SELECT * FROM billing_runs WHERE id=$1', [runId])).rows[0];
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (run.status !== 'pending_l1')
+      return res.status(400).json({ error: 'Only a run awaiting Level 1 approval can be withdrawn' });
+    const decided = (await client.query(
+      `SELECT COUNT(*)::int AS n FROM billing_run_approvals WHERE run_id=$1 AND decided_at IS NOT NULL`, [runId])).rows[0].n;
+    if (decided > 0)
+      return res.status(400).json({ error: 'An approver has already decided on this run — it cannot be withdrawn' });
+    await client.query('BEGIN');
+    await client.query('DELETE FROM billing_run_approvals WHERE run_id=$1', [runId]);
+    await client.query(`UPDATE billing_runs SET status='draft', submitted_at=NULL, updated_at=NOW() WHERE id=$1`, [runId]);
+    await client.query('COMMIT');
+    res.json({ ok: true, status: 'draft' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Billing withdraw error:', err);
+    res.status(500).json({ error: 'Failed to withdraw the run' });
+  } finally { client.release(); }
 });
 
 // ── Decision core (shared by one-click link and remarks page) ────────────────
