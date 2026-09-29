@@ -561,9 +561,10 @@ async function assertEditableRun(runId, res) {
 // for_run_id (its own cycle) OR a row anywhere with for_run_id = that run
 // (uploaded and paid in a later cycle, migration 046). A challan counts only
 // with an amount > 0 and a file attached.
+// A "No toll" row (not_applicable, migration 048) also satisfies it.
 const TOLL_FOR_RUN_SQL = `
   SELECT tanker_number FROM billing_run_tolls
-  WHERE amount > 0 AND file_data IS NOT NULL
+  WHERE ((amount > 0 AND file_data IS NOT NULL) OR not_applicable = TRUE)
     AND ((run_id = $1 AND for_run_id IS NULL) OR for_run_id = $1)`;
 
 // Tankers with billable (non-excluded, non-sale) trips in runId that still
@@ -595,7 +596,7 @@ async function pendingEarlierTolls(run) {
       AND br.from_date >= $2::date - INTERVAL '90 days'
       AND NOT EXISTS (
         SELECT 1 FROM billing_run_tolls x
-        WHERE x.tanker_number = t.tanker_number AND x.amount > 0 AND x.file_data IS NOT NULL
+        WHERE x.tanker_number = t.tanker_number AND ((x.amount > 0 AND x.file_data IS NOT NULL) OR x.not_applicable = TRUE)
           AND ((x.run_id = br.id AND x.for_run_id IS NULL) OR x.for_run_id = br.id))
     GROUP BY t.tanker_number, br.id, br.from_date, br.to_date
     ORDER BY br.from_date, t.tanker_number`, [run.id, run.from_date]);
@@ -615,7 +616,7 @@ router.get('/runs/:id/tolls', authenticate, authorizeOrModule('billing', ...canB
 async function tollRowsOfRun(runId) {
   return (await query(`
     SELECT x.id, x.tanker_number, x.amount, x.remarks, x.file_name, (x.file_data IS NOT NULL) AS has_file,
-           x.for_run_id, fr.from_date::text AS for_from_date, fr.to_date::text AS for_to_date
+           x.not_applicable, x.for_run_id, fr.from_date::text AS for_from_date, fr.to_date::text AS for_to_date
     FROM billing_run_tolls x LEFT JOIN billing_runs fr ON fr.id = x.for_run_id
     WHERE x.run_id = $1 ORDER BY x.tanker_number, x.for_run_id NULLS FIRST`, [runId])).rows;
 }
@@ -711,6 +712,35 @@ router.post('/runs/:id/fastag', authenticate, authorizeOrModule('billing', ...ca
   } catch (err) {
     console.error('FASTag statement parse error:', err);
     res.status(500).json({ error: 'Failed to parse the FASTag statement' });
+  }
+});
+
+// Mark a tanker-period as "No toll" (route has no toll plazas): a row with
+// amount 0, no file, not_applicable = TRUE. Counts as satisfied everywhere a
+// challan would; delete the row to undo. Optional for_run_id = earlier period.
+router.post('/runs/:id/tolls/not-applicable', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
+  try {
+    if (!(await assertEditableRun(req.params.id, res))) return;
+    const runId = parseInt(req.params.id, 10);
+    const tn = String(req.body?.tanker_number || '').trim();
+    const forRunId = req.body?.for_run_id ? parseInt(req.body.for_run_id, 10) : null;
+    const remarks = String(req.body?.remarks || '').trim() || 'No toll on this route';
+    if (!tn) return res.status(400).json({ error: 'tanker_number required' });
+    const inRun = forRunId
+      ? (await query('SELECT 1 FROM billing_run_trips WHERE run_id=$1 AND tanker_number=$2 AND excluded=FALSE LIMIT 1', [forRunId, tn])).rows.length
+      : (await query('SELECT 1 FROM billing_run_trips WHERE run_id=$1 AND tanker_number=$2 AND excluded=FALSE LIMIT 1', [runId, tn])).rows.length;
+    if (!inRun) return res.status(400).json({ error: `${tn} has no billable trips in run #${forRunId || runId}` });
+    await query(`
+      INSERT INTO billing_run_tolls (run_id, tanker_number, amount, remarks, for_run_id, not_applicable)
+      VALUES ($1, $2, 0, $3, $4, TRUE)
+      ON CONFLICT (run_id, tanker_number, COALESCE(for_run_id, 0))
+      DO UPDATE SET amount = 0, file_name = NULL, file_mime = NULL, file_data = NULL, remarks = EXCLUDED.remarks, not_applicable = TRUE`,
+      [runId, tn, remarks, forRunId]);
+    await refreshRunTotal(runId);
+    res.json({ ok: true, tanker_number: tn, for_run_id: forRunId, not_applicable: true });
+  } catch (err) {
+    console.error('Billing toll not-applicable error:', err);
+    res.status(500).json({ error: 'Failed to mark toll as not applicable' });
   }
 });
 

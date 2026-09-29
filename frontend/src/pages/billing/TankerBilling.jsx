@@ -627,6 +627,15 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
       .then(() => { toast.success(`Toll challan saved for ${tn}${forRunId ? ` (run #${forRunId})` : ''}`); setForm(p => ({ ...p, [key]: undefined })); refresh(); })
       .catch(e => toast.error(e.response?.data?.error || e.message));
   };
+  // "No toll" — route without toll plazas: satisfies the challan requirement
+  // for this tanker-period so it is never listed as pending or carried forward.
+  const markNoToll = (tn, forRunId = null) => {
+    if (!window.confirm(`Mark ${tn}${forRunId ? ` (run #${forRunId})` : ''} as "No toll" for this period? It will not be carried forward.`)) return;
+    api.post(`/billing/runs/${runId}/tolls/not-applicable`, { tanker_number: tn, for_run_id: forRunId || undefined,
+      remarks: (form[forRunId ? `${tn}|${forRunId}` : tn]?.remarks) || '' })
+      .then(() => { toast.success(`${tn}: no toll for this period`); refresh(); })
+      .catch(e => toast.error(e.response?.data?.error || e.message));
+  };
   const del = (tn, ex = byTanker.get(tn)) => {
     if (!ex) return;
     window.confirm(`Remove the toll challan for ${tn}${ex.for_run_id ? ` (run #${ex.for_run_id})` : ''}?`) &&
@@ -698,16 +707,19 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
                     : nf(ex?.amount)}
                 </td>
                 <td className="px-3 py-1.5">
+                  {ex?.not_applicable && (
+                    <span className="mr-2 px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 text-[10px] font-semibold" title="No toll on this route for this period">NO TOLL</span>
+                  )}
                   {ex?.has_file && (
                     <button className="text-[#005ba3] underline mr-2" onClick={() => download(ex)}>
                       {ex.file_name || 'challan'}
                     </button>
                   )}
-                  {editable && (
+                  {editable && !ex?.not_applicable && (
                     <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="text-[11px]"
                            onChange={e => setF(t.tanker_number, 'file', e.target.files[0])}/>
                   )}
-                  {!ex?.has_file && !editable && '—'}
+                  {!ex?.has_file && !ex?.not_applicable && !editable && '—'}
                 </td>
                 <td className="px-3 py-1.5">
                   {editable
@@ -718,9 +730,16 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
                 </td>
                 <td className="px-3 py-1.5 whitespace-nowrap">
                   {editable && (<>
-                    <button className="btn-secondary text-[11px] px-2 py-0.5 mr-1" onClick={() => save(t.tanker_number)}>
-                      {ex ? 'Update' : 'Save'}
-                    </button>
+                    {!ex?.not_applicable && (
+                      <button className="btn-secondary text-[11px] px-2 py-0.5 mr-1" onClick={() => save(t.tanker_number)}>
+                        {ex ? 'Update' : 'Save'}
+                      </button>
+                    )}
+                    {!ex && (
+                      <button className="text-[11px] px-2 py-0.5 mr-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100"
+                              title="No toll plazas on this tanker's routes this period — do not carry forward"
+                              onClick={() => markNoToll(t.tanker_number)}>No toll</button>
+                    )}
                     {ex && (
                       <button className="p-1 text-gray-400 hover:text-red-600" title="Remove challan"
                               onClick={() => del(t.tanker_number)}>
@@ -739,8 +758,9 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
                 <span className="ml-1 px-1 rounded bg-amber-500 text-white text-[10px]" title="Challan for an earlier period, paid in this run">{periodLabel(ex)}</span></td>
               <td className="px-3 py-1.5">{tankers.find(t => t.tanker_number === ex.tanker_number)?.vendor_name || '—'}</td>
               <td className="px-3 py-1.5 text-right">{nf(ex.amount)}</td>
-              <td className="px-3 py-1.5">{ex.has_file
-                ? <button className="text-[#005ba3] underline" onClick={() => download(ex)}>{ex.file_name || 'challan'}</button> : '—'}</td>
+              <td className="px-3 py-1.5">{ex.not_applicable
+                ? <span className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 text-[10px] font-semibold">NO TOLL</span>
+                : ex.has_file ? <button className="text-[#005ba3] underline" onClick={() => download(ex)}>{ex.file_name || 'challan'}</button> : '—'}</td>
               <td className="px-3 py-1.5">{ex.remarks || '—'}</td>
               <td className="px-3 py-1.5 whitespace-nowrap">
                 {editable && (
@@ -796,6 +816,9 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       {editable && (
                         <button className="btn-secondary text-[11px] px-2 py-0.5" onClick={() => save(p.tanker_number, p.run_id)}>Save</button>
+                        <button className="text-[11px] px-2 py-0.5 ml-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100"
+                                title="No toll for that period — clear it without a challan"
+                                onClick={() => markNoToll(p.tanker_number, p.run_id)}>No toll</button>
                       )}
                     </td>
                   </tr>
