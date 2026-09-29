@@ -814,12 +814,12 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
                         : '—'}
                     </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
-                      {editable && (
+                      {editable && (<>
                         <button className="btn-secondary text-[11px] px-2 py-0.5" onClick={() => save(p.tanker_number, p.run_id)}>Save</button>
                         <button className="text-[11px] px-2 py-0.5 ml-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100"
                                 title="No toll for that period — clear it without a challan"
                                 onClick={() => markNoToll(p.tanker_number, p.run_id)}>No toll</button>
-                      )}
+                      </>)}
                     </td>
                   </tr>
                 );
