@@ -344,7 +344,7 @@ export default function TankerBilling() {
             <RotateCcw size={13}/> {readdMut.isPending ? 'Re-adding…' : `Re-add unbilled trips of this period (${readdPreview.missing})`}
           </button>
         )}
-        {canEdit && run.status === 'pending_l1' && !(run.approvals || []).some(a => a.decided_at) && (
+        {canEdit && run?.status === 'pending_l1' && !(run?.approvals || []).some(a => a.decided_at) && (
           <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={withdrawMut.isPending}
             title="Take the run back from Level 1 before the approver decides — it returns to Draft, the approval email links become void, and you can edit and resubmit"
             onClick={() => window.confirm('Withdraw this run from approval? It returns to Draft and the Level 1 approval links stop working. You can edit and resubmit.') && withdrawMut.mutate()}>
