@@ -144,9 +144,9 @@ export default function TankerBilling() {
     enabled: !!openRunId && canEdit && ['draft', 'rejected', 'pending_vendor'].includes(run?.status),
   });
   const readdMut = useMutation({
-    mutationFn: () => api.post(`/billing/runs/${openRunId}/readd-trips`),
+    mutationFn: (includeLate) => api.post(`/billing/runs/${openRunId}/readd-trips`, { include_late_acks: !!includeLate }),
     onSuccess: r => {
-      toast.success(`${r.data.added} trip(s) re-added across ${r.data.tankers.length} tanker(s) — key their state / km as usual`, { duration: 10000 });
+      toast.success(`${r.data.added} trip(s) re-added across ${r.data.tankers.length} tanker(s)${r.data.late_added ? `, ${r.data.late_added} acknowledged after the cutoff` : ''} — key their state / km as usual`, { duration: 10000 });
       qc.invalidateQueries(['billing-run', openRunId]);
       qc.invalidateQueries(['billing-summary']);
       qc.invalidateQueries(['billing-runs']);
@@ -341,8 +341,15 @@ export default function TankerBilling() {
         {editable && readdPreview?.missing > 0 && (
           <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={readdMut.isPending}
             title={`${readdPreview.missing} acknowledged trip(s) of this period are in no billing run (tankers: ${readdPreview.tankers.join(', ')}). Re-add them to this run exactly as Execute would; existing lines are untouched.`}
-            onClick={() => window.confirm(`Re-add ${readdPreview.missing} unbilled trip(s) of ${fmtDate(run.from_date)} → ${fmtDate(run.to_date)} to this run?\n\nTankers: ${readdPreview.tankers.join(', ')}\n\nExisting lines keep their keyed values; the re-added lines need state / km keyed again.`) && readdMut.mutate()}>
+            onClick={() => window.confirm(`Re-add ${readdPreview.missing} unbilled trip(s) of ${fmtDate(run.from_date)} → ${fmtDate(run.to_date)} to this run?\n\nTankers: ${readdPreview.tankers.join(', ')}\n\nExisting lines keep their keyed values; the re-added lines need state / km keyed again.`) && readdMut.mutate(false)}>
             <RotateCcw size={13}/> {readdMut.isPending ? 'Re-adding…' : `Re-add unbilled trips of this period (${readdPreview.missing})`}
+          </button>
+        )}
+        {editable && readdPreview?.late_missing > 0 && (
+          <button className="btn-secondary text-xs flex items-center gap-1.5 border-amber-300 text-amber-800" disabled={readdMut.isPending}
+            title={`${readdPreview.late_missing} trip(s) of this period were acknowledged AFTER the fortnight cutoff (23:59:59 on ${fmtDate(run.to_date)}) and would normally carry forward to the next run. Tankers: ${readdPreview.late_tankers.join(', ')}. Adding them here is a biller override; each line is marked "Acknowledged after cutoff".`}
+            onClick={() => window.confirm(`Include ${readdPreview.late_missing} trip(s) acknowledged after the cutoff of ${fmtDate(run.to_date)} in this run?\n\nTankers: ${readdPreview.late_tankers.join(', ')}\n\nThey would otherwise carry forward to the next fortnight. Each line will carry the remark "Acknowledged after cutoff".${readdPreview.missing ? `\n\nThe ${readdPreview.missing} regular unbilled trip(s) are added as well.` : ''}`) && readdMut.mutate(true)}>
+            <RotateCcw size={13}/> {readdMut.isPending ? 'Re-adding…' : `Include late acknowledgements (${readdPreview.late_missing})`}
           </button>
         )}
         {canEdit && run?.status === 'pending_l1' && !(run?.approvals || []).some(a => a.decided_at) && (

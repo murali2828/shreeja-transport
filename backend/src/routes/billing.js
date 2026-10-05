@@ -151,11 +151,20 @@ function recomputeAmount(trip) {
 // NOT EXISTS on billing_run_trips means the same query also yields exactly
 // the trips a run LOST (e.g. dropped by the pre-2026-09-29 Submit) when it
 // is re-run for that run's period — that is what Re-add relies on.
-async function selectEligibleTrips(client, from_date, to_date) {
+//
+// opts.includeLateAcks (biller override, owner decision 2026-10-05): also
+// return trips of the period acknowledged AFTER the cutoff (they would
+// otherwise carry forward whole into the next fortnight). Each such row comes
+// back with late_ack = true and late_ack_at so the billing line can say so.
+async function selectEligibleTrips(client, from_date, to_date, opts = {}) {
+  const includeLate = !!opts.includeLateAcks;
   const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
   const trips = await client.query(`
       SELECT te.id AS execution_id, tp.plan_for_date::text AS plan_for_date,
              (tp.plan_for_date + ($5::int) < $1::date) AS carried_forward,
+             EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id AND ta.created_at > $3::timestamp) AS late_ack,
+             (SELECT to_char(MAX(ta.created_at) AT TIME ZONE 'Asia/Kolkata', 'DD-MM-YYYY HH24:MI')
+                FROM trip_acknowledgements ta WHERE ta.execution_id = te.id) AS late_ack_at,
              t.tanker_number, t.capacity_litres, t.vendor_id,
              COALESCE(v.vendor_name, t.vendor_name) AS vendor_name,
              rm.route_name, sp.name AS start_point, dp.name AS delivery_point,
@@ -204,12 +213,12 @@ async function selectEligibleTrips(client, from_date, to_date) {
           -- for the second fortnight) — a trip with even one ack row entered
           -- after the cutoff carries forward whole to the next cycle.
           (EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
-           AND NOT EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id AND ta.created_at > $3::timestamp))
+           AND ($6::boolean OR NOT EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id AND ta.created_at > $3::timestamp)))
           OR t.tanker_number ILIKE 'SALE%'
         )
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
       ORDER BY tp.plan_for_date, t.tanker_number`,
-      [from_date, to_date, `${to_date} 23:59:59`, process.env.BILLING_CARRY_FORWARD_FLOOR || null, offsetDays]);
+      [from_date, to_date, `${to_date} 23:59:59`, process.env.BILLING_CARRY_FORWARD_FLOOR || null, offsetDays, includeLate]);
   return trips.rows;
 }
 
@@ -239,14 +248,15 @@ async function insertRunTrips(client, runId, trips, userId) {
          vendor_id, vendor_name, route_name, start_point, delivery_point,
          bmcu_count, ack_litres, ack_kgs, ack_fat_pct, ack_snf_pct, transport_type,
          system_km, google_km, master_km, estimated_km, billed_km, legs,
-         is_sale_tanker, excluded, carried_forward)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
+         is_sale_tanker, excluded, carried_forward, remarks)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
       [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
        tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
        tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), rN(tr.ack_fat_pct, 3), rN(tr.ack_snf_pct, 3), transportType,
        rN(dist.total_km), googleRefKm, sumBy('master'), sumBy('estimated'),
        rN(dist.total_km), JSON.stringify(dist.legs),
-       !!tr.is_sale_tanker, !!tr.is_sale_tanker, !!tr.carried_forward]);
+       !!tr.is_sale_tanker, !!tr.is_sale_tanker, !!tr.carried_forward,
+       tr.late_ack && !tr.is_sale_tanker ? `Acknowledged after cutoff (${tr.late_ack_at}) — added by biller` : null]);
   }
   return newCombos;
 }
@@ -301,7 +311,12 @@ router.get('/runs/:id/readd-preview', authenticate, authorizeOrModule('billing',
     const run = (await client.query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [req.params.id])).rows[0];
     if (!run) return res.status(404).json({ error: 'Run not found' });
     const trips = await selectEligibleTrips(client, run.from_date, run.to_date);
-    res.json({ missing: trips.length, tankers: [...new Set(trips.map(t => t.tanker_number))].sort() });
+    // Late-acknowledged trips of the same period, offered separately so the
+    // biller opts in to them explicitly (owner decision 2026-10-05).
+    const withLate = await selectEligibleTrips(client, run.from_date, run.to_date, { includeLateAcks: true });
+    const late = withLate.filter(t => t.late_ack && !t.is_sale_tanker);
+    res.json({ missing: trips.length, tankers: [...new Set(trips.map(t => t.tanker_number))].sort(),
+               late_missing: late.length, late_tankers: [...new Set(late.map(t => t.tanker_number))].sort() });
   } catch (err) {
     console.error('Billing readd-preview error:', err);
     res.status(500).json({ error: 'Failed to check unbilled trips' });
@@ -316,12 +331,15 @@ router.post('/runs/:id/readd-trips', authenticate, authorizeOrModule('billing', 
     if (!run) return res.status(404).json({ error: 'Run not found' });
     if (!EDITABLE.includes(run.status))
       return res.status(400).json({ error: 'Trips can only be re-added to a draft / rejected run — withdraw it from approval first' });
+    const includeLateAcks = req.body?.include_late_acks === true;
     await client.query('BEGIN');
-    const trips = await selectEligibleTrips(client, run.from_date, run.to_date);
+    const trips = await selectEligibleTrips(client, run.from_date, run.to_date, { includeLateAcks });
     const newCombos = await insertRunTrips(client, runId, trips, req.user.id);
     await client.query('COMMIT');
     await refreshRunTotal(runId);
-    res.json({ added: trips.length, tankers: [...new Set(trips.map(t => t.tanker_number))].sort(), new_combinations: newCombos });
+    const late = trips.filter(t => t.late_ack && !t.is_sale_tanker).length;
+    if (late) console.log(`[billing] run ${runId}: ${late} late-acknowledged trip(s) added by ${req.user.user_id || req.user.id}`);
+    res.json({ added: trips.length, late_added: late, tankers: [...new Set(trips.map(t => t.tanker_number))].sort(), new_combinations: newCombos });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Billing readd-trips error:', err);
