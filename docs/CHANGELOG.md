@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- Billing: acknowledgement cutoff moved from 23:59:59 of the period's last day to 06:00 on the following morning (16th / 1st), configurable as `BILLING_ACK_CUTOFF_TIME`; night deliveries of the last day acknowledged before 06:00 now bill in their own fortnight (owner, 2026-10-05).
+
 ### Added
 - Billing: "Include late acknowledgements (N)" on a draft / rejected run — Re-add with `include_late_acks` also pulls the period's trips acknowledged after the fortnight cutoff (they would otherwise carry forward); `GET /runs/:id/readd-preview` returns `late_missing` / `late_tankers`; each added line is remarked "Acknowledged after cutoff (time)". Execute is unchanged (ADR-011 override, owner decision 2026-10-05).
 - History load: `backend/scripts/import_history.js` loads closed, acknowledged trips from the logistics team's FY workbook (TRIPS / TRIP_BMCUS / ACKNOWLEDGEMENTS / NAME_MAP), dry run by default, one transaction per trip, existing trips skipped; RUNBOOK section (2026-10-05).

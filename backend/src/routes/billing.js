@@ -156,6 +156,17 @@ function recomputeAmount(trip) {
 // return trips of the period acknowledged AFTER the cutoff (they would
 // otherwise carry forward whole into the next fortnight). Each such row comes
 // back with late_ack = true and late_ack_at so the billing line can say so.
+// Acknowledgement cutoff for a fortnight ending on to_date: BILLING_ACK_CUTOFF_TIME
+// (HH:MM, default 06:00) on the morning AFTER the period end, i.e. 06:00 on the
+// 16th / 1st (owner, 2026-10-05; was 23:59:59 of the last day). Night deliveries
+// of the last day are acknowledged in the small hours and belong to the period.
+function ackCutoffFor(to_date) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec((process.env.BILLING_ACK_CUTOFF_TIME || '06:00').trim());
+  const hh = m ? String(Math.min(23, +m[1])).padStart(2, '0') : '06', mm = m ? m[2] : '00';
+  const d = new Date(`${to_date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1);
+  return `${d.toISOString().slice(0, 10)} ${hh}:${mm}:00`;
+}
+
 async function selectEligibleTrips(client, from_date, to_date, opts = {}) {
   const includeLate = !!opts.includeLateAcks;
   const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
@@ -209,16 +220,16 @@ async function selectEligibleTrips(client, from_date, to_date, opts = {}) {
         AND tp.status NOT IN ('cancelled','deleted')
         AND (
           -- Acknowledgement entry must be fully complete by the fortnight
-          -- cutoff (23:59:59 on the 15th, or on the last day of the month
-          -- for the second fortnight) — a trip with even one ack row entered
-          -- after the cutoff carries forward whole to the next cycle.
+          -- cutoff (ackCutoffFor: 06:00 on the morning after the period end)
+          -- — a trip with even one ack row entered after the cutoff carries
+          -- forward whole to the next cycle (unless the biller includes it).
           (EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
            AND ($6::boolean OR NOT EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id AND ta.created_at > $3::timestamp)))
           OR t.tanker_number ILIKE 'SALE%'
         )
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
       ORDER BY tp.plan_for_date, t.tanker_number`,
-      [from_date, to_date, `${to_date} 23:59:59`, process.env.BILLING_CARRY_FORWARD_FLOOR || null, offsetDays, includeLate]);
+      [from_date, to_date, ackCutoffFor(to_date), process.env.BILLING_CARRY_FORWARD_FLOOR || null, offsetDays, includeLate]);
   return trips.rows;
 }
 
@@ -316,7 +327,8 @@ router.get('/runs/:id/readd-preview', authenticate, authorizeOrModule('billing',
     const withLate = await selectEligibleTrips(client, run.from_date, run.to_date, { includeLateAcks: true });
     const late = withLate.filter(t => t.late_ack && !t.is_sale_tanker);
     res.json({ missing: trips.length, tankers: [...new Set(trips.map(t => t.tanker_number))].sort(),
-               late_missing: late.length, late_tankers: [...new Set(late.map(t => t.tanker_number))].sort() });
+               late_missing: late.length, late_tankers: [...new Set(late.map(t => t.tanker_number))].sort(),
+               ack_cutoff: ackCutoffFor(run.to_date) });
   } catch (err) {
     console.error('Billing readd-preview error:', err);
     res.status(500).json({ error: 'Failed to check unbilled trips' });

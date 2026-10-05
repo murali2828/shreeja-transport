@@ -38,7 +38,7 @@
 ## Must-not-break rules
 - Never edit an applied migration; add a new `NNN_name.sql` (next: 049); migrations run in a transaction each
 - `KG_FACTOR = 1.0285` (litres→kg) is shared with Assure — change only in lockstep, never silently
-- Billing is fortnightly (1–15 / 16–end); billing date = `plan_for_date + BILLING_DATE_OFFSET_DAYS`; ack cutoff 23:59:59; honour `BILLING_CARRY_FORWARD_FLOOR`
+- Billing is fortnightly (1–15 / 16–end); billing date = `plan_for_date + BILLING_DATE_OFFSET_DAYS`; ack cutoff `BILLING_ACK_CUTOFF_TIME` (default 06:00) on the morning after the period end; honour `BILLING_CARRY_FORWARD_FLOOR`
 - Sale tankers (`trip_plans.is_sale_tanker` OR tanker number `SALE%`, `utils/saleTanker.js`) stay out of vendor billing and utilisation
 - One live (non-cancelled) execution per plan (unique index, migration 043); closed trips change only via change requests
 - Trips already in a billing run are frozen; GET requests must never mutate approvals

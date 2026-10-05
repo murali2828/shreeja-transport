@@ -143,6 +143,8 @@ export default function TankerBilling() {
     queryFn: () => api.get(`/billing/runs/${openRunId}/readd-preview`).then(r => r.data),
     enabled: !!openRunId && canEdit && ['draft', 'rejected', 'pending_vendor'].includes(run?.status),
   });
+  // 'YYYY-MM-DD HH:MM:SS' from the API → 'DD-MM-YYYY HH:MM' for the dialogs
+  const fmtCutoff = c => c ? `${fmtDate(c.slice(0, 10))} ${c.slice(11, 16)}` : '';
   const readdMut = useMutation({
     mutationFn: (includeLate) => api.post(`/billing/runs/${openRunId}/readd-trips`, { include_late_acks: !!includeLate }),
     onSuccess: r => {
@@ -347,8 +349,8 @@ export default function TankerBilling() {
         )}
         {editable && readdPreview?.late_missing > 0 && (
           <button className="btn-secondary text-xs flex items-center gap-1.5 border-amber-300 text-amber-800" disabled={readdMut.isPending}
-            title={`${readdPreview.late_missing} trip(s) of this period were acknowledged AFTER the fortnight cutoff (23:59:59 on ${fmtDate(run.to_date)}) and would normally carry forward to the next run. Tankers: ${readdPreview.late_tankers.join(', ')}. Adding them here is a biller override; each line is marked "Acknowledged after cutoff".`}
-            onClick={() => window.confirm(`Include ${readdPreview.late_missing} trip(s) acknowledged after the cutoff of ${fmtDate(run.to_date)} in this run?\n\nTankers: ${readdPreview.late_tankers.join(', ')}\n\nThey would otherwise carry forward to the next fortnight. Each line will carry the remark "Acknowledged after cutoff".${readdPreview.missing ? `\n\nThe ${readdPreview.missing} regular unbilled trip(s) are added as well.` : ''}`) && readdMut.mutate(true)}>
+            title={`${readdPreview.late_missing} trip(s) of this period were acknowledged AFTER the fortnight cutoff (${fmtCutoff(readdPreview.ack_cutoff)}) and would normally carry forward to the next run. Tankers: ${readdPreview.late_tankers.join(', ')}. Adding them here is a biller override; each line is marked "Acknowledged after cutoff".`}
+            onClick={() => window.confirm(`Include ${readdPreview.late_missing} trip(s) acknowledged after the cutoff (${fmtCutoff(readdPreview.ack_cutoff)}) in this run?\n\nTankers: ${readdPreview.late_tankers.join(', ')}\n\nThey would otherwise carry forward to the next fortnight. Each line will carry the remark "Acknowledged after cutoff".${readdPreview.missing ? `\n\nThe ${readdPreview.missing} regular unbilled trip(s) are added as well.` : ''}`) && readdMut.mutate(true)}>
             <RotateCcw size={13}/> {readdMut.isPending ? 'Re-adding…' : `Include late acknowledgements (${readdPreview.late_missing})`}
           </button>
         )}
