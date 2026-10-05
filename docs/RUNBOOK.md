@@ -138,6 +138,36 @@ lines back on the same run:
    still without a challan are listed as "Toll challans pending" (response, L1 mail); their
    toll is uploaded in the next cycle under Toll Challans → **Pending from earlier cycles**.
 
+## Load FY history from the logistics team's workbook
+
+Trips before the portal went live (April to August 2026) are loaded from the
+filled "TMS_History_Load_Template_FY2026-27.xlsx" (sheets TRIPS, TRIP_BMCUS,
+ACKNOWLEDGEMENTS, NAME_MAP; rules on its README sheet) with
+`backend/scripts/import_history.js`. Always on QA first.
+
+```bash
+docker cp history.xlsx shreeja-qa-backend:/tmp/history.xlsx
+docker exec -i shreeja-qa-backend node scripts/import_history.js /tmp/history.xlsx            # dry run, writes /tmp/history_result.csv
+docker exec -i shreeja-qa-backend node scripts/import_history.js /tmp/history.xlsx --apply    # load
+docker cp shreeja-qa-backend:/tmp/history_result.csv .                                        # per-trip outcome
+```
+
+- Dry run validates every row (masters, dates, BMCU litres within 1 % of the trip,
+  chambers) and writes the report without touching the DB; fix the workbook or add
+  the missing master rows and re-run until the rejected count is acceptable.
+- `--apply` loads one trip per transaction: plan (published) → execution (closed,
+  points confirmed) → BMCU rows, RMRD shift rows, acknowledgements, gate pass / COA
+  print records, all through `applyExecutionData`. A tanker that already has a live
+  execution on that lifting date is skipped, never overwritten, so re-running after a
+  partial load is safe. Rows are owned by the inactive login `history-load`.
+- `--from` / `--to` restrict the lifting-date window (one month at a time is sensible).
+- Distance Master pairs missing for old routes are fetched from Google during the load;
+  to avoid that cost run with `-e GOOGLE_MAPS_API_KEY=` on the `docker exec` and use
+  Recalc Distances on the billing runs later.
+- After the load: delete the partial draft billing runs of those months, add the
+  historic rates to the Tanker Rate Master (RATES sheet of the workbook), execute the
+  fortnights again.
+
 ## Routine tasks
 
 - New user / role: Masters → Users / Roles (admin). Custom roles get module permissions.

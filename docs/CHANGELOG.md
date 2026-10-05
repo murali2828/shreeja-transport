@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Added
+- History load: `backend/scripts/import_history.js` loads closed, acknowledged trips from the logistics team's FY workbook (TRIPS / TRIP_BMCUS / ACKNOWLEDGEMENTS / NAME_MAP), dry run by default, one transaction per trip, existing trips skipped; RUNBOOK section (2026-10-05).
+
 ### Changed
 - Billing: a missing toll challan never removes a tanker's trips from a run (owner rule, 2026-09-29). Submit keeps every line, returns `tolls_pending` and lists those tankers in the L1 mail; the toll is uploaded in a later run against the earlier period (`billing_run_tolls.for_run_id`, migration 046; unique key now per run × tanker × period) and paid in that run's total. Toll Challans tab shows "Pending from earlier cycles" and labels carried-in challans; vendor cards / Excel show the period each challan covers (2026-09-29).
 
