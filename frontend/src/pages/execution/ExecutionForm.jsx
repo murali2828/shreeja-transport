@@ -1,6 +1,6 @@
 // frontend/src/pages/execution/ExecutionForm.jsx
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Navigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ChevronLeft, Send, RefreshCw, XCircle, GripVertical, Navigation, AlertTriangle, ChevronDown, Printer } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -1098,6 +1098,8 @@ export default function ExecutionForm() {
 
   if (isLoading) return <div className="text-gray-400 p-8">Loading…</div>;
   if (!exec) return <div className="text-red-500 p-8">Execution not found</div>;
+  if (exec.trip_kind === 'material' && !new URLSearchParams(window.location.search).has('view'))
+    return <Navigate to={`/execution/${id}/material`} replace/>;
 
   const visibleRows = bmcuRows.filter(r => !r.is_deleted);
   // ALL rows count, including 'Balance Milk' ones — their dispatched qty is

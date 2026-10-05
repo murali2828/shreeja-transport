@@ -74,7 +74,7 @@ router.get('/', authenticate, async (req, res) => {
     let sql = `
       SELECT te.*,
         tp.trip_no, tp.expected_km, tp.expected_total_qty, tp.plan_for_date,
-        tp.shifts_milk, tp.driver_name, tp.loader_name,
+        tp.shifts_milk, tp.driver_name, tp.loader_name, tp.trip_kind,
         t.tanker_number, t.capacity_litres,
         ${saleTankerSql('tp', 't')} AS is_sale_tanker,
         sp.name AS start_point_name, dp.name AS delivery_point_name,
@@ -261,7 +261,7 @@ router.get('/:id', authenticate, async (req, res) => {
       SELECT te.*,
         tp.trip_no, tp.expected_km, tp.expected_total_qty, tp.plan_for_date,
         tp.shifts_milk, tp.driver_name, tp.loader_name,
-        tp.start_point_id, tp.delivery_point_id, tp.testing_point_id,
+        tp.start_point_id, tp.delivery_point_id, tp.testing_point_id, tp.trip_kind, tp.material_id,
         t.tanker_number, t.capacity_litres, t.compartments, t.per_km_rate,
         sp.name AS start_point_name, dp.name AS delivery_point_name,
         tpt.name AS testing_point_name, rm.route_name,
@@ -321,7 +321,20 @@ router.get('/:id', authenticate, async (req, res) => {
     // category NULL and are Chilled Milk by definition (see migration 040).
     const entryRows = entries.rows.map(e =>
       e.kind === 'internal_shifting' && !e.category ? { ...e, category: 'Chilled Milk' } : e);
-    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entryRows, third_party_sales: thirdPartySales.rows });
+    // Material trip (migration 049): supplier document, scans, manual km.
+    let material = null;
+    if (exec.rows[0].trip_kind === 'material') {
+      const m = await query(`
+        SELECT d.*, mt.sap_code AS material_sap_code, mt.name AS material_name, mt.unit AS material_unit
+        FROM trip_material_data d LEFT JOIN materials mt ON mt.id = d.material_id
+        WHERE d.execution_id = $1`, [req.params.id]);
+      material = m.rows[0] || null;
+      if (!material && exec.rows[0].material_id) {
+        const mt = await query('SELECT sap_code AS material_sap_code, name AS material_name, unit AS material_unit FROM materials WHERE id=$1', [exec.rows[0].material_id]);
+        material = { execution_id: exec.rows[0].id, material_id: exec.rows[0].material_id, ...(mt.rows[0] || {}) };
+      }
+    }
+    res.json({ ...exec.rows[0], bmcus: bmcus.rows, acknowledgements: acks.rows, shift_rows: shiftRows.rows, entries: entryRows, third_party_sales: thirdPartySales.rows, material });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

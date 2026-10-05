@@ -299,8 +299,9 @@ export default function TankerBilling() {
   const [label, color] = STATUS_LABEL[run?.status] || ['…', '#666'];
   const trips = run?.trips || [];
   const saleTrips = trips.filter(t => t.is_sale_tanker);
+  const materialTrips = trips.filter(t => !t.is_sale_tanker && t.trip_kind === 'material');
   const vendorFilterIds = new Set(vendorFilter.map(v => v.id));
-  const filteredTrips = trips.filter(t => !t.is_sale_tanker &&
+  const filteredTrips = trips.filter(t => !t.is_sale_tanker && t.trip_kind !== 'material' &&
     (!vendorFilterIds.size || vendorFilterIds.has(t.vendor_id)) &&
     (!searchRoute || (t.route_name || '').toLowerCase().includes(searchRoute.toLowerCase())) &&
     (!searchTanker || (t.tanker_number || '').toLowerCase().includes(searchTanker.toLowerCase())));
@@ -429,7 +430,7 @@ export default function TankerBilling() {
 
       {/* tabs */}
       <div className="flex gap-2 items-center flex-wrap">
-        {[['trips', 'Trip Wise'], ['vendors', 'Vendor Wise'], ['saleTankers', 'Sale Tankers'], ['tolls', 'Toll Challans']].map(([k, l]) => (
+        {[['trips', 'Trip Wise'], ['vendors', 'Vendor Wise'], ...(materialTrips.length ? [['material', `Material Trips (${materialTrips.length})`]] : []), ['saleTankers', 'Sale Tankers'], ['tolls', 'Toll Challans']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold"
             style={tab === k ? { background: '#cc785c', color: '#fff' } : { background: '#fff', color: '#57534e' }}>
@@ -489,6 +490,42 @@ export default function TankerBilling() {
                   <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
                   <td/>
                   <td className="px-2 py-2 text-right">{nf(filteredTrips.reduce((s, t) => s + (val(t,"excluded") ? 0 : (+t.amount || 0)), 0))}</td>
+                  <td/>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'material' && (
+        <div className="card overflow-hidden">
+          <div className="px-3 py-2 text-xs text-gray-600 bg-purple-50 border-b border-purple-100">
+            Pasteurised-milk / material trips: supplier → customer, no BMCU chain. Billed KM defaults to the km keyed by the executor; System / Google KM are the reference. Paid to the vendor like any other trip and listed in their own section of the vendor email and Excel.
+          </div>
+          <div className="overflow-x-auto max-h-[62vh]">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
+                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                     'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
+                     .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {materialTrips.map(t => (
+                  <FragmentRow key={t.id} t={t} editable={editable} expanded={!!expanded[t.id]}
+                    carried={!!t.carried_forward}
+                    onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
+                    val={val} setEdit={setEdit}
+                    legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}
+                    ratePreview={ratePreviews[t.id]} previewRate={previewRate} />
+                ))}
+                <tr className="bg-blue-100 font-bold">
+                  <td className="px-2 py-2" colSpan={12}>TOTAL — {materialTrips.length} material trip(s) ({materialTrips.filter(t => val(t,"excluded")).length} excluded)</td>
+                  <td className="px-2 py-2 text-right">{nf(materialTrips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(materialTrips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
+                  <td className="px-2 py-2 text-right">{nf(materialTrips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
+                  <td/>
+                  <td className="px-2 py-2 text-right">{nf(materialTrips.reduce((s, t) => s + (val(t,"excluded") ? 0 : (+t.amount || 0)), 0))}</td>
                   <td/>
                 </tr>
               </tbody>

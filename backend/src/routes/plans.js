@@ -184,11 +184,16 @@ router.post('/', authenticate, authorizeOrModule('planning', 'admin','planner'),
     plan_date, plan_for_date, trip_no, route_id, tanker_id,
     start_point_id, testing_point_id, delivery_point_id,
     shifts_milk, expected_km, expected_total_qty,
-    driver_name, loader_name, remarks, bmcus, is_sale_tanker
+    driver_name, loader_name, remarks, bmcus, is_sale_tanker, trip_kind, material_id
   } = req.body;
 
   if (!plan_date || !plan_for_date || !tanker_id || !delivery_point_id)
     return res.status(400).json({ error: 'plan_date, plan_for_date, tanker_id, delivery_point_id required' });
+  // Material trip (migration 049): supplier = starting point, customer =
+  // delivery point, a material from the master, no BMCU chain.
+  const kind = trip_kind === 'material' ? 'material' : 'milk';
+  if (kind === 'material' && (!start_point_id || !material_id))
+    return res.status(400).json({ error: 'A material trip needs a supplier (starting point) and a material' });
 
   try { await assertTankerAvailable(tanker_id); }
   catch (err) { return res.status(err.code === 400 ? 400 : 500).json({ error: err.message }); }
@@ -203,17 +208,18 @@ router.post('/', authenticate, authorizeOrModule('planning', 'admin','planner'),
          (plan_date,plan_for_date,trip_no,route_id,tanker_id,
           start_point_id,testing_point_id,delivery_point_id,
           shifts_milk,expected_km,expected_utilization_pct,expected_total_qty,
-          total_cost,per_liter_cost,driver_name,loader_name,remarks,created_by,is_sale_tanker)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+          total_cost,per_liter_cost,driver_name,loader_name,remarks,created_by,is_sale_tanker,trip_kind,material_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        RETURNING *`,
       [plan_date, plan_for_date, trip_no||null, route_id||null, tanker_id,
        start_point_id||null, testing_point_id||null, delivery_point_id,
        shifts_milk||null, expected_km||null, costs.utilization_pct,
        expected_total_qty||0, costs.total_cost, costs.per_liter_cost,
-       driver_name||null, loader_name||null, remarks||null, req.user.id, !!is_sale_tanker]
+       driver_name||null, loader_name||null, remarks||null, req.user.id, !!is_sale_tanker,
+       kind, kind === 'material' ? material_id : null]
     );
     const planId = r.rows[0].id;
-    if (bmcus?.length) {
+    if (kind !== 'material' && bmcus?.length) {
       for (const bm of bmcus) {
         await client.query(
           'INSERT INTO trip_plan_bmcus (trip_plan_id,seq_no,bmcu_id,shift_code,expected_qty,description) VALUES ($1,$2,$3,$4,$5,$6)',
@@ -235,7 +241,7 @@ router.put('/:id', authenticate, authorizeOrModule('planning', 'admin','planner'
     plan_for_date, trip_no, route_id, tanker_id,
     start_point_id, testing_point_id, delivery_point_id,
     shifts_milk, expected_km, expected_total_qty,
-    driver_name, loader_name, remarks, status, bmcus, is_sale_tanker
+    driver_name, loader_name, remarks, status, bmcus, is_sale_tanker, material_id
   } = req.body;
 
   try { await assertTankerAvailable(tanker_id); }
@@ -260,7 +266,7 @@ router.put('/:id', authenticate, authorizeOrModule('planning', 'admin','planner'
         start_point_id=$5, testing_point_id=$6, delivery_point_id=$7,
         shifts_milk=$8, expected_km=$9, expected_utilization_pct=$10, expected_total_qty=$11,
         total_cost=$12, per_liter_cost=$13, driver_name=$14, loader_name=$15,
-        remarks=$16, status=$17, is_sale_tanker=$19, updated_at=NOW()
+        remarks=$16, status=$17, is_sale_tanker=$19, material_id=$20, updated_at=NOW()
        WHERE id=$18 RETURNING *`,
       [
         plan_for_date || existing.rows[0].plan_for_date,
@@ -281,10 +287,11 @@ router.put('/:id', authenticate, authorizeOrModule('planning', 'admin','planner'
         status || existing.rows[0].status,
         req.params.id,
         is_sale_tanker !== undefined ? !!is_sale_tanker : existing.rows[0].is_sale_tanker,
+        existing.rows[0].trip_kind === 'material' ? (material_id || existing.rows[0].material_id) : null,
       ]
     );
 
-    if (bmcus !== undefined) {
+    if (bmcus !== undefined && existing.rows[0].trip_kind !== 'material') {
       await client.query('DELETE FROM trip_plan_bmcus WHERE trip_plan_id=$1', [req.params.id]);
       for (const bm of bmcus) {
         await client.query(

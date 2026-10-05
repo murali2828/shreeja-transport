@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 import SearchableSelect from '../../components/SearchableSelect';
 import {
   getTankers, getBmcus, getRoutes, getStartingPoints, getTestingPoints, getDeliveryPoints,
-  getPlan, createPlan, updatePlan
+  getPlan, createPlan, updatePlan, getMaterials
 } from '../../api/index';
 
 const KG_FACTOR = 1.0285;
@@ -23,8 +23,10 @@ export default function TripPlanForm() {
     plan_date: today, plan_for_date: today, trip_no: '',
     route_id: '', tanker_id: '', start_point_id: '', testing_point_id: '', delivery_point_id: '',
     shifts_milk: '', expected_km: '', expected_total_qty: '',
-    driver_name: '', loader_name: '', remarks: '', bmcus: [], is_sale_tanker: false
+    driver_name: '', loader_name: '', remarks: '', bmcus: [], is_sale_tanker: false,
+    trip_kind: 'milk', material_id: ''
   });
+  const isMaterial = form.trip_kind === 'material';
 
   // Load masters
   const { data: tankers   = [] } = useQuery({ queryKey: ['tankers'],  queryFn: () => getTankers().then(r=>r.data) });
@@ -33,6 +35,7 @@ export default function TripPlanForm() {
   const { data: startPts  = [] } = useQuery({ queryKey: ['start-pts'],queryFn: () => getStartingPoints().then(r=>r.data) });
   const { data: testPts   = [] } = useQuery({ queryKey: ['test-pts'], queryFn: () => getTestingPoints().then(r=>r.data) });
   const { data: delivPts  = [] } = useQuery({ queryKey: ['deliv-pts'],queryFn: () => getDeliveryPoints().then(r=>r.data) });
+  const { data: materials = [] } = useQuery({ queryKey: ['materials'], queryFn: () => getMaterials().then(r=>r.data) });
 
   // Load existing plan for edit
   const { data: existing } = useQuery({
@@ -58,6 +61,8 @@ export default function TripPlanForm() {
         loader_name: existing.loader_name || '',
         remarks: existing.remarks || '',
         is_sale_tanker: !!existing.is_sale_tanker,
+        trip_kind: existing.trip_kind || 'milk',
+        material_id: String(existing.material_id || ''),
         bmcus: (existing.bmcus || []).map(b => ({
           seq_no: b.seq_no, bmcu_id: b.bmcu_id, bmcu_code: b.bmcu_code,
           bmcu_name: b.bmcu_name, shift_code: b.shift_code || '', expected_qty: b.expected_qty || '',
@@ -136,13 +141,15 @@ export default function TripPlanForm() {
     mutationFn: () => {
       if (!form.tanker_id || !form.delivery_point_id)
         throw new Error('Tanker and delivery point required');
+      if (isMaterial && (!form.start_point_id || !form.material_id))
+        throw new Error('A material trip needs a supplier (starting point) and a material');
       const payload = {
         ...form,
         expected_total_qty: totalExpQty || form.expected_total_qty,
         total_cost: totalCost,
         per_liter_cost: perLitreCost,
         expected_utilization_pct: utilPct,
-        bmcus: form.bmcus.map(b => ({
+        bmcus: isMaterial ? [] : form.bmcus.map(b => ({
           seq_no: b.seq_no, bmcu_id: b.bmcu_id,
           shift_code: b.shift_code || null, expected_qty: parseFloat(b.expected_qty) || 0,
           description: b.description || 'RMRD'
@@ -165,7 +172,29 @@ export default function TripPlanForm() {
           <ChevronLeft size={14}/> Back
         </button>
         <h2 className="page-title">{isEdit ? 'Edit Trip Plan' : 'New Trip Plan'}</h2>
+        {!isEdit && (
+          <div className="ml-auto flex rounded-lg overflow-hidden border border-white/40 text-xs font-semibold">
+            {[['milk', 'Milk collection'], ['material', 'Material purchase & delivery']].map(([k, l]) => (
+              <button key={k} type="button" onClick={() => set('trip_kind', k)}
+                className="px-3 py-1.5"
+                style={form.trip_kind === k ? { background: '#cc785c', color: '#fff' } : { background: '#fff', color: '#57534e' }}>{l}</button>
+            ))}
+          </div>
+        )}
+        {isEdit && isMaterial && <span className="ml-auto text-xs px-2 py-1 rounded bg-purple-600 text-white font-semibold">Material trip</span>}
       </div>
+
+      {isMaterial && (
+        <div className="card p-4 bg-purple-50 border-purple-200 text-sm text-purple-900">
+          <b>Material trip:</b> the tanker buys a material (e.g. pasteurised milk) at the <b>supplier</b> (starting point) and delivers it to the
+          <b> customer</b> (delivery point). No BMCU chain — the executor keys purchased and acknowledged quantities with the supplier's and customer's documents.
+          <div className="mt-3 max-w-md">
+            <label className="label">Material *</label>
+            <SearchableSelect value={form.material_id} onChange={v => set('material_id', v)} placeholder="Select material…"
+              options={materials.map(m => ({ value: String(m.id), label: `${m.name} (SAP ${m.sap_code})` }))}/>
+          </div>
+        </div>
+      )}
 
       <div className="card p-5 space-y-5">
         {/* Header fields */}
@@ -220,7 +249,7 @@ export default function TripPlanForm() {
         {/* Locations */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
-            <label className="label">Starting Point</label>
+            <label className="label">{isMaterial ? 'Supplier (starting point) *' : 'Starting Point'}</label>
             <SearchableSelect
               value={form.start_point_id}
               onChange={v => set('start_point_id', v)}
@@ -238,7 +267,7 @@ export default function TripPlanForm() {
             />
           </div>
           <div>
-            <label className="label">Delivery Point *</label>
+            <label className="label">{isMaterial ? 'Customer (delivery point) *' : 'Delivery Point *'}</label>
             <SearchableSelect
               value={form.delivery_point_id}
               onChange={v => set('delivery_point_id', v)}
@@ -296,14 +325,14 @@ export default function TripPlanForm() {
         </div>
 
         {/* Sale tanker flag — excluded from vendor billing by default */}
-        <label className="flex items-center gap-2 text-sm">
+        {!isMaterial && <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.is_sale_tanker}
             onChange={e => set('is_sale_tanker', e.target.checked)}/>
           Sale Tanker Trip <span className="text-gray-400 text-xs">(shown but excludable in Tanker Payment billing)</span>
-        </label>
+        </label>}
 
         {/* BMCU sequence */}
-        <div>
+        {!isMaterial && <div>
           <div className="flex items-center justify-between mb-2">
             <label className="label mb-0">BMCU Visit Sequence</label>
             <div className="flex items-center gap-2">
@@ -368,7 +397,7 @@ export default function TripPlanForm() {
               </tbody>
             </table>
           </div>
-        </div>
+        </div>}
 
         <div className="flex justify-end gap-3 pt-2 border-t">
           <button onClick={() => navigate('/planning')} className="btn-secondary">Cancel</button>

@@ -5,7 +5,7 @@ import { NavLink } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   Truck, LayoutDashboard, MapPin, Route, Users, Settings,
-  ClipboardList, Play, CheckSquare, BarChart2, Mail, IndianRupee,
+  ClipboardList, Package, Play, CheckSquare, BarChart2, Mail, IndianRupee,
   ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText, ShieldCheck
 } from 'lucide-react';
 
@@ -70,6 +70,7 @@ export default function Sidebar({ collapsed = false }) {
         <NavSection label={collapsed ? '' : 'Masters'}>
           {ni('/masters/tankers',    <Truck size={15}/>,       'Tankers')}
           {ni('/masters/vendors',    <Building2 size={15}/>,   'Vendors')}
+          {ni('/masters/materials',  <Package size={15}/>,     'Materials')}
           {ni('/masters/documents',  <FileText size={15}/>,    'Tanker Documents')}
           {ni('/masters/bmcus',      <MapPin size={15}/>,      'BMCUs')}
           {ni('/masters/routes',     <Route size={15}/>,       'Routes')}

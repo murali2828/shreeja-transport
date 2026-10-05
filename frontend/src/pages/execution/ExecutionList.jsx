@@ -257,6 +257,7 @@ export default function ExecutionList() {
                     <td className="table-td font-mono text-xs">
                       {p.tanker_number}
                       {p.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px] font-sans" title="Sale Tanker — milk sold, not delivered to a plant">SALE</span>}
+                      {p.trip_kind === 'material' && <span className="ml-1 px-1 rounded bg-purple-700 text-white text-[10px] font-sans" title="Material purchase & delivery trip (no BMCU chain)">MATERIAL</span>}
                     </td>
                     <td className="table-td text-xs">{p.start_point_name || '—'}</td>
                     <td className="table-td text-xs">{p.delivery_point_name || '—'}</td>
@@ -277,7 +278,7 @@ export default function ExecutionList() {
                     <td className="table-td">
                       <div className="flex items-center gap-1.5">
                         {exec ? (
-                          <button onClick={() => navigate(`/execution/${exec.id}`)}
+                          <button onClick={() => navigate(p.trip_kind === 'material' ? `/execution/${exec.id}/material` : `/execution/${exec.id}`)}
                             className="btn-secondary btn-sm flex items-center gap-1">
                             <Eye size={12}/> View
                           </button>

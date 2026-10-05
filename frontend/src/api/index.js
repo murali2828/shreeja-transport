@@ -199,6 +199,13 @@ export const downloadTripDurationsExcel = (from, to) =>
 // ── Vendors ───────────────────────────────────────────────────────────────────
 export const getVendors    = (params) => api.get('/vendors', { params });
 export const createVendor  = (d)     => api.post('/vendors', d);
+// Materials master + material (pasteurised milk) trips — migration 049
+export const getMaterials        = (params) => api.get('/materials', { params });
+export const createMaterial      = (d)      => api.post('/materials', d);
+export const updateMaterial      = (id, d)  => api.put(`/materials/${id}`, d);
+export const saveMaterialTrip    = (execId, fd) => api.put(`/material-trips/${execId}`, fd);
+export const getMaterialDistance = (execId) => api.get(`/material-trips/${execId}/distance`);
+export const materialDocUrl      = (execId, which) => `/api/material-trips/${execId}/doc/${which}`;
 export const updateVendor  = (id, d) => api.put(`/vendors/${id}`, d);
 
 // ── Tanker Documents ──────────────────────────────────────────────────────────

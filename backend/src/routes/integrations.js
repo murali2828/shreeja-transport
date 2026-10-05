@@ -143,7 +143,9 @@ function envelope(rows, limit, idKey) {
 // dateCol / updatedExpr / idCol are SQL fragments chosen per endpoint.
 function buildFilters(p, { dateCol, updatedExpr, idCol }) {
   const args = [];
-  const where = [];
+  // Material (pasteurised milk purchase) trips are not milk collection —
+  // the feed stays milk-only (additive filter, assure-v1 contract unchanged).
+  const where = ["tp.trip_kind = 'milk'"];
   if (p.from) { args.push(p.from, p.to); where.push(`${dateCol} BETWEEN $${args.length - 1} AND $${args.length}`); }
   if (p.updatedSince) { args.push(p.updatedSince); where.push(`${updatedExpr} >= $${args.length}::timestamptz`); }
   args.push(p.afterId); where.push(`${idCol} > $${args.length}`);

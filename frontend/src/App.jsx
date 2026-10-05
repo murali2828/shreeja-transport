@@ -22,6 +22,7 @@ import EmailConfig     from './pages/masters/EmailConfig';
 import PlanEmailConfig from './pages/masters/PlanEmailConfig';
 import DistanceMaster  from './pages/masters/DistanceMaster';
 import VendorMaster    from './pages/masters/VendorMaster';
+import MaterialMaster  from './pages/masters/MaterialMaster';
 import TankerDocuments from './pages/masters/TankerDocuments';
 
 // Planning
@@ -35,6 +36,7 @@ import DayOptimizer    from './pages/planning/DayOptimizer';
 import ExecutionList        from './pages/execution/ExecutionList';
 import ExecutionForm        from './pages/execution/ExecutionForm';
 import AcknowledgementForm  from './pages/execution/AcknowledgementForm';
+import MaterialTripForm     from './pages/execution/MaterialTripForm';
 import ClosedTrips          from './pages/execution/ClosedTrips';
 import Approvals            from './pages/execution/Approvals';
 import NonTripGatePass      from './pages/execution/NonTripGatePass';
@@ -108,6 +110,9 @@ function AppRoutes() {
         <Route path="masters/vendors" element={
           <ProtectedRoute roles={['admin']}><VendorMaster/></ProtectedRoute>
         }/>
+        <Route path="masters/materials" element={
+          <ProtectedRoute roles={['admin']}><MaterialMaster/></ProtectedRoute>
+        }/>
         <Route path="masters/documents" element={
           <ProtectedRoute roles={['admin','executor']}><TankerDocuments/></ProtectedRoute>
         }/>
@@ -155,6 +160,7 @@ function AppRoutes() {
         <Route path="approvals"           element={<Approvals/>}/>
         <Route path="execution/:id"       element={<ExecutionForm/>}/>
         <Route path="execution/:id/acknowledge" element={<AcknowledgementForm/>}/>
+        <Route path="execution/:id/material"    element={<MaterialTripForm/>}/>
 
         {/* Reports — all roles */}
         <Route path="billing" element={

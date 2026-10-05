@@ -172,6 +172,7 @@ async function selectEligibleTrips(client, from_date, to_date, opts = {}) {
   const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
   const trips = await client.query(`
       SELECT te.id AS execution_id, tp.plan_for_date::text AS plan_for_date,
+             tp.trip_kind, te.actual_km AS manual_km,
              (tp.plan_for_date + ($5::int) < $1::date) AS carried_forward,
              EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id AND ta.created_at > $3::timestamp) AS late_ack,
              (SELECT to_char(MAX(ta.created_at) AT TIME ZONE 'Asia/Kolkata', 'DD-MM-YYYY HH24:MI')
@@ -259,15 +260,18 @@ async function insertRunTrips(client, runId, trips, userId) {
          vendor_id, vendor_name, route_name, start_point, delivery_point,
          bmcu_count, ack_litres, ack_kgs, ack_fat_pct, ack_snf_pct, transport_type,
          system_km, google_km, master_km, estimated_km, billed_km, legs,
-         is_sale_tanker, excluded, carried_forward, remarks)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+         is_sale_tanker, excluded, carried_forward, remarks, trip_kind)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
       [runId, tr.execution_id, tr.plan_for_date, tr.tanker_number, tr.capacity_litres,
        tr.vendor_id, tr.vendor_name, tr.route_name, tr.start_point, tr.delivery_point,
        tr.bmcu_count, rN(tr.ack_litres), rN(tr.ack_kgs), rN(tr.ack_fat_pct, 3), rN(tr.ack_snf_pct, 3), transportType,
        rN(dist.total_km), googleRefKm, sumBy('master'), sumBy('estimated'),
-       rN(dist.total_km), JSON.stringify(dist.legs),
+       // Material trips: the executor keys the km to the customer; it is the
+       // billed km by default, system / Google stay as the reference.
+       tr.trip_kind === 'material' && tr.manual_km != null ? rN(tr.manual_km) : rN(dist.total_km), JSON.stringify(dist.legs),
        !!tr.is_sale_tanker, !!tr.is_sale_tanker, !!tr.carried_forward,
-       tr.late_ack && !tr.is_sale_tanker ? `Acknowledged after cutoff (${tr.late_ack_at}) — added by biller` : null]);
+       tr.late_ack && !tr.is_sale_tanker ? `Acknowledged after cutoff (${tr.late_ack_at}) — added by biller` : null,
+       tr.trip_kind || 'milk']);
   }
   return newCombos;
 }
@@ -874,6 +878,13 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
       [trips.map(t => t.execution_id)]);
     for (const r of bm.rows)
       (bmcuByExec[r.execution_id] ||= []).push(`${r.bmcu_code} - ${r.bmcu_name}`);
+    // Material trips (migration 049) carry the material instead of a BMCU chain.
+    const md = await query(`
+      SELECT d.execution_id, m.name, m.sap_code, d.purchase_qty_litres
+      FROM trip_material_data d LEFT JOIN materials m ON m.id = d.material_id
+      WHERE d.execution_id = ANY($1)`, [trips.map(t => t.execution_id)]);
+    for (const r of md.rows)
+      bmcuByExec[r.execution_id] = [`Material: ${r.name || '—'}${r.sap_code ? ` (SAP ${r.sap_code})` : ''}${r.purchase_qty_litres ? ` · purchased ${rN(r.purchase_qty_litres)} L` : ''}`];
   }
   const bmcuDetails = execId => (bmcuByExec[execId] || []).join(' → ') || '—';
 
@@ -883,7 +894,8 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
 
   // Trip Wise = trips actually under vendor payment (Sale Tanker trips are
   // shown separately on their own sheet, matching the on-screen tabs).
-  const paymentTrips = trips.filter(t => !t.is_sale_tanker);
+  const paymentTrips  = trips.filter(t => !t.is_sale_tanker && t.trip_kind !== 'material');
+  const materialTrips = trips.filter(t => !t.is_sale_tanker && t.trip_kind === 'material');
   const saleTrips     = trips.filter(t => t.is_sale_tanker);
 
   const tripCols = (rows, sheetName) => {
@@ -908,6 +920,7 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     return ws;
   };
   const ws1 = tripCols(paymentTrips, 'Trip Wise');
+  if (materialTrips.length) tripCols(materialTrips, 'Material Trips');
   if (saleTrips.length) tripCols(saleTrips, 'Sale Tankers');
 
   const ws2 = wb.addWorksheet('Tanker Wise');
@@ -1110,6 +1123,13 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
       [trips.map(t => t.execution_id)]);
     for (const r of bm.rows)
       (bmcuByExec[r.execution_id] ||= []).push(`${r.bmcu_code} - ${r.bmcu_name}`);
+    // Material trips (migration 049) carry the material instead of a BMCU chain.
+    const md = await query(`
+      SELECT d.execution_id, m.name, m.sap_code, d.purchase_qty_litres
+      FROM trip_material_data d LEFT JOIN materials m ON m.id = d.material_id
+      WHERE d.execution_id = ANY($1)`, [trips.map(t => t.execution_id)]);
+    for (const r of md.rows)
+      bmcuByExec[r.execution_id] = [`Material: ${r.name || '—'}${r.sap_code ? ` (SAP ${r.sap_code})` : ''}${r.purchase_qty_litres ? ` · purchased ${rN(r.purchase_qty_litres)} L` : ''}`];
   }
   const bmcuDetails = execId => (bmcuByExec[execId] || []).join(' → ') || '—';
 
@@ -1157,7 +1177,10 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
       if (!byTanker.has(t.tanker_number)) byTanker.set(t.tanker_number, []);
       byTanker.get(t.tanker_number).push(t);
     }
-    for (const [tn, tTrips] of [...byTanker.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const materialTrips = v.trips.filter(t => t.trip_kind === 'material');
+    for (const [tn, tTripsAll] of [...byTanker.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const tTrips = tTripsAll.filter(t => t.trip_kind !== 'material');
+      if (!tTrips.length) continue;
       tTrips.sort((a, b) => (a.plan_for_date < b.plan_for_date ? -1 : a.plan_for_date > b.plan_for_date ? 1 : 0));
       tTrips.forEach(t => ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number,
         t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.route_name, t.delivery_point,
@@ -1168,6 +1191,23 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
         rN(tTrips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '', rN(tankerSubtotal), '']);
       subRow.font = { bold: true };
       subRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } }; });
+    }
+    if (materialTrips.length) {
+      // Sub-section: pasteurised-milk / material trips (owner request 2026-10-05)
+      const secRow = ws.addRow(['MATERIAL TRIPS (pasteurised milk purchase & delivery)']);
+      secRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      ws.mergeCells(secRow.number, 1, secRow.number, NCOLS);
+      secRow.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C3AED' } }; });
+      materialTrips.sort((a, b) => (a.tanker_number + a.plan_for_date).localeCompare(b.tanker_number + b.plan_for_date));
+      materialTrips.forEach(t => ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number,
+        t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, `${t.start_point || ''} → ${t.delivery_point || ''}`, t.delivery_point,
+        bmcuDetails(t.execution_id), t.state, t.transport_type, t.billed_km, t.rate_per_km,
+        t.excluded ? 0 : t.amount, t.excluded ? `EXCLUDED — ${t.remarks || ''}`.trim() : t.remarks]));
+      const mSub = ws.addRow(['MATERIAL TRIPS SUBTOTAL', '', '', '', '', '', '', '',
+        rN(materialTrips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '',
+        rN(materialTrips.reduce((s, t) => s + (t.excluded ? 0 : (parseFloat(t.amount) || 0)), 0)), '']);
+      mSub.font = { bold: true };
+      mSub.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E8FF' } }; });
     }
     ws.addRow(['TRIPS TOTAL', '', '', '', '', '', '', '',
       rN(v.trips.reduce((s, t) => s + (parseFloat(t.billed_km) || 0), 0)), '', rN(tripTotal), '']).font = { bold: true };
@@ -1192,7 +1232,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
           : `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
           <p>Dear ${esc(v.name)},</p>
           <p>The tanker payment for <b>${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}</b> has been approved.
-          Your trip sheet is attached: <b>${v.trips.length} trips · ₹ ${nf(tripTotal)}</b>${tollTotal > 0
+          Your trip sheet is attached: <b>${v.trips.length} trips · ₹ ${nf(tripTotal)}</b>${materialTrips.length ? ` (including ${materialTrips.length} material trip(s) listed in their own section)` : ''}${tollTotal > 0
             ? ` plus toll challan reimbursement <b>₹ ${nf(tollTotal)}</b> — total payable <b>₹ ${nf(total)}</b>` : ''}.</p>
           <p>For any discrepancy in distances, contact the Shreeja billing team with the trip
           date and tanker number — corrections carry remarks and go through approval.</p>
