@@ -569,6 +569,29 @@ router.put('/runs/:id/trips', authenticate, authorizeOrModule('billing', ...canB
 });
 
 // ── DELETE /api/billing/runs/:id — discard a draft/rejected run ──────────────
+// ── DELETE /api/billing/runs/:id/trips/:tripId — remove one line from an
+// editable run. The trip goes back to the unbilled pool, so the next fortnight's
+// Execute (or Re-add) picks it up as carried forward — unlike "Excl.", which
+// keeps the line in this run and therefore never carries it forward. Owner /
+// billing team request 2026-10-06 (align run #20 with the manual tanker cards).
+router.delete('/runs/:id/trips/:tripId', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
+  try {
+    const run = (await query('SELECT id, status FROM billing_runs WHERE id=$1', [req.params.id])).rows[0];
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (!EDITABLE.includes(run.status))
+      return res.status(400).json({ error: 'Trips can only be removed from a draft / rejected run — withdraw it from approval first' });
+    const r = await query('DELETE FROM billing_run_trips WHERE id=$1 AND run_id=$2 RETURNING execution_id, tanker_number, plan_for_date::text AS plan_for_date',
+      [req.params.tripId, req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Trip line not found in this run' });
+    await refreshRunTotal(req.params.id);
+    console.log(`[billing] run ${req.params.id}: line ${req.params.tripId} (${r.rows[0].tanker_number} ${r.rows[0].plan_for_date}) removed by ${req.user.user_id || req.user.id} — carries forward`);
+    res.json({ removed: r.rows[0] });
+  } catch (err) {
+    console.error('Billing remove-trip error:', err);
+    res.status(500).json({ error: 'Failed to remove the trip from the run' });
+  }
+});
+
 router.delete('/runs/:id', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const r = await query(`DELETE FROM billing_runs WHERE id=$1 AND status IN ('draft','rejected','pending_vendor') RETURNING id`,
@@ -894,9 +917,12 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
 
   // Trip Wise = trips actually under vendor payment (Sale Tanker trips are
   // shown separately on their own sheet, matching the on-screen tabs).
-  const paymentTrips  = trips.filter(t => !t.is_sale_tanker && t.trip_kind !== 'material');
-  const materialTrips = trips.filter(t => !t.is_sale_tanker && t.trip_kind === 'material');
-  const saleTrips     = trips.filter(t => t.is_sale_tanker);
+  // A Sale-Tanker-flagged line the biller un-excludes (e.g. a Jersey / HUL
+  // delivery the vendor is paid for) is a payment trip, not a sale trip.
+  const isSale        = t => t.is_sale_tanker && t.excluded;
+  const paymentTrips  = trips.filter(t => !isSale(t) && t.trip_kind !== 'material');
+  const materialTrips = trips.filter(t => !isSale(t) && t.trip_kind === 'material');
+  const saleTrips     = trips.filter(isSale);
 
   const tripCols = (rows, sheetName) => {
     const ws = wb.addWorksheet(sheetName);
@@ -1098,7 +1124,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
     ORDER BY t.plan_for_date, t.tanker_number`, scoped ? [runId, vendorIds] : [runId])).rows;
   // Sale Tanker / excluded trips never go to vendors for verification or
   // payment — they live on their own tab/sheet, not in vendor billing.
-  const trips = allTrips.filter(t => !t.excluded && !t.is_sale_tanker);
+  const trips = allTrips.filter(t => !t.excluded); // un-excluded sale-flagged lines are paid (2026-10-06)
   if (!trips.length)
     return [scoped
       ? `No billable trips for the selected vendor(s) in this run.`

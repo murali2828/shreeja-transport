@@ -201,6 +201,7 @@ export const getVendors    = (params) => api.get('/vendors', { params });
 export const createVendor  = (d)     => api.post('/vendors', d);
 // Materials master + material (pasteurised milk) trips — migration 049
 export const getMaterials        = (params) => api.get('/materials', { params });
+export const removeRunTrip = (runId, tripId) => api.delete(`/billing/runs/${runId}/trips/${tripId}`);
 export const createMaterial      = (d)      => api.post('/materials', d);
 export const updateMaterial      = (id, d)  => api.put(`/materials/${id}`, d);
 export const saveMaterialTrip    = (execId, fd) => api.put(`/material-trips/${execId}`, fd);

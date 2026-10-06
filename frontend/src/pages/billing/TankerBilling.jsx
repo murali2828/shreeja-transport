@@ -145,6 +145,15 @@ export default function TankerBilling() {
   });
   // 'YYYY-MM-DD HH:MM:SS' from the API → 'DD-MM-YYYY HH:MM' for the dialogs
   const fmtCutoff = c => c ? `${fmtDate(c.slice(0, 10))} ${c.slice(11, 16)}` : '';
+  const removeMut = useMutation({
+    mutationFn: (tripId) => api.delete(`/billing/runs/${openRunId}/trips/${tripId}`),
+    onSuccess: r => {
+      toast.success(`${r.data.removed.tanker_number} ${fmtDate(r.data.removed.plan_for_date)} removed — it carries forward to the next fortnight's run`, { duration: 8000 });
+      qc.invalidateQueries(['billing-run', openRunId]); qc.invalidateQueries(['billing-summary']); qc.invalidateQueries(['billing-runs']);
+    },
+    onError: e => toast.error(e.response?.data?.error || e.message, { duration: 8000 }),
+  });
+  const removeTrip = (t) => window.confirm(`Remove ${t.tanker_number} ${fmtDate(t.plan_for_date)} (${t.route_name || ''}) from this run?\n\nThe trip is not lost: it returns to the unbilled pool and the next fortnight's Execute / Re-add picks it up as carried forward. Use "Excl." instead if it must stay in this run unpaid.`) && removeMut.mutate(t.id);
   const readdMut = useMutation({
     mutationFn: (includeLate) => api.post(`/billing/runs/${openRunId}/readd-trips`, { include_late_acks: !!includeLate }),
     onSuccess: r => {
@@ -475,7 +484,7 @@ export default function TankerBilling() {
                     onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
                     val={val} setEdit={setEdit}
                     legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}
-                    ratePreview={ratePreviews[t.id]} previewRate={previewRate} />
+                    ratePreview={ratePreviews[t.id]} previewRate={previewRate} onRemove={removeTrip} />
                 ))}
                 {filteredTrips.length === 0 && (
                   <tr><td colSpan={18} className="px-3 py-4 text-center text-gray-400">No trips match this search.</td></tr>
@@ -517,7 +526,7 @@ export default function TankerBilling() {
                     onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
                     val={val} setEdit={setEdit}
                     legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}
-                    ratePreview={ratePreviews[t.id]} previewRate={previewRate} />
+                    ratePreview={ratePreviews[t.id]} previewRate={previewRate} onRemove={removeTrip} />
                 ))}
                 <tr className="bg-blue-100 font-bold">
                   <td className="px-2 py-2" colSpan={12}>TOTAL — {materialTrips.length} material trip(s) ({materialTrips.filter(t => val(t,"excluded")).length} excluded)</td>
@@ -550,7 +559,7 @@ export default function TankerBilling() {
                     onToggle={() => setExpanded(p => ({ ...p, [t.id]: !p[t.id] }))}
                     val={val} setEdit={setEdit}
                     legEdits={edits[t.id]?.legs || {}} setLegEdit={setLegEdit}
-                    ratePreview={ratePreviews[t.id]} previewRate={previewRate} />
+                    ratePreview={ratePreviews[t.id]} previewRate={previewRate} onRemove={removeTrip} />
                 ))}
                 {saleTrips.length === 0 && (
                   <tr><td colSpan={18} className="px-3 py-4 text-center text-gray-400">No Sale Tanker trips in this run.</td></tr>
@@ -1041,7 +1050,7 @@ function MissingCoordinates({ runId, from, to }) {
 }
 
 function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
-                       legEdits = {}, setLegEdit, ratePreview, previewRate }) {
+                       legEdits = {}, setLegEdit, ratePreview, previewRate, onRemove }) {
   // Unsaved rate preview (fetched on state selection) takes display precedence
   const hasPreview = ratePreview !== undefined;
   const effRate = hasPreview ? ratePreview : t.rate_per_km;
@@ -1060,9 +1069,13 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
           {expanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
         </button>
       </td>
-      <td className="px-2 py-1.5 text-center" title="Exclude this trip from vendor billing (e.g. Sale Tanker trips)">
+      <td className="px-2 py-1.5 text-center whitespace-nowrap" title="Exclude this trip from vendor billing (e.g. Sale Tanker trips). ✕ removes it from the run so it carries forward to the next fortnight.">
         <input type="checkbox" checked={!!val(t, 'excluded')} disabled={!editable}
                onChange={e => setEdit(t.id, 'excluded', e.target.checked)}/>
+        {editable && onRemove && (
+          <button type="button" className="ml-1 text-red-500 hover:text-red-700 font-bold" title="Remove from this run (carries forward to the next fortnight)"
+                  onClick={() => onRemove(t)}>✕</button>
+        )}
       </td>
       <td className="px-2 py-1.5 whitespace-nowrap">
         {fmtDate(t.plan_for_date)}

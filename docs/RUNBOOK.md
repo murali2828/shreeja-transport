@@ -134,7 +134,8 @@ lines back on the same run:
    docker exec -i shreeja-backend node scripts/restore_run_keyed.js <run_id> < keyed.csv
    ```
    Rows already keyed are matched too but only overwrite with non-empty CSV values.
-4. Check the run total on screen, upload any toll challans now available, Submit. Tankers
+4. To drop a trip from the run so it is paid in the next fortnight instead, click ✕ on its line (draft / rejected runs only); Excl. keeps it in the run unpaid and does **not** carry it forward.
+5. Check the run total on screen, upload any toll challans now available, Submit. Tankers
    still without a challan are listed as "Toll challans pending" (response, L1 mail); their
    toll is uploaded in the next cycle under Toll Challans → **Pending from earlier cycles**.
 
