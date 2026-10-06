@@ -40,6 +40,8 @@ app.use('/api/auth/reset-password', limiter(60 * 60 * 1000, 10, 'Too many attemp
 app.use('/api/billing/decide', limiter(15 * 60 * 1000, 30, 'Too many attempts.'));
 app.use('/api/billing/decision-info', limiter(15 * 60 * 1000, 60, 'Too many attempts.'));
 app.use('/api/change-requests/decide', limiter(15 * 60 * 1000, 30, 'Too many attempts.'));
+app.use('/api/billing/toll-changes/decide', limiter(15 * 60 * 1000, 30, 'Too many attempts.'));
+app.use('/api/billing/toll-changes/decision-info', limiter(15 * 60 * 1000, 60, 'Too many attempts.'));
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true
@@ -72,6 +74,7 @@ app.use('/api/tanker-rates', require('./routes/tankerRates'));
 // Billing is gated: enabled only where BILLING_ENABLED=true (QA during UAT).
 // Production runs with the flag unset until the module gets business sign-off.
 if (process.env.BILLING_ENABLED === 'true') {
+  app.use('/api/billing/toll-changes', require('./routes/billingTollChanges')); // before the main router (migration 051)
   app.use('/api/billing', require('./routes/billing'));
 } else {
   app.use('/api/billing', (_req, res) =>

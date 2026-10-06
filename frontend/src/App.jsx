@@ -50,6 +50,7 @@ import TankerRates     from './pages/masters/TankerRates';
 import TankerBilling   from './pages/billing/TankerBilling';
 import BillingDecision from './pages/billing/BillingDecision';
 import ChangeRequestDecision from './pages/changeRequests/ChangeRequestDecision';
+import TollChangeDecision from './pages/billing/TollChangeDecision';
 import AuditLog        from './pages/reports/AuditLog';
 import BmcuBreakup     from './pages/reports/BmcuBreakup';
 import TripDurations   from './pages/reports/TripDurations';
@@ -78,6 +79,7 @@ function AppRoutes() {
       <Route path="/reset-password"  element={<ResetPassword/>}/>
       <Route path="/billing-decision" element={<BillingDecision/>}/>
       <Route path="/change-request-decision" element={<ChangeRequestDecision/>}/>
+      <Route path="/toll-change-decision" element={<TollChangeDecision/>}/>
       <Route path="/change-password" element={
         <ProtectedRoute allowMustChange><ChangePassword/></ProtectedRoute>
       }/>

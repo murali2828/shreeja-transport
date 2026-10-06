@@ -10,6 +10,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ### Changed
 - Billing: acknowledgement cutoff moved from 23:59:59 of the period's last day to 06:00 on the following morning (16th / 1st), configurable as `BILLING_ACK_CUTOFF_TIME`; night deliveries of the last day acknowledged before 06:00 now bill in their own fortnight (owner, 2026-10-05).
 
+### Added
+- Billing → Toll Challans: rows auto-save (amount / remarks 1.5 s after the last keystroke, a chosen file at once; status shown per row) while the run is editable. Once the run is under approval or approved, each row offers "Request change": the biller proposes amount / challan / No toll with a reason, PP01 (`CHANGE_APPROVER_ID`, cc `CHANGE_APPROVER_CC`) receives an email with run, tanker, vendor, current vs proposed values, the effect on the run total and the proposed challan attached, and approves or rejects by single-use link (`/toll-change-decision`) or in the portal; only approval writes `billing_run_tolls` and refreshes the total (`billing_toll_change_requests`, migration 051; `routes/billingTollChanges.js`) (owner, 2026-10-06).
+
 ### Changed
 - Material trips: purchase and customer-acknowledgement sections are keyed in kgs with kg fat and kg SNF, as on the supplier's and customer's documents; litres, fat %, SNF % and TS are derived (KG_FACTOR 1.0285) and stored, `trip_material_data.purchase_kg_fat / purchase_kg_snf` (migration 050, owner 2026-10-06).
 

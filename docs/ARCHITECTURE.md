@@ -42,6 +42,7 @@ A longer, older narrative lives in the root [`ARCHITECTURE.md`](../ARCHITECTURE.
 | `/api/change-requests` | `routes/changeRequests.js` | post-closure corrections with approver email + single-use token decision (`POST /decide`) | execution; token for decide |
 | `/api/reports`, `/api/analytics` | own files | Daily TS, BMCU breakup, trip durations, day utilisation, analytics KPIs, Excel + email | `authorizeOrModule('reports', ...)` |
 | `/api/billing` | `routes/billing.js` | fortnightly vendor billing runs, tolls (FASTag PDF parse), 3-level approval, vendor cards | `authorizeOrModule('billing', admin, biller)`; mounted only when `BILLING_ENABLED=true` |
+| `/api/billing/toll-changes` | `routes/billingTollChanges.js` | toll challan change requests on submitted / approved runs: create with proposed file, PP01 email approval (single-use token) or portal decision (migration 051) | billing; token for decide |
 | `/api/tracking` | `routes/tracking.js` | WheelsEye live positions, poll-now, trip playback analysis, fleet report | execution/admin |
 | `/api/audit` | `routes/audit.js` | request + field-level audit logs, Excel | admin |
 | `/api/integrations/assure` | `routes/integrations.js` | read-only trips/loadings/receipts feed for Shreeja Assure | `X-Assure-Key` header, not JWT |

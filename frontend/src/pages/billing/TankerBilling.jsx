@@ -4,7 +4,7 @@
 // system km (Master+Google, expandable leg breakdown), editable billed km,
 // remarks. Rate applied from Tanker Rates by planning date. Submit → 3-level
 // email approval (Mahesh → Krithiga → Thimmappa).
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { ChevronDown, ChevronRight, Download, Send, Trash2, Play, ArrowLeft, RefreshCw, RotateCcw, Undo2 } from 'lucide-react';
@@ -612,7 +612,7 @@ export default function TankerBilling() {
 
       {tab === 'tolls' && (
         <TollPanel runId={openRunId} tolls={run?.tolls || []} pendingEarlier={run?.tolls_pending_earlier || []}
-                   tankers={summary?.tankers || []} editable={editable}/>
+                   tankers={summary?.tankers || []} editable={editable} runStatus={run?.status}/>
       )}
 
       {tab === 'vendors' && unassignedTankers.length > 0 && editable && (
@@ -682,12 +682,49 @@ export default function TankerBilling() {
 // challan never blocks submit or drops trips (2026-09-29): it is uploaded in
 // a later run against the earlier period ("Pending from earlier cycles")
 // and paid in that run's total.
-function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
+function TollPanel({ runId, tolls, pendingEarlier, tankers, editable, runStatus }) {
   const qc = useQueryClient();
   const [form, setForm] = useState({}); // key -> {amount, remarks, file}; key = tanker or `${tanker}|${for_run_id}`
+  const [saveState, setSaveState] = useState({}); // key -> 'saving' | 'saved HH:MM' | 'error …'
+  const timers = useRef({});
   const byTanker = new Map(tolls.filter(t => !t.for_run_id).map(t => [t.tanker_number, t]));
   const carriedIn = tolls.filter(t => t.for_run_id);
-  const setF = (tn, k, v) => setForm(p => ({ ...p, [tn]: { ...p[tn], [k]: v } }));
+  // Auto-save (owner, 2026-10-06): amount / remarks are saved 1.5 s after the
+  // last keystroke, a chosen file is saved at once — as long as the row has an
+  // amount and a challan (new or already on file). The Save button stays as a
+  // manual trigger.
+  const setF = (key, k, v) => {
+    setForm(p => ({ ...p, [key]: { ...p[key], [k]: v } }));
+    clearTimeout(timers.current[key]);
+    const [tn, forRun] = key.split('|');
+    timers.current[key] = setTimeout(() => save(tn, forRun ? parseInt(forRun, 10) : null, { silent: true, override: { [k]: v } }), k === 'file' ? 50 : 1500);
+  };
+  // Change requests once the run is under approval (migration 051)
+  const locked = !editable && ['pending_l1', 'pending_l2', 'pending_l3', 'approved'].includes(runStatus);
+  const [req, setReq] = useState(null); // { tn, forRunId, amount, remarks, noToll, reason, file }
+  const { data: changeReqs, refetch: refetchReqs } = useQuery({
+    queryKey: ['toll-changes', runId], enabled: !!runId,
+    queryFn: () => api.get('/billing/toll-changes', { params: { run_id: runId } }).then(r => r.data),
+  });
+  const submitReq = () => {
+    if (!req) return;
+    if (!req.reason?.trim()) return toast.error('Give the reason for the change');
+    if (!req.noToll && (req.amount === '' || req.amount == null || +req.amount < 0)) return toast.error('Enter the new toll amount or tick No toll');
+    const fd = new FormData();
+    fd.append('tanker_number', req.tn); if (req.forRunId) fd.append('for_run_id', req.forRunId);
+    fd.append('amount', req.noToll ? 0 : req.amount); fd.append('not_applicable', req.noToll ? 'true' : 'false');
+    fd.append('remarks', req.remarks || ''); fd.append('reason', req.reason.trim());
+    if (req.file) fd.append('file', req.file);
+    api.post(`/billing/toll-changes/runs/${runId}`, fd)
+      .then(r => { toast.success(r.data.message, { duration: 8000 }); setReq(null); refetchReqs(); })
+      .catch(e => toast.error(e.response?.data?.error || e.message, { duration: 8000 }));
+  };
+  const decideReq = (id, decision) => window.confirm(`${decision === 'approve' ? 'Approve' : 'Reject'} toll change request #${id}?`) &&
+    api.post(`/billing/toll-changes/${id}/${decision}`).then(() => { toast.success(`Request #${id} ${decision}d`); refetchReqs(); refresh(); })
+      .catch(e => toast.error(e.response?.data?.error || e.message));
+  const downloadProposed = cr => api.get(`/billing/toll-changes/${cr.id}/file`, { responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data); const a = document.createElement('a'); a.href = url; a.download = cr.new_file_name || 'challan'; a.click(); URL.revokeObjectURL(url);
+  });
   const periodLabel = t => `for run #${t.for_run_id ?? t.run_id} · ${fmtDate(t.for_from_date ?? t.from_date)} → ${fmtDate(t.for_to_date ?? t.to_date)}`;
   const refresh = () => {
     qc.invalidateQueries(['billing-run', runId]);
@@ -695,15 +732,16 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
     qc.invalidateQueries(['billing-runs']);
   };
   // forRunId set = challan for an EARLIER run's period, paid in this run.
-  const save = (tn, forRunId = null) => {
+  const save = (tn, forRunId = null, { silent = false, override = {} } = {}) => {
     const key = forRunId ? `${tn}|${forRunId}` : tn;
-    const f = form[key] || {};
+    const f = { ...(formRef.current[key] || {}), ...override };
     const existing = forRunId ? carriedIn.find(t => t.tanker_number === tn && t.for_run_id === forRunId) : byTanker.get(tn);
     const amount = f.amount !== undefined ? f.amount : existing?.amount;
     if (amount === undefined || amount === '' || +amount < 0)
-      return toast.error('Enter the toll challan amount');
+      return silent ? undefined : toast.error('Enter the toll challan amount');
     if (!f.file && !existing?.has_file)
-      return toast.error(`${tn}: choose a toll challan attachment (PDF/JPG/PNG) before saving — a record can't be saved without one`, { duration: 7000 });
+      return silent ? setSaveState(p => ({ ...p, [key]: 'needs challan' })) : toast.error(`${tn}: choose a toll challan attachment (PDF/JPG/PNG) before saving — a record can't be saved without one`, { duration: 7000 });
+    setSaveState(p => ({ ...p, [key]: 'saving' }));
     const fd = new FormData();
     fd.append('tanker_number', tn);
     fd.append('amount', amount);
@@ -711,9 +749,15 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
     if (forRunId) fd.append('for_run_id', forRunId);
     if (f.file) fd.append('file', f.file);
     api.post(`/billing/runs/${runId}/tolls`, fd)
-      .then(() => { toast.success(`Toll challan saved for ${tn}${forRunId ? ` (run #${forRunId})` : ''}`); setForm(p => ({ ...p, [key]: undefined })); refresh(); })
-      .catch(e => toast.error(e.response?.data?.error || e.message));
+      .then(() => {
+        if (!silent) toast.success(`Toll challan saved for ${tn}${forRunId ? ` (run #${forRunId})` : ''}`);
+        setSaveState(p => ({ ...p, [key]: `saved ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` }));
+        setForm(p => ({ ...p, [key]: undefined })); refresh();
+      })
+      .catch(e => { setSaveState(p => ({ ...p, [key]: 'error' })); toast.error(e.response?.data?.error || e.message); });
   };
+  const formRef = useRef(form); formRef.current = form;
+  const stateBadge = key => saveState[key] ? <span className={`ml-1 text-[10px] ${saveState[key] === 'saving' ? 'text-amber-600' : saveState[key] === 'error' ? 'text-red-600' : saveState[key] === 'needs challan' ? 'text-gray-400' : 'text-green-700'}`}>{saveState[key]}</span> : null;
   // "No toll" — route without toll plazas: satisfies the challan requirement
   // for this tanker-period so it is never listed as pending or carried forward.
   const markNoToll = (tn, forRunId = null) => {
@@ -816,12 +860,20 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
                     : (ex?.remarks || '—')}
                 </td>
                 <td className="px-3 py-1.5 whitespace-nowrap">
+                  {locked && (
+                    <button className="text-[11px] px-2 py-0.5 rounded border border-amber-400 text-amber-800 hover:bg-amber-50"
+                            title="The run is under approval — propose a change; PP01 approves by email"
+                            onClick={() => setReq({ tn: t.tanker_number, forRunId: null, amount: ex?.amount ?? '', remarks: ex?.remarks || '', noToll: !!ex?.not_applicable, reason: '', file: null })}>
+                      Request change
+                    </button>
+                  )}
                   {editable && (<>
                     {!ex?.not_applicable && (
-                      <button className="btn-secondary text-[11px] px-2 py-0.5 mr-1" onClick={() => save(t.tanker_number)}>
+                      <button className="btn-secondary text-[11px] px-2 py-0.5 mr-1" onClick={() => save(t.tanker_number)} title="Auto-saves 1.5 s after typing / on file choice; click to save now">
                         {ex ? 'Update' : 'Save'}
                       </button>
                     )}
+                    {stateBadge(t.tanker_number)}
                     {!ex && (
                       <button className="text-[11px] px-2 py-0.5 mr-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100"
                               title="No toll plazas on this tanker's routes this period — do not carry forward"
@@ -850,6 +902,12 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
                 : ex.has_file ? <button className="text-[#005ba3] underline" onClick={() => download(ex)}>{ex.file_name || 'challan'}</button> : '—'}</td>
               <td className="px-3 py-1.5">{ex.remarks || '—'}</td>
               <td className="px-3 py-1.5 whitespace-nowrap">
+                {locked && (
+                  <button className="text-[11px] px-2 py-0.5 rounded border border-amber-400 text-amber-800 hover:bg-amber-50"
+                          onClick={() => setReq({ tn: ex.tanker_number, forRunId: ex.for_run_id, amount: ex.amount ?? '', remarks: ex.remarks || '', noToll: !!ex.not_applicable, reason: '', file: null })}>
+                    Request change
+                  </button>
+                )}
                 {editable && (
                   <button className="p-1 text-gray-400 hover:text-red-600" title="Remove challan" onClick={() => del(ex.tanker_number, ex)}>
                     <Trash2 size={12}/>
@@ -903,6 +961,7 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       {editable && (<>
                         <button className="btn-secondary text-[11px] px-2 py-0.5" onClick={() => save(p.tanker_number, p.run_id)}>Save</button>
+                        {stateBadge(key)}
                         <button className="text-[11px] px-2 py-0.5 ml-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100"
                                 title="No toll for that period — clear it without a challan"
                                 onClick={() => markNoToll(p.tanker_number, p.run_id)}>No toll</button>
@@ -911,6 +970,64 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable }) {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Change request form (run under approval) */}
+      {req && (
+        <div className="border-t border-amber-200 bg-amber-50/60 px-3 py-3 text-xs space-y-2">
+          <div className="font-semibold text-amber-900">Request a toll challan change — {req.tn}{req.forRunId ? ` (run #${req.forRunId})` : ''}</div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col">New amount (₹)
+              <input type="number" step="0.01" min="0" className="input py-0.5 px-1 text-xs w-28 text-right" value={req.amount} disabled={req.noToll}
+                     onChange={e => setReq(p => ({ ...p, amount: e.target.value }))}/></label>
+            <label className="flex items-center gap-1 pb-1"><input type="checkbox" checked={req.noToll} onChange={e => setReq(p => ({ ...p, noToll: e.target.checked }))}/> No toll</label>
+            <label className="flex flex-col">New challan (PDF / JPG / PNG)
+              <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="text-[11px]" disabled={req.noToll} onChange={e => setReq(p => ({ ...p, file: e.target.files[0] || null }))}/></label>
+            <label className="flex flex-col">Remarks
+              <input type="text" className="input py-0.5 px-1 text-xs w-40" value={req.remarks} onChange={e => setReq(p => ({ ...p, remarks: e.target.value }))}/></label>
+            <label className="flex flex-col flex-1 min-w-[16rem]">Reason for the change *
+              <input type="text" className="input py-0.5 px-1 text-xs w-full" value={req.reason} onChange={e => setReq(p => ({ ...p, reason: e.target.value }))}/></label>
+            <button className="btn-primary text-[11px] px-3 py-1" onClick={submitReq}>Send for approval</button>
+            <button className="text-[11px] text-gray-500" onClick={() => setReq(null)}>cancel</button>
+          </div>
+          <div className="text-gray-600">PP01 receives an email with the current and proposed values and the attachment; the row changes only on approval.</div>
+        </div>
+      )}
+
+      {/* Change requests of this run */}
+      {changeReqs?.rows?.length > 0 && (
+        <div className="border-t border-gray-200">
+          <div className="px-3 py-2 text-xs bg-gray-50 font-semibold text-gray-700">Toll challan change requests · approver {changeReqs.approver_name}</div>
+          <table className="w-full text-xs">
+            <thead className="bg-blue-50 text-left text-gray-600">
+              <tr>{['#', 'Tanker', 'Period', 'Current', 'Proposed', 'Reason', 'Requested by', 'Status', ''].map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {changeReqs.rows.map(cr => (
+                <tr key={cr.id} className="border-t border-gray-100">
+                  <td className="px-3 py-1.5">{cr.id}</td>
+                  <td className="px-3 py-1.5 font-semibold text-[#005ba3]">{cr.tanker_number}</td>
+                  <td className="px-3 py-1.5">{cr.for_run_id ? `run #${cr.for_run_id}` : 'this run'}</td>
+                  <td className="px-3 py-1.5 text-gray-600">{cr.old_not_applicable ? 'No toll' : cr.old_amount == null ? 'no challan' : `₹ ${nf(cr.old_amount)}`}{cr.old_file_name ? ` · ${cr.old_file_name}` : ''}</td>
+                  <td className="px-3 py-1.5 font-semibold">{cr.new_not_applicable ? 'No toll' : `₹ ${nf(cr.new_amount)}`}
+                    {cr.has_new_file && <button className="ml-1 text-[#005ba3] underline font-normal" onClick={() => downloadProposed(cr)}>{cr.new_file_name}</button>}</td>
+                  <td className="px-3 py-1.5 italic text-gray-600">{cr.reason}</td>
+                  <td className="px-3 py-1.5">{cr.requested_by_name}<div className="text-[10px] text-gray-400">{fmtDate(String(cr.created_at).slice(0, 10))}</div></td>
+                  <td className="px-3 py-1.5">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${cr.status === 'pending' ? 'bg-amber-100 text-amber-800' : cr.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{cr.status}</span>
+                    {cr.decided_by_name && <div className="text-[10px] text-gray-400">{cr.decided_by_name}{cr.decision_note ? ` · ${cr.decision_note}` : ''}</div>}
+                  </td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">
+                    {cr.status === 'pending' && changeReqs.is_approver && (<>
+                      <button className="text-[11px] px-2 py-0.5 rounded bg-green-600 text-white mr-1" onClick={() => decideReq(cr.id, 'approve')}>Approve</button>
+                      <button className="text-[11px] px-2 py-0.5 rounded bg-red-600 text-white" onClick={() => decideReq(cr.id, 'reject')}>Reject</button>
+                    </>)}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
