@@ -41,8 +41,8 @@ export default function MaterialTripForm() {
 
   const [f, setF] = useState({
     material_id: '', start_point_id: '', delivery_point_id: '', supplier_doc_no: '',
-    purchase_qty_kgs: '', purchase_kg_fat: '', purchase_kg_snf: '', manual_km: '',
-    ack_date: '', ack_qty_kgs: '', ack_kg_fat: '', ack_kg_snf: '', remarks: '',
+    purchase_qty_kgs: '', purchase_fat_pct: '', purchase_snf_pct: '', manual_km: '',
+    ack_date: '', ack_qty_kgs: '', ack_fat_pct: '', ack_snf_pct: '', remarks: '',
   });
   const [purchaseDoc, setPurchaseDoc] = useState(null);
   const [ackDoc, setAckDoc] = useState(null);
@@ -56,9 +56,9 @@ export default function MaterialTripForm() {
       material_id: String(m.material_id || exec.material_id || ''),
       start_point_id: String(exec.start_point_id || ''), delivery_point_id: String(exec.delivery_point_id || ''),
       supplier_doc_no: m.supplier_doc_no || '',
-      purchase_qty_kgs: m.purchase_qty_kgs ?? '', purchase_kg_fat: m.purchase_kg_fat ?? '', purchase_kg_snf: m.purchase_kg_snf ?? '',
+      purchase_qty_kgs: m.purchase_qty_kgs ?? '', purchase_fat_pct: m.purchase_fat_pct ?? '', purchase_snf_pct: m.purchase_snf_pct ?? '',
       manual_km: m.manual_km ?? exec.actual_km ?? '',
-      ack_date: ack.ack_date || exec.execution_date || '', ack_qty_kgs: ack.qty_kgs ?? '', ack_kg_fat: ack.kg_fat ?? '', ack_kg_snf: ack.kg_snf ?? '',
+      ack_date: ack.ack_date || exec.execution_date || '', ack_qty_kgs: ack.qty_kgs ?? '', ack_fat_pct: ack.fat_pct ?? '', ack_snf_pct: ack.snf_pct ?? '',
       remarks: m.remarks || '',
     });
   }, [exec]);
@@ -84,15 +84,14 @@ export default function MaterialTripForm() {
   if (!exec) return <div className="text-red-500 p-8">Execution not found</div>;
   const closed = exec.status === 'closed';
   const m = exec.material || {};
-  // Documents give kgs + kg fat + kg SNF; litres and % are derived (KG_FACTOR 1.0285)
-  const derive = (kgs, kgFat, kgSnf) => ({
-    ltrs: kgs != null ? kgs / KG_FACTOR : null,
-    fat: kgs && kgFat != null ? kgFat / kgs * 100 : null,
-    snf: kgs && kgSnf != null ? kgSnf / kgs * 100 : null,
-    ts: kgFat != null || kgSnf != null ? (kgFat || 0) + (kgSnf || 0) : null,
-  });
-  const Pd = derive(n(f.purchase_qty_kgs), n(f.purchase_kg_fat), n(f.purchase_kg_snf));
-  const Ad = derive(n(f.ack_qty_kgs), n(f.ack_kg_fat), n(f.ack_kg_snf));
+  // Entry is kgs + fat % + SNF % (owner, 2026-10-06); litres, kg fat, kg SNF and TS are derived (KG_FACTOR 1.0285)
+  const derive = (kgs, fat, snf) => {
+    const kgFat = kgs != null && fat != null ? kgs * fat / 100 : null;
+    const kgSnf = kgs != null && snf != null ? kgs * snf / 100 : null;
+    return { ltrs: kgs != null ? kgs / KG_FACTOR : null, kgFat, kgSnf, ts: kgFat != null || kgSnf != null ? (kgFat || 0) + (kgSnf || 0) : null };
+  };
+  const Pd = derive(n(f.purchase_qty_kgs), n(f.purchase_fat_pct), n(f.purchase_snf_pct));
+  const Ad = derive(n(f.ack_qty_kgs), n(f.ack_fat_pct), n(f.ack_snf_pct));
   const pKgs = n(f.purchase_qty_kgs), aKgs = n(f.ack_qty_kgs);
   const variation = pKgs != null && aKgs != null ? aKgs - pKgs : null;
   const tsVariation = Pd.ts != null && Ad.ts != null ? Ad.ts - Pd.ts : null;
@@ -152,10 +151,10 @@ export default function MaterialTripForm() {
             <input className="input w-full" value={f.supplier_doc_no} disabled={closed} onChange={e => set('supplier_doc_no', e.target.value)}/></div>
           <div><label className="label">Purchased Qty (Kgs) *</label>{num('purchase_qty_kgs')}</div>
           <div><label className="label">Qty (Ltrs) — derived</label>{ro(Pd.ltrs)}</div>
-          <div><label className="label">Kg Fat *</label>{num('purchase_kg_fat', '0.001')}</div>
-          <div><label className="label">Kg SNF *</label>{num('purchase_kg_snf', '0.001')}</div>
-          <div><label className="label">Fat % — derived</label>{ro(Pd.fat)}</div>
-          <div><label className="label">SNF % — derived</label>{ro(Pd.snf)}</div>
+          <div><label className="label">Fat % *</label>{num('purchase_fat_pct', '0.01')}</div>
+          <div><label className="label">SNF % *</label>{num('purchase_snf_pct', '0.01')}</div>
+          <div><label className="label">Kg Fat — derived</label>{ro(Pd.kgFat, 3)}</div>
+          <div><label className="label">Kg SNF — derived</label>{ro(Pd.kgSnf, 3)}</div>
           <div><label className="label">TS (Kg Fat + Kg SNF)</label>{ro(Pd.ts, 3)}</div>
         </div>
         {docRow('purchase', purchaseDoc, setPurchaseDoc, m.purchase_doc_name)}
@@ -189,10 +188,10 @@ export default function MaterialTripForm() {
             <input type="date" className="input w-full" value={f.ack_date} disabled={closed} onChange={e => set('ack_date', e.target.value)}/></div>
           <div><label className="label">Acknowledged Qty (Kgs) *</label>{num('ack_qty_kgs')}</div>
           <div><label className="label">Qty (Ltrs) — derived</label>{ro(Ad.ltrs)}</div>
-          <div><label className="label">Kg Fat *</label>{num('ack_kg_fat', '0.001')}</div>
-          <div><label className="label">Kg SNF *</label>{num('ack_kg_snf', '0.001')}</div>
-          <div><label className="label">Fat % — derived</label>{ro(Ad.fat)}</div>
-          <div><label className="label">SNF % — derived</label>{ro(Ad.snf)}</div>
+          <div><label className="label">Fat % *</label>{num('ack_fat_pct', '0.01')}</div>
+          <div><label className="label">SNF % *</label>{num('ack_snf_pct', '0.01')}</div>
+          <div><label className="label">Kg Fat — derived</label>{ro(Ad.kgFat, 3)}</div>
+          <div><label className="label">Kg SNF — derived</label>{ro(Ad.kgSnf, 3)}</div>
           <div><label className="label">TS (Kg Fat + Kg SNF)</label>{ro(Ad.ts, 3)}</div>
         </div>
         {variation != null && (
