@@ -251,6 +251,8 @@ async function selectTripByKey(client, from_date, to_date, tankerNumber, planFor
         AND te.status = 'closed'
         AND EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
         AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
+        -- $2 / $4 are only used by the period WHERE; reference them so pg can type them
+        AND $2::date IS NOT NULL AND COALESCE($4::date, $2::date) IS NOT NULL
       ORDER BY te.id`,
       [from_date, to_date, ackCutoffFor(to_date), process.env.BILLING_CARRY_FORWARD_FLOOR || null, offsetDays, tankerNumber, planForDate]);
   return r.rows;
