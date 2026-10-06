@@ -154,6 +154,17 @@ export default function TankerBilling() {
     onError: e => toast.error(e.response?.data?.error || e.message, { duration: 8000 }),
   });
   const removeTrip = (t) => window.confirm(`Remove ${t.tanker_number} ${fmtDate(t.plan_for_date)} (${t.route_name || ''}) from this run?\n\nThe trip is not lost: it returns to the unbilled pool and the next fortnight's Execute / Re-add picks it up as carried forward. Use "Excl." instead if it must stay in this run unpaid.`) && removeMut.mutate(t.id);
+  // Pull one trip from outside the period / after the cutoff into this run (biller override, 2026-10-06)
+  const [pull, setPull] = useState(null); // null | { tanker_number, plan_for_date }
+  const pullMut = useMutation({
+    mutationFn: (body) => api.post(`/billing/runs/${openRunId}/pull-trip`, body),
+    onSuccess: r => {
+      toast.success(`${r.data.tanker_number} ${fmtDate(r.data.plan_for_date)} added to this run — key its state / km as usual`, { duration: 8000 });
+      setPull(null);
+      qc.invalidateQueries(['billing-run', openRunId]); qc.invalidateQueries(['billing-summary']); qc.invalidateQueries(['billing-runs']);
+    },
+    onError: e => toast.error(e.response?.data?.error || e.message, { duration: 8000 }),
+  });
   const readdMut = useMutation({
     mutationFn: (includeLate) => api.post(`/billing/runs/${openRunId}/readd-trips`, { include_late_acks: !!includeLate }),
     onSuccess: r => {
@@ -363,6 +374,26 @@ export default function TankerBilling() {
             onClick={() => window.confirm(`Include ${readdPreview.late_missing} trip(s) acknowledged after the cutoff (${fmtCutoff(readdPreview.ack_cutoff)}) in this run?\n\nTankers: ${readdPreview.late_tankers.join(', ')}\n\nThey would otherwise carry forward to the next fortnight. Each line will carry the remark "Acknowledged after cutoff".${readdPreview.missing ? `\n\nThe ${readdPreview.missing} regular unbilled trip(s) are added as well.` : ''}`) && readdMut.mutate(true)}>
             <RotateCcw size={13}/> {readdMut.isPending ? 'Re-adding…' : `Include late acknowledgements (${readdPreview.late_missing})`}
           </button>
+        )}
+        {editable && (
+          <button className="btn-secondary text-xs flex items-center gap-1.5"
+            title="Add one closed, acknowledged trip by tanker and lifting date even though it falls outside this period or was acknowledged after the cutoff. The line is remarked for approvers."
+            onClick={() => setPull({ tanker_number: '', plan_for_date: run.to_date })}>
+            <Play size={13}/> Pull trip…
+          </button>
+        )}
+        {pull && (
+          <div className="flex items-center gap-2 bg-white rounded-lg px-2 py-1 border border-amber-300">
+            <input className="input text-xs py-1 px-2 w-32" placeholder="Tanker no." value={pull.tanker_number} autoFocus
+              onChange={e => setPull(p => ({ ...p, tanker_number: e.target.value.toUpperCase() }))}/>
+            <input type="date" className="input text-xs py-1 px-2" value={pull.plan_for_date}
+              onChange={e => setPull(p => ({ ...p, plan_for_date: e.target.value }))} title="Milk lifting date"/>
+            <button className="btn-primary text-xs py-1 px-2" disabled={pullMut.isPending || !pull.tanker_number || !pull.plan_for_date}
+              onClick={() => window.confirm(`Add ${pull.tanker_number} lifted ${fmtDate(pull.plan_for_date)} to run #${openRunId}?\n\nThis bypasses the period / cutoff rule for that one trip; the line is remarked "Pulled into run by biller".`) && pullMut.mutate(pull)}>
+              {pullMut.isPending ? 'Adding…' : 'Add'}
+            </button>
+            <button className="text-xs text-gray-500" onClick={() => setPull(null)}>cancel</button>
+          </div>
         )}
         {canEdit && run?.status === 'pending_l1' && !(run?.approvals || []).some(a => a.decided_at) && (
           <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={withdrawMut.isPending}

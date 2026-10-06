@@ -167,10 +167,10 @@ function ackCutoffFor(to_date) {
   return `${d.toISOString().slice(0, 10)} ${hh}:${mm}:00`;
 }
 
-async function selectEligibleTrips(client, from_date, to_date, opts = {}) {
-  const includeLate = !!opts.includeLateAcks;
-  const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
-  const trips = await client.query(`
+// Column list shared by Execute / Re-add (period selection) and "Pull trip"
+// (one execution by tanker + lifting date, outside the period — 2026-10-06).
+// $1 from_date, $2 to_date, $3 ack cutoff, $4 carry-forward floor, $5 offset days.
+const ELIGIBLE_TRIP_SELECT = `
       SELECT te.id AS execution_id, tp.plan_for_date::text AS plan_for_date,
              tp.trip_kind, te.actual_km AS manual_km,
              (tp.plan_for_date + ($5::int) < $1::date) AS carried_forward,
@@ -216,7 +216,12 @@ async function selectEligibleTrips(client, from_date, to_date, opts = {}) {
       LEFT JOIN route_masters rm   ON rm.id = tp.route_id
       LEFT JOIN starting_points sp ON sp.id = tp.start_point_id
       LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
-      WHERE tp.plan_for_date + ($5::int)
+`;
+
+async function selectEligibleTrips(client, from_date, to_date, opts = {}) {
+  const includeLate = !!opts.includeLateAcks;
+  const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
+  const trips = await client.query(ELIGIBLE_TRIP_SELECT + `      WHERE tp.plan_for_date + ($5::int)
               BETWEEN GREATEST($1::date - INTERVAL '31 days', COALESCE($4::date, '1900-01-01'::date)) AND $2::date
         AND tp.status NOT IN ('cancelled','deleted')
         AND (
@@ -232,6 +237,23 @@ async function selectEligibleTrips(client, from_date, to_date, opts = {}) {
       ORDER BY tp.plan_for_date, t.tanker_number`,
       [from_date, to_date, ackCutoffFor(to_date), process.env.BILLING_CARRY_FORWARD_FLOOR || null, offsetDays, includeLate]);
   return trips.rows;
+}
+
+// One closed, acknowledged, unbilled execution by tanker + lifting date, in the
+// same row shape as selectEligibleTrips, regardless of the run's period or the
+// ack cutoff. Used by POST /runs/:id/pull-trip (biller override).
+async function selectTripByKey(client, from_date, to_date, tankerNumber, planForDate) {
+  const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
+  const r = await client.query(ELIGIBLE_TRIP_SELECT + `
+      WHERE regexp_replace(upper(t.tanker_number), '[^A-Z0-9]', '', 'g') = regexp_replace(upper($6::text), '[^A-Z0-9]', '', 'g')
+        AND tp.plan_for_date = $7::date
+        AND tp.status NOT IN ('cancelled','deleted')
+        AND te.status = 'closed'
+        AND EXISTS (SELECT 1 FROM trip_acknowledgements ta WHERE ta.execution_id = te.id)
+        AND NOT EXISTS (SELECT 1 FROM billing_run_trips brt WHERE brt.execution_id = te.id)
+      ORDER BY te.id`,
+      [from_date, to_date, ackCutoffFor(to_date), process.env.BILLING_CARRY_FORWARD_FLOOR || null, offsetDays, tankerNumber, planForDate]);
+  return r.rows;
 }
 
 // Insert eligible trips as billing lines of runId (system distance with leg
@@ -270,7 +292,7 @@ async function insertRunTrips(client, runId, trips, userId) {
        // billed km by default, system / Google stay as the reference.
        tr.trip_kind === 'material' && tr.manual_km != null ? rN(tr.manual_km) : rN(dist.total_km), JSON.stringify(dist.legs),
        !!tr.is_sale_tanker, !!tr.is_sale_tanker, !!tr.carried_forward,
-       tr.late_ack && !tr.is_sale_tanker ? `Acknowledged after cutoff (${tr.late_ack_at}) — added by biller` : null,
+       tr.pulled_remark || (tr.late_ack && !tr.is_sale_tanker ? `Acknowledged after cutoff (${tr.late_ack_at}) — added by biller` : null),
        tr.trip_kind || 'milk']);
   }
   return newCombos;
@@ -569,6 +591,49 @@ router.put('/runs/:id/trips', authenticate, authorizeOrModule('billing', ...canB
 });
 
 // ── DELETE /api/billing/runs/:id — discard a draft/rejected run ──────────────
+// ── POST /api/billing/runs/:id/pull-trip { tanker_number, plan_for_date } ──
+// Biller override (owner, 2026-10-06, to align run #20 with the manual tanker
+// cards): add ONE closed, acknowledged, unbilled trip to a draft / rejected run
+// even though its billing date falls outside the run's period or its
+// acknowledgement came after the cutoff. The line is remarked so approvers see
+// it; the trip can no longer be picked up by its own period's run.
+router.post('/runs/:id/pull-trip', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
+  const tanker = String(req.body?.tanker_number || '').trim();
+  const date = String(req.body?.plan_for_date || '').trim();
+  if (!tanker || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'tanker_number and plan_for_date (YYYY-MM-DD) required' });
+  const client = await pool.connect();
+  try {
+    const runId = req.params.id;
+    const run = (await client.query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (!EDITABLE.includes(run.status))
+      return res.status(400).json({ error: 'Trips can only be added to a draft / rejected run — withdraw it from approval first' });
+    const trips = await selectTripByKey(client, run.from_date, run.to_date, tanker, date);
+    if (!trips.length) {
+      const any = await client.query(`
+        SELECT te.status, (SELECT br.id FROM billing_run_trips brt JOIN billing_runs br ON br.id = brt.run_id WHERE brt.execution_id = te.id LIMIT 1) AS in_run
+        FROM trip_executions te JOIN trip_plans tp ON tp.id = te.trip_plan_id JOIN tankers t ON t.id = tp.tanker_id
+        WHERE regexp_replace(upper(t.tanker_number), '[^A-Z0-9]', '', 'g') = regexp_replace(upper($1::text), '[^A-Z0-9]', '', 'g')
+          AND tp.plan_for_date = $2::date AND te.status <> 'cancelled' AND tp.status NOT IN ('cancelled','deleted') LIMIT 1`, [tanker, date]);
+      const a = any.rows[0];
+      return res.status(404).json({ error: !a ? `No trip of ${tanker} lifted on ${fmtDateDisplay(date)} in the portal`
+        : a.in_run ? `That trip is already in Billing Run #${a.in_run}`
+        : `That trip is ${a.status.replace('_', ' ')} — it must be closed (acknowledged) before it can be billed` });
+    }
+    const remark = `Pulled into run #${runId} by biller (lifted ${fmtDateDisplay(date)}, bills ${fmtDateDisplay(trips[0].plan_for_date)} + offset; outside ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)})`;
+    await client.query('BEGIN');
+    const newCombos = await insertRunTrips(client, runId, trips.map(t => ({ ...t, carried_forward: false, pulled_remark: remark })), req.user.id);
+    await client.query('COMMIT');
+    await refreshRunTotal(runId);
+    console.log(`[billing] run ${runId}: ${tanker} ${date} pulled in by ${req.user.user_id || req.user.id}`);
+    res.json({ added: trips.length, tanker_number: trips[0].tanker_number, plan_for_date: trips[0].plan_for_date, new_combinations: newCombos });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Billing pull-trip error:', err);
+    res.status(500).json({ error: 'Failed to add the trip' });
+  } finally { client.release(); }
+});
+
 // ── DELETE /api/billing/runs/:id/trips/:tripId — remove one line from an
 // editable run. The trip goes back to the unbilled pool, so the next fortnight's
 // Execute (or Re-add) picks it up as carried forward — unlike "Excl.", which
