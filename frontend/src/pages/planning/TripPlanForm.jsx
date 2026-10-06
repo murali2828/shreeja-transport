@@ -185,7 +185,7 @@ export default function TripPlanForm() {
       </div>
 
       {isMaterial && (
-        <div className="card p-4 bg-purple-50 border-purple-200 text-sm text-purple-900">
+        <div className="card p-4 bg-purple-50 border-purple-200 text-sm text-purple-900 relative z-20">
           <b>Material trip:</b> the tanker buys a material (e.g. pasteurised milk) at the <b>supplier</b> (starting point) and delivers it to the
           <b> customer</b> (delivery point). No BMCU chain — the executor keys purchased and acknowledged quantities with the supplier's and customer's documents.
           <div className="mt-3 max-w-md">
