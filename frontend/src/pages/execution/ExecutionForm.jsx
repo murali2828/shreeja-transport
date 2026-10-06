@@ -1174,10 +1174,10 @@ export default function ExecutionForm() {
             <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
                    title="Tanker OUT — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click Gate Pass.">
               OUT<span className="text-red-400">*</span>
-              <input type="date" className="input py-0.5 px-1 text-[11px]" max={today} disabled={outLocked}
+              <input type="date" className="input py-0.5 px-1 text-[11px] disabled:opacity-100 disabled:bg-green-50 disabled:text-gray-900 disabled:font-semibold disabled:border-green-300" max={today} disabled={outLocked}
                      value={outDate} onChange={e => setOutDate(e.target.value)}/>
               <input type="text" placeholder="HH:MM" maxLength={5} disabled={outLocked}
-                     className="input py-0.5 px-1 text-[11px] w-16"
+                     className="input py-0.5 px-1 text-[11px] w-16 disabled:opacity-100 disabled:bg-green-50 disabled:text-gray-900 disabled:font-semibold disabled:border-green-300"
                      value={outTime} onChange={e => setOutTime(e.target.value)}/>
             </label>
             <button onClick={() => fire('gate_pass', outDate, outTime, 'Tanker OUT')}
@@ -1190,10 +1190,10 @@ export default function ExecutionForm() {
             <label className="flex items-center gap-1 text-[11px] text-white/90 whitespace-nowrap"
                    title="Tanker IN (arrival at the plant) — pick the date, TYPE the time as HH:MM (24-hour). Blank = now. Applies when you click COA or Unload.">
               IN<span className="text-red-400">*</span>
-              <input type="date" className="input py-0.5 px-1 text-[11px]" max={today} disabled={inLocked}
+              <input type="date" className="input py-0.5 px-1 text-[11px] disabled:opacity-100 disabled:bg-green-50 disabled:text-gray-900 disabled:font-semibold disabled:border-green-300" max={today} disabled={inLocked}
                      value={inDate} onChange={e => setInDate(e.target.value)}/>
               <input type="text" placeholder="HH:MM" maxLength={5} disabled={inLocked}
-                     className="input py-0.5 px-1 text-[11px] w-16"
+                     className="input py-0.5 px-1 text-[11px] w-16 disabled:opacity-100 disabled:bg-green-50 disabled:text-gray-900 disabled:font-semibold disabled:border-green-300"
                      value={inTime} onChange={e => setInTime(e.target.value)}/>
             </label>
             <button onClick={() => fire('coa', inDate, inTime, 'Tanker IN')}
