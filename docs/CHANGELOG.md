@@ -10,6 +10,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ### Changed
 - Billing: acknowledgement cutoff moved from 23:59:59 of the period's last day to 06:00 on the following morning (16th / 1st), configurable as `BILLING_ACK_CUTOFF_TIME`; night deliveries of the last day acknowledged before 06:00 now bill in their own fortnight (owner, 2026-10-05).
 
+### Changed
+- Material trips: purchase and customer-acknowledgement sections are keyed in kgs with kg fat and kg SNF, as on the supplier's and customer's documents; litres, fat %, SNF % and TS are derived (KG_FACTOR 1.0285) and stored, `trip_material_data.purchase_kg_fat / purchase_kg_snf` (migration 050, owner 2026-10-06).
+
 ### Added
 - Billing: "Pull trip…" on a draft / rejected run (`POST /runs/:id/pull-trip` with tanker number + lifting date) adds one closed, acknowledged, unbilled trip from outside the period or after the cutoff; the line is remarked "Pulled into run by biller" (owner decision 2026-10-06, run #20 alignment with the manual tanker cards).
 - Billing: ✕ on a trip line of a draft / rejected run removes it from the run (`DELETE /runs/:id/trips/:tripId`) so it returns to the unbilled pool and carries forward to the next fortnight — unlike Excl., which keeps it in the run unpaid. A Sale-Tanker-flagged line the biller un-excludes is now treated as a paid trip in the vendor email sheet and the run Excel (billing team request, 2026-10-06).

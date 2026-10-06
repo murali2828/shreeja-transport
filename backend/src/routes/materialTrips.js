@@ -18,7 +18,7 @@ const path    = require('path');
 const crypto  = require('crypto');
 const { pool, query } = require('../config/db');
 const { authenticate, authorizeOrModule } = require('../middleware/auth');
-const { applyExecutionData, computeExecutionDistance, calcKgs } = require('../services/executionData');
+const { applyExecutionData, computeExecutionDistance } = require('../services/executionData');
 
 const UPLOAD_DIR = path.join(process.env.UPLOAD_DIR || path.join(__dirname, '../../uploads/documents'), 'material');
 try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); }
@@ -37,6 +37,8 @@ const docUpload = (req, res, next) => uploader.fields([{ name: 'purchase_doc', m
 });
 
 const EXEC_ROLES = ['execution', 'admin', 'planner', 'executor', 'biller'];
+const KG_FACTOR = 1.0285; // litres → kg, shared with Assure (ADR-006)
+const r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000, r4 = v => Math.round(v * 10000) / 10000;
 const num = v => (v === undefined || v === null || v === '' ? null : (Number.isFinite(parseFloat(v)) ? parseFloat(v) : NaN));
 
 function storeFile(file) {
@@ -70,10 +72,26 @@ router.put('/:id', authenticate, authorizeOrModule(...EXEC_ROLES), docUpload, as
     if (inRun.rows.length)
       return res.status(400).json({ error: `This trip is part of Billing Run #${inRun.rows[0].id} (${inRun.rows[0].status}) — it can't be edited directly.` });
 
-    const pq = num(b.purchase_qty_litres), pf = num(b.purchase_fat_pct), ps = num(b.purchase_snf_pct);
+    // Documents state kgs + kg fat + kg SNF (owner, 2026-10-06); litres and
+    // percentages are accepted too and whichever is missing is derived.
+    const side = (prefix) => {
+      let kgs = num(b[`${prefix}_qty_kgs`]), ltrs = num(b[`${prefix}_qty_litres`]);
+      let kgFat = num(b[`${prefix}_kg_fat`]), kgSnf = num(b[`${prefix}_kg_snf`]);
+      let fat = num(b[`${prefix}_fat_pct`]), snf = num(b[`${prefix}_snf_pct`]);
+      if (kgs == null && ltrs != null) kgs = r4(ltrs * KG_FACTOR);
+      if (ltrs == null && kgs != null) ltrs = r2(kgs / KG_FACTOR);
+      if (kgs) {
+        if (fat == null && kgFat != null) fat = r3(kgFat / kgs * 100);
+        if (snf == null && kgSnf != null) snf = r3(kgSnf / kgs * 100);
+        if (kgFat == null && fat != null) kgFat = r4(kgs * fat / 100);
+        if (kgSnf == null && snf != null) kgSnf = r4(kgs * snf / 100);
+      }
+      return { kgs, ltrs, kgFat, kgSnf, fat, snf };
+    };
+    const P = side('purchase'), A = side('ack');
+    const pq = P.ltrs, pf = P.fat, ps = P.snf, aq = A.ltrs, af = A.fat, as = A.snf;
     const km = num(b.manual_km);
-    const aq = num(b.ack_qty_litres), af = num(b.ack_fat_pct), as = num(b.ack_snf_pct);
-    for (const [label, v] of [['Purchased qty', pq], ['Purchased fat', pf], ['Purchased SNF', ps], ['Km', km], ['Acknowledged qty', aq], ['Acknowledged fat', af], ['Acknowledged SNF', as]])
+    for (const [label, v] of [['Purchased kgs', P.kgs], ['Purchased kg fat', P.kgFat], ['Purchased kg SNF', P.kgSnf], ['Km', km], ['Acknowledged kgs', A.kgs], ['Acknowledged kg fat', A.kgFat], ['Acknowledged kg SNF', A.kgSnf]])
       if (Number.isNaN(v) || (v != null && v < 0)) return res.status(400).json({ error: `${label} must be a number` });
     const close = b.close === 'true' || b.close === true;
     if (close) {
@@ -90,26 +108,27 @@ router.put('/:id', authenticate, authorizeOrModule(...EXEC_ROLES), docUpload, as
     const prev = (await client.query('SELECT * FROM trip_material_data WHERE execution_id = $1', [ex.id])).rows[0] || {};
     const purchaseFile = f.purchase_doc?.[0] ? storeFile(f.purchase_doc[0]) : prev.purchase_doc_file || null;
     const ackFile      = f.ack_doc?.[0]      ? storeFile(f.ack_doc[0])      : prev.ack_doc_file || null;
-    const pkgs = num(b.purchase_qty_kgs) || (pq != null ? Math.round(calcKgs(pq) * 10000) / 10000 : null);
+    const pkgs = P.kgs;
     await client.query(`
       INSERT INTO trip_material_data
         (execution_id, material_id, supplier_doc_no, purchase_qty_litres, purchase_qty_kgs, purchase_fat_pct, purchase_snf_pct,
-         purchase_doc_file, purchase_doc_name, manual_km, ack_doc_file, ack_doc_name, remarks, updated_by, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+         purchase_doc_file, purchase_doc_name, manual_km, ack_doc_file, ack_doc_name, remarks, updated_by, updated_at, purchase_kg_fat, purchase_kg_snf)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),$15,$16)
       ON CONFLICT (execution_id) DO UPDATE SET
         material_id=$2, supplier_doc_no=$3, purchase_qty_litres=$4, purchase_qty_kgs=$5, purchase_fat_pct=$6, purchase_snf_pct=$7,
-        purchase_doc_file=$8, purchase_doc_name=$9, manual_km=$10, ack_doc_file=$11, ack_doc_name=$12, remarks=$13, updated_by=$14, updated_at=NOW()`,
+        purchase_doc_file=$8, purchase_doc_name=$9, manual_km=$10, ack_doc_file=$11, ack_doc_name=$12, remarks=$13, updated_by=$14, updated_at=NOW(),
+        purchase_kg_fat=$15, purchase_kg_snf=$16`,
       [ex.id, num(b.material_id) || ex.material_id || null, (b.supplier_doc_no || '').trim() || null, pq, pkgs, pf, ps,
        purchaseFile, f.purchase_doc?.[0] ? f.purchase_doc[0].originalname : prev.purchase_doc_name || null,
        km, ackFile, f.ack_doc?.[0] ? f.ack_doc[0].originalname : prev.ack_doc_name || null,
-       (b.remarks || '').trim() || null, req.user.id]);
+       (b.remarks || '').trim() || null, req.user.id, P.kgFat, P.kgSnf]);
     if (num(b.material_id)) await client.query('UPDATE trip_plans SET material_id=$1 WHERE id=$2', [num(b.material_id), ex.plan_id]);
 
     // Acknowledgement as one FC chamber (customer's figures); km as actual_km.
     // applyExecutionData recomputes the distance chain (start → delivery) so
     // the Google reference is refreshed every save.
     const acknowledgements = aq != null
-      ? [{ chamber: 'FC', ack_date: b.ack_date || null, qty_litres: aq, qty_kgs: num(b.ack_qty_kgs) || null, fat_pct: af, snf_pct: as, description: 'Customer acknowledgement' }]
+      ? [{ chamber: 'FC', ack_date: b.ack_date || null, qty_litres: aq, qty_kgs: A.kgs || null, fat_pct: af, snf_pct: as, description: 'Customer acknowledgement' }]
       : [];
     const { execution, dist } = await applyExecutionData(client, ex.id, {
       actual_km: km, start_point_id: num(b.start_point_id) || null, delivery_point_id: num(b.delivery_point_id) || null,
