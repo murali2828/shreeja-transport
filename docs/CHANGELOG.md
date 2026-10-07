@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Security
+- Viewer role is read-only: a user holding only `viewer` is refused every POST / PUT / DELETE by all three authorisation gates, whatever module flags the role carries (it was able to save executions and edit billing runs through its execution / billing module flags); change-request creation now goes through the execution gate (owner, 2026-10-07).
+
 ### Changed
 - QA Dispatch Entry: compartment chips come from the tanker's compartment count in Tanker Master (`2C` → FC, BC; `3C` → FC, MC, BC) and several may be ticked on one row when one BMCU's milk is split; stored and reported as e.g. `FC,MC` (migration 054, owner 2026-10-07).
 

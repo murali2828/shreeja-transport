@@ -13,7 +13,7 @@ const router  = express.Router();
 const crypto  = require('crypto');
 const nodemailer = require('nodemailer');
 const { pool, query } = require('../config/db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorizeOrModule } = require('../middleware/auth');
 const { applyExecutionData } = require('../services/executionData');
 const { executionSnapshot, diffSnapshots, logChanges } = require('../services/changeTracker');
 
@@ -334,7 +334,7 @@ async function decideRequest(crId, decision, decider, note) {
 
 // ─── POST /api/executions/:id/change-request (mounted under /api/change-requests too) ─
 // Body: { reason, changes: { actual_km, bmcus, shift_rows, entries, acknowledgements, ack_date } }
-router.post('/executions/:id', authenticate, async (req, res) => {
+router.post('/executions/:id', authenticate, authorizeOrModule('execution', 'admin', 'planner', 'executor', 'biller'), async (req, res) => {
   const { reason, changes } = req.body;
   if (!changes || typeof changes !== 'object')
     return res.status(400).json({ error: 'changes payload required' });

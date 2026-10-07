@@ -45,6 +45,19 @@ async function authenticate(req, res, next) {
 const rolesOf = u => (Array.isArray(u?.roles) && u.roles.length ? u.roles : [u?.role].filter(Boolean));
 const hasRole = (u, ...names) => rolesOf(u).some(r => names.includes(r));
 
+// Viewer is read-only (owner, 2026-10-07): whatever modules the viewer role
+// is given, a user whose roles are ALL 'viewer' may only GET. Any other held
+// role lifts the restriction for that user. Applied by every gate below.
+const READ_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+const isReadOnlyUser = u => { const r = rolesOf(u); return r.length > 0 && r.every(x => x === 'viewer'); };
+function denyIfReadOnlyWrite(req, res) {
+  if (!READ_METHODS.includes(req.method) && isReadOnlyUser(req.user)) {
+    res.status(403).json({ error: 'Viewer role is read-only — it can see transactions and reports but not change them' });
+    return true;
+  }
+  return false;
+}
+
 // Union of the module permissions of every role the user holds.
 async function permissionsFor(roleNames) {
   const r = await query('SELECT permissions FROM roles WHERE name = ANY($1)', [roleNames]);
@@ -55,6 +68,7 @@ async function permissionsFor(roleNames) {
 
 function authorize(...roles) {
   return (req, res, next) => {
+    if (denyIfReadOnlyWrite(req, res)) return;
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (!hasRole(req.user, ...roles)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
@@ -71,6 +85,7 @@ const MODULES = ['masters', 'planning', 'execution', 'billing', 'reports', 'qual
 // 'admin' roles row can never lock the admin account out.
 function authorizeModule(moduleKey) {
   return async (req, res, next) => {
+    if (denyIfReadOnlyWrite(req, res)) return;
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (hasRole(req.user, 'admin')) return next();
     try {
@@ -95,6 +110,7 @@ function authorizeModule(moduleKey) {
 // authorize(...roles) already allowed — it only adds custom-role users.
 function authorizeOrModule(moduleKey, ...roles) {
   return async (req, res, next) => {
+    if (denyIfReadOnlyWrite(req, res)) return;
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (hasRole(req.user, 'admin')) return next();
     if (hasRole(req.user, ...roles)) return next();
@@ -111,4 +127,4 @@ function authorizeOrModule(moduleKey, ...roles) {
   };
 }
 
-module.exports = { authenticate, authorize, authorizeModule, authorizeOrModule, MODULES, rolesOf, hasRole, permissionsFor };
+module.exports = { authenticate, authorize, authorizeModule, authorizeOrModule, MODULES, rolesOf, hasRole, permissionsFor, isReadOnlyUser };
