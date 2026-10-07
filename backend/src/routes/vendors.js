@@ -6,7 +6,7 @@ const { query } = require('../config/db');
 const { authenticate, authorizeOrModule } = require('../middleware/auth');
 
 // GET /api/vendors?all=true
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authenticate, authorizeOrModule('masters', 'admin', 'planner', 'biller'), async (req, res) => {
   try {
     const includeAll = req.query.all === 'true';
     const r = await query(`

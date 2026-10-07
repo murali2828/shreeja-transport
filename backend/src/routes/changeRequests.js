@@ -545,8 +545,8 @@ async function portalDecision(req, res, decision) {
     res.status(err.code === 404 ? 404 : err.code === 400 ? 400 : 500).json({ error: err.message });
   }
 }
-router.post('/:id/approve', authenticate, (req, res) => portalDecision(req, res, 'approve'));
-router.post('/:id/reject',  authenticate, (req, res) => portalDecision(req, res, 'reject'));
+router.post('/:id/approve', authenticate, authorizeOrModule('execution', 'admin', 'planner', 'executor', 'biller'), (req, res) => portalDecision(req, res, 'approve'));
+router.post('/:id/reject',  authenticate, authorizeOrModule('execution', 'admin', 'planner', 'executor', 'biller'), (req, res) => portalDecision(req, res, 'reject'));
 
 module.exports = router;
 module.exports._internal = { changeDiff, sameVal };

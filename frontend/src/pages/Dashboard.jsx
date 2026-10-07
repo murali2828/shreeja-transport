@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Truck, ClipboardList, Play, CheckSquare, TrendingUp, Zap, Route } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
-import { isOnlyRole } from '../utils/roles';
+import { isOnlyRole, hasRole } from '../utils/roles';
 import { getPlans, getExecutions, getDistanceSummary, getTankerPosition } from '../api/index';
 
 // Tanker Position dashboard access: admins + transport incharge/module owner
@@ -49,6 +49,10 @@ function QuickAction({ icon: Icon, title, sub, onClick }) {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  // Quick actions follow the user's module flags (role audit, 2026-10-07)
+  const perms = user?.permissions || {};
+  const canPlanning = hasRole(user, 'admin') || perms.planning === true;
+  const canMasters  = hasRole(user, 'admin') || perms.masters === true;
   const navigate  = useNavigate();
   const today     = new Date().toISOString().slice(0, 10);
   const [selectedDate, setSelectedDate] = useState(today);
@@ -160,17 +164,17 @@ export default function Dashboard() {
       )}
 
       {/* Quick actions */}
-      {!isOnlyRole(user, 'executor') && (
+      {(canPlanning || canMasters) && (
         <div>
           <h3 className="section-title">Quick Actions</h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <QuickAction icon={ClipboardList} title="New Trip Plan"
-              sub="Create a manual trip plan" onClick={() => navigate('/planning/new')}/>
-            <QuickAction icon={Zap} title="Route Optimizer"
-              sub="Auto-generate optimised trips" onClick={() => navigate('/planning/optimize')}/>
-            <QuickAction icon={Route} title="Distance Master"
+            {canPlanning && <QuickAction icon={ClipboardList} title="New Trip Plan"
+              sub="Create a manual trip plan" onClick={() => navigate('/planning/new')}/>}
+            {canPlanning && <QuickAction icon={Zap} title="Route Optimizer"
+              sub="Auto-generate optimised trips" onClick={() => navigate('/planning/optimize')}/>}
+            {canMasters && <QuickAction icon={Route} title="Distance Master"
               sub={distSummary ? `${distSummary.coverage_pct}% coverage` : 'Manage road distances'}
-              onClick={() => navigate('/masters/distances')}/>
+              onClick={() => navigate('/masters/distances')}/>}
           </div>
         </div>
       )}

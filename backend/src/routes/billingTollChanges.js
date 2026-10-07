@@ -168,7 +168,7 @@ router.post('/runs/:runId', authenticate, authorizeOrModule('billing', ...canBil
 });
 
 // GET /api/billing/toll-changes?run_id=
-router.get('/', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const approver = await getApprover();
     const params = []; let where = '';
@@ -258,7 +258,7 @@ router.post('/:id/approve', authenticate, authorizeOrModule('billing', ...canBil
 router.post('/:id/reject',  authenticate, authorizeOrModule('billing', ...canBill), (req, res) => portalDecision(req, res, 'reject'));
 
 // GET /api/billing/toll-changes/:id/file — the proposed challan (pending requests)
-router.get('/:id/file', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/:id/file', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const r = await query('SELECT new_file_name, new_file_mime, new_file_data FROM billing_toll_change_requests WHERE id=$1', [req.params.id]);
     if (!r.rows.length || !r.rows[0].new_file_data) return res.status(404).json({ error: 'No proposed file on this request' });

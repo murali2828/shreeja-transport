@@ -6,7 +6,10 @@
 const express = require('express');
 const router  = express.Router();
 const { query, pool } = require('../config/db');
-const { authenticate, authorizeOrModule } = require('../middleware/auth');
+const { authenticate, authorizeOrModule, hasRole } = require('../middleware/auth');
+// Tanker Position: admin or the named transport in-charge logins (same list as the UI).
+const TANKER_POSITION_USERS = (process.env.TANKER_POSITION_USERS || 'pp01,mahesh.k@shreejamilk.com,dceo,krithiga.a@shreejamilk.com').split(',').map(s => s.trim().toLowerCase());
+const tankerPositionGate = (req, res, next) => (hasRole(req.user, 'admin') || TANKER_POSITION_USERS.includes(String(req.user.user_id || '').toLowerCase())) ? next() : res.status(403).json({ error: 'Tanker Position is limited to admins and the transport in-charge' });
 const ExcelJS = require('exceljs');
 const { fmtDateDisplay } = require('../utils/date');
 
@@ -14,7 +17,7 @@ const { fmtDateDisplay } = require('../utils/date');
 // GET /api/trip-docs/status?plan_for_date=YYYY-MM-DD
 // Bulk print status per plan of the date (for Active Trips buttons).
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/status', authenticate, async (req, res) => {
+router.get('/status', authenticate, authorizeOrModule('execution', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   const { plan_for_date } = req.query;
   if (!plan_for_date) return res.status(400).json({ error: 'plan_for_date required' });
   try {
@@ -37,7 +40,7 @@ router.get('/status', authenticate, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/trip-docs/:planId — print status for one plan (execution form).
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/:planId(\\d+)', authenticate, async (req, res) => {
+router.get('/:planId(\\d+)', authenticate, authorizeOrModule('execution', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   try {
     const r = await query(`
       SELECT doc_type, MIN(printed_at) AS first_printed_at, COUNT(*)::int AS count
@@ -154,7 +157,7 @@ function parseManualTs(v, label) {
 }
 
 // GET /api/trip-docs/non-trip?from_date=&to_date=
-router.get('/non-trip', authenticate, async (req, res) => {
+router.get('/non-trip', authenticate, authorizeOrModule('execution', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   const { from_date, to_date } = req.query;
   if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date required' });
   try {
@@ -337,7 +340,7 @@ async function buildTankerPosition() {
     };
 }
 
-router.get('/tanker-position', authenticate, async (req, res) => {
+router.get('/tanker-position', authenticate, tankerPositionGate, async (req, res) => {
   try {
     res.json(await buildTankerPosition());
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -347,7 +350,7 @@ router.get('/tanker-position', authenticate, async (req, res) => {
 // GET /api/trip-docs/tanker-position/report — same data as above, as an
 // Excel workbook (one row per active tanker: status, location, since, detail).
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/tanker-position/report', authenticate, async (req, res) => {
+router.get('/tanker-position/report', authenticate, tankerPositionGate, async (req, res) => {
   try {
     const built = await buildTankerPosition();
     const allRows = built.locations.flatMap(l => l.tankers);

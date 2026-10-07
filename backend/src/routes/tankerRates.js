@@ -103,7 +103,7 @@ async function findOverlap(row, excludeId = null) {
 }
 
 // ── GET /api/tanker-rates?state=&transport_type=&on_date=&capacity_kl= ───────
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authenticate, authorizeOrModule('masters', 'admin', 'planner', 'biller', 'viewer'), async (req, res) => {
   try {
     const cond = []; const params = [];
     if (req.query.state)          { params.push(req.query.state);          cond.push(`state = $${params.length}`); }
@@ -194,7 +194,7 @@ const MILEAGE = { 6: [6.4, 7], 9: [5.5, 6], 10: [5.5, 6], 11: [5, 5.5], 12: [5, 
   15: [3.5, 4], 17.4: [3, 3.6], 18: [3, 3.6], 19: [3, 3.6], 20: [3, 3.6], 21: [3, 3.6], 22: [3, 3.6],
   23: [3, 3.6], 24: [3, 3.6], 25: [3, 3.6], 26: [3, 3.6], 27: [3, 3.6], 28: [3, 3.6], 29: [3, 3.6], 30: [2.9, 3.2] };
 
-router.get('/template', authenticate, async (req, res) => {
+router.get('/template', authenticate, authorizeOrModule('masters', 'admin', 'planner', 'biller', 'viewer'), async (req, res) => {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Tanker Rates');
 

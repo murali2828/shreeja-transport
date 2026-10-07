@@ -851,7 +851,7 @@ async function buildTsWorkbookFull(reportDate, basis = 'plan') {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/reports/daily-ts?report_date=YYYY-MM-DD   (planning date)
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/daily-ts', authenticate, async (req, res) => {
+router.get('/daily-ts', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const reportDate = req.query.report_date || req.query.from_date;
   if (!reportDate) return res.status(400).json({ error: 'report_date required' });
   try {
@@ -862,7 +862,7 @@ router.get('/daily-ts', authenticate, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/reports/bmcu-wise?from_date=&to_date=
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/bmcu-wise', authenticate, async (req, res) => {
+router.get('/bmcu-wise', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from_date, to_date } = req.query;
   if (!from_date || !to_date)
     return res.status(400).json({ error: 'from_date and to_date required' });
@@ -896,7 +896,7 @@ router.get('/bmcu-wise', authenticate, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/reports/daily-ts/excel?report_date=YYYY-MM-DD  (planning date)
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/daily-ts/excel', authenticate, async (req, res) => {
+router.get('/daily-ts/excel', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { report_date } = req.query;
   const basis = req.query.date_basis || 'plan';
   if (!report_date) return res.status(400).json({ error: 'report_date required' });
@@ -1614,7 +1614,7 @@ function buildBmcuBreakupWorkbook(data) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/reports/bmcu-breakup?report_date=YYYY-MM-DD   (planning date)
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/bmcu-breakup', authenticate, async (req, res) => {
+router.get('/bmcu-breakup', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { report_date } = req.query;
   if (!report_date) return res.status(400).json({ error: 'report_date required' });
   try {
@@ -1625,7 +1625,7 @@ router.get('/bmcu-breakup', authenticate, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/reports/bmcu-breakup/excel?report_date=YYYY-MM-DD
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/bmcu-breakup/excel', authenticate, async (req, res) => {
+router.get('/bmcu-breakup/excel', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { report_date } = req.query;
   if (!report_date) return res.status(400).json({ error: 'report_date required' });
   try {
@@ -1770,7 +1770,7 @@ function buildDayUtilisationWorkbook(rows, fromDate, toDate, threshold) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/reports/day-utilisation?from_date=&to_date=&threshold=95
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/day-utilisation', authenticate, async (req, res) => {
+router.get('/day-utilisation', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from_date, to_date } = req.query;
   const threshold = parseFloat(req.query.threshold) || 95;
   if (!from_date) return res.status(400).json({ error: 'from_date required' });
@@ -1782,7 +1782,7 @@ router.get('/day-utilisation', authenticate, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/reports/day-utilisation/excel?from_date=&to_date=&threshold=95
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/day-utilisation/excel', authenticate, async (req, res) => {
+router.get('/day-utilisation/excel', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from_date, to_date } = req.query;
   const threshold = parseFloat(req.query.threshold) || 95;
   if (!from_date) return res.status(400).json({ error: 'from_date required' });
@@ -1955,7 +1955,7 @@ function buildTripDurationsWorkbook(data) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/reports/trip-durations?from_date=&to_date=
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/trip-durations', authenticate, async (req, res) => {
+router.get('/trip-durations', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from_date, to_date } = req.query;
   if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date required' });
   try {
@@ -1966,7 +1966,7 @@ router.get('/trip-durations', authenticate, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/reports/trip-durations/excel?from_date=&to_date=
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/trip-durations/excel', authenticate, async (req, res) => {
+router.get('/trip-durations/excel', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from_date, to_date } = req.query;
   if (!from_date || !to_date) return res.status(400).json({ error: 'from_date and to_date required' });
   try {

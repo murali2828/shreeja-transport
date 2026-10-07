@@ -68,7 +68,7 @@ const { saleTankerSql } = require('../utils/saleTanker');
 })();
 
 // GET /api/executions
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authenticate, authorizeOrModule('execution', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   try {
     const { status, execution_date, from_date, to_date, tanker_id } = req.query;
     let sql = `
@@ -131,7 +131,7 @@ router.put('/coverage/missed-remark', authenticate, authorizeOrModule('execution
   }
 });
 
-router.get('/coverage', authenticate, async (req, res) => {
+router.get('/coverage', authenticate, authorizeOrModule('execution', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   const date = req.query.date;
   if (!date) return res.status(400).json({ error: 'date required' });
   try {
@@ -255,7 +255,7 @@ router.get('/coverage', authenticate, async (req, res) => {
 });
 
 // GET /api/executions/:id
-router.get('/:id', authenticate, async (req, res) => {
+router.get('/:id', authenticate, authorizeOrModule('execution', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   try {
     const exec = await query(`
       SELECT te.*,
@@ -447,7 +447,7 @@ router.put('/:id', authenticate, authorizeOrModule('execution', 'admin','planner
 });
 
 // GET /api/executions/:id/distance — per-leg road-distance breakdown
-router.get('/:id/distance', authenticate, async (req, res) => {
+router.get('/:id/distance', authenticate, authorizeOrModule('execution', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

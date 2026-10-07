@@ -12,7 +12,7 @@
 const express = require('express');
 const router  = express.Router();
 const { query } = require('../config/db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorizeOrModule } = require('../middleware/auth');
 const { saleTankerSql, saleTankerNumberSql } = require('../utils/saleTanker');
 
 const KG = 1.0285;
@@ -398,7 +398,7 @@ async function buildSummary(params) {
   }
 }
 
-router.get('/summary', authenticate, async (req, res) => {
+router.get('/summary', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
   try {
@@ -410,7 +410,7 @@ router.get('/summary', authenticate, async (req, res) => {
 });
 
 // ─── Excel export of the current dashboard view ──────────────────────────────
-router.get('/export', authenticate, async (req, res) => {
+router.get('/export', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
   try {
@@ -468,7 +468,7 @@ router.get('/export', authenticate, async (req, res) => {
 // 1. pending acknowledgements (with age; >24h flagged)
 // 2. trips loaded past 110% of tanker capacity
 // 3. single-trip TS loss worse than −25 Kg (Ack Vs RMRD)
-router.get('/alerts', authenticate, async (req, res) => {
+router.get('/alerts', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
   try {
@@ -512,7 +512,7 @@ router.get('/alerts', authenticate, async (req, res) => {
 // are excluded so they don't inflate the Unused count every period.
 // Sale-tanker trips (planner flag OR "SALE…" tanker) are excluded from every
 // figure here, and the "SALE…" placeholder tanker is not a fleet vehicle.
-router.get('/utilisation', authenticate, async (req, res) => {
+router.get('/utilisation', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
   try {
@@ -682,7 +682,7 @@ router.get('/utilisation', authenticate, async (req, res) => {
 //                      (chained while leftovers continue)
 //   effective oldest = the oldest shift date still represented in the silo
 // Milk age = lifting date − effective oldest milk date.
-router.get('/freshness', authenticate, async (req, res) => {
+router.get('/freshness', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
   try {
@@ -793,7 +793,7 @@ router.get('/freshness', authenticate, async (req, res) => {
 // Filters compose: date range (+ optional single date), delivery point id,
 // route name, tanker number. Returns one row per trip with the three section
 // totals and gains — each row links back to its execution screen.
-router.get('/trips', authenticate, async (req, res) => {
+router.get('/trips', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
   try {
@@ -829,7 +829,7 @@ router.get('/trips', authenticate, async (req, res) => {
 });
 
 // ─── Drill-down: one BMCU's Dispatch Vs RMRD per trip ────────────────────────
-router.get('/bmcu-detail', authenticate, async (req, res) => {
+router.get('/bmcu-detail', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from, to, bmcu_code } = req.query;
   if (!from || !to || !bmcu_code)
     return res.status(400).json({ error: 'from, to and bmcu_code are required' });

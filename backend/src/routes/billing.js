@@ -390,7 +390,7 @@ router.post('/runs/:id/readd-trips', authenticate, authorizeOrModule('billing', 
 // ── GET /api/billing/rate-lookup — live rate preview for the run editor ──────
 // Called when the biller selects a State so the rate/amount show immediately,
 // before Save. Same findRate the save path uses.
-router.get('/rate-lookup', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/rate-lookup', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const { state, transport_type, capacity_litres, plan_date } = req.query;
     const rate = await findRate(state, transport_type, capacity_litres, plan_date);
@@ -399,7 +399,7 @@ router.get('/rate-lookup', authenticate, authorizeOrModule('billing', ...canBill
 });
 
 // ── GET /api/billing/runs — list ─────────────────────────────────────────────
-router.get('/runs', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/runs', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const r = await query(`
       SELECT br.*, br.from_date::text AS from_date, br.to_date::text AS to_date,
@@ -414,7 +414,7 @@ router.get('/runs', authenticate, authorizeOrModule('billing', ...canBill, 'view
 // is touched by the trips of a run (run_id) or by the trips a fortnight run
 // WOULD pick up (from_date/to_date, billing-date basis). Lets the biller fix
 // masters before executing, and explains "missing" legs on an existing run.
-router.get('/missing-coordinates', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/missing-coordinates', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const { run_id, from_date, to_date } = req.query;
     const offsetDays = Math.max(0, parseInt(process.env.BILLING_DATE_OFFSET_DAYS || '0', 10) || 0);
@@ -472,7 +472,7 @@ router.get('/missing-coordinates', authenticate, authorizeOrModule('billing', ..
 });
 
 // ── GET /api/billing/runs/:id — full detail ──────────────────────────────────
-router.get('/runs/:id', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/runs/:id', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const run = await query(`
       SELECT br.*, br.from_date::text AS from_date, br.to_date::text AS to_date
@@ -729,7 +729,7 @@ async function pendingEarlierTolls(run) {
 
 // GET /runs/:id/tolls — challan rows of this run (own period + carried in)
 // plus the earlier-cycle tankers still owing a challan.
-router.get('/runs/:id/tolls', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/runs/:id/tolls', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const run = (await query('SELECT id, from_date::text AS from_date FROM billing_runs WHERE id=$1', [req.params.id])).rows[0];
     if (!run) return res.status(404).json({ error: 'Run not found' });
@@ -877,7 +877,7 @@ router.delete('/runs/:id/tolls/:tollId', authenticate, authorizeOrModule('billin
   } catch (err) { res.status(500).json({ error: 'Failed to delete toll challan' }); }
 });
 
-router.get('/runs/:id/tolls/:tollId/file', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/runs/:id/tolls/:tollId/file', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const r = await query(
       'SELECT file_name, file_mime, file_data FROM billing_run_tolls WHERE id=$1 AND run_id=$2',
@@ -939,7 +939,7 @@ async function runSummaries(runId, { vendorIds } = {}) {
   return { tankers: tankers.rows, vendors: vendors.rows, dates: dates.rows };
 }
 
-router.get('/runs/:id/summary', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/runs/:id/summary', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try { res.json(await runSummaries(req.params.id)); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1059,7 +1059,7 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
   return { wb, run, trips, tankers, vendors };
 }
 
-router.get('/runs/:id/report', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/runs/:id/report', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const vendorIds = req.query.vendor_ids
       ? String(req.query.vendor_ids).split(',').map(Number).filter(Number.isFinite) : undefined;
@@ -1633,7 +1633,7 @@ async function reportData(q) {
   return { trips: trips.rows, dates: dates.rows, tankers: tankers.rows, vendors: vendors.rows };
 }
 
-router.get('/report-data', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/report-data', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
   try { res.json(await reportData(req.query)); }
@@ -1641,7 +1641,7 @@ router.get('/report-data', authenticate, authorizeOrModule('billing', ...canBill
 });
 
 // Excel of the cross-run report
-router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBill, 'viewer'), async (req, res) => {
+router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
   try {

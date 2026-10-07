@@ -110,31 +110,31 @@ function AppRoutes() {
 
         {/* Masters — admin + planner */}
         <Route path="masters/tankers" element={
-          <ProtectedRoute roles={['admin']}><TankerMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']} module="masters"><TankerMaster/></ProtectedRoute>
         }/>
         <Route path="masters/bmcus" element={
-          <ProtectedRoute roles={['admin']}><BmcuMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']} module="masters"><BmcuMaster/></ProtectedRoute>
         }/>
         <Route path="masters/routes" element={
-          <ProtectedRoute roles={['admin']}><RouteMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']} module="masters"><RouteMaster/></ProtectedRoute>
         }/>
         <Route path="masters/locations" element={
-          <ProtectedRoute roles={['admin']}><LocationMasters/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']} module="masters"><LocationMasters/></ProtectedRoute>
         }/>
         <Route path="masters/tanker-rates" element={
           <ProtectedRoute roles={['admin']} module="masters"><TankerRates/></ProtectedRoute>
         }/>
         <Route path="masters/distances" element={
-          <ProtectedRoute roles={['admin']}><DistanceMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']} module="masters"><DistanceMaster/></ProtectedRoute>
         }/>
         <Route path="masters/vendors" element={
-          <ProtectedRoute roles={['admin']}><VendorMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']} module="masters"><VendorMaster/></ProtectedRoute>
         }/>
         <Route path="masters/materials" element={
-          <ProtectedRoute roles={['admin']}><MaterialMaster/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']} module="masters"><MaterialMaster/></ProtectedRoute>
         }/>
         <Route path="masters/documents" element={
-          <ProtectedRoute roles={['admin','executor']}><TankerDocuments/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','executor']} module="masters"><TankerDocuments/></ProtectedRoute>
         }/>
         <Route path="masters/roles" element={
           <ProtectedRoute roles={['admin']}><RoleManagement/></ProtectedRoute>
@@ -143,44 +143,44 @@ function AppRoutes() {
           <ProtectedRoute roles={['admin']}><UserManagement/></ProtectedRoute>
         }/>
         <Route path="masters/email-config" element={
-          <ProtectedRoute roles={['admin']}><EmailConfig/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']} module="masters"><EmailConfig/></ProtectedRoute>
         }/>
         <Route path="masters/plan-emails" element={
-          <ProtectedRoute roles={['admin']}><PlanEmailConfig/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']} module="masters"><PlanEmailConfig/></ProtectedRoute>
         }/>
 
         {/* Planning — admin + planner */}
         <Route path="planning" element={
-          <ProtectedRoute roles={['admin','planner']}><TripPlanList/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','planner']} module="planning"><TripPlanList/></ProtectedRoute>
         }/>
         <Route path="planning/new" element={
-          <ProtectedRoute roles={['admin','planner']}><TripPlanForm/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','planner']} module="planning"><TripPlanForm/></ProtectedRoute>
         }/>
         <Route path="planning/:id/edit" element={
-          <ProtectedRoute roles={['admin','planner']}><TripPlanForm/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','planner']} module="planning"><TripPlanForm/></ProtectedRoute>
         }/>
         <Route path="planning/deleted" element={
-          <ProtectedRoute roles={['admin','planner']}><DeletedPlansList/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','planner']} module="planning"><DeletedPlansList/></ProtectedRoute>
         }/>
         <Route path="planning/optimize" element={
-          <ProtectedRoute roles={['admin','planner']}><RouteOptimizer/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','planner']} module="planning"><RouteOptimizer/></ProtectedRoute>
         }/>
         <Route path="planning/optimize-day" element={
-          <ProtectedRoute roles={['admin','planner']}><DayOptimizer/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','planner']} module="planning"><DayOptimizer/></ProtectedRoute>
         }/>
 
         {/* Execution — all roles */}
-        <Route path="execution"           element={<ExecutionList/>}/>
-        <Route path="execution/closed"    element={<ClosedTrips/>}/>
-        <Route path="execution/gate-pass" element={<NonTripGatePass/>}/>
-        <Route path="tanker-position"     element={<TankerPosition/>}/>
+        <Route path="execution" element={<ProtectedRoute roles={['admin','planner','executor','biller','viewer']} module="execution"><ExecutionList/></ProtectedRoute>}/>
+        <Route path="execution/closed" element={<ProtectedRoute roles={['admin','planner','executor','biller','viewer']} module="execution"><ClosedTrips/></ProtectedRoute>}/>
+        <Route path="execution/gate-pass" element={<ProtectedRoute roles={['admin','planner','executor','biller','viewer']} module="execution"><NonTripGatePass/></ProtectedRoute>}/>
+        <Route path="tanker-position" element={<ProtectedRoute roles={['admin','planner','executor','biller','viewer']} module="execution"><TankerPosition/></ProtectedRoute>}/>
         <Route path="tracking"            element={
-          <ProtectedRoute roles={['admin','planner','executor','biller','viewer']}><LiveTracking/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','planner','executor','biller','viewer']} module="execution"><LiveTracking/></ProtectedRoute>
         }/>
-        <Route path="approvals"           element={<Approvals/>}/>
-        <Route path="execution/:id"       element={<ExecutionForm/>}/>
-        <Route path="execution/:id/acknowledge" element={<AcknowledgementForm/>}/>
-        <Route path="execution/:id/material"    element={<MaterialTripForm/>}/>
+        <Route path="approvals" element={<ProtectedRoute roles={['admin','planner','executor','biller','viewer']} module="execution"><Approvals/></ProtectedRoute>}/>
+        <Route path="execution/:id" element={<ProtectedRoute roles={['admin','planner','executor','biller','viewer']} module="execution"><ExecutionForm/></ProtectedRoute>}/>
+        <Route path="execution/:id/acknowledge" element={<ProtectedRoute roles={['admin','planner','executor','biller','viewer']} module="execution"><AcknowledgementForm/></ProtectedRoute>}/>
+        <Route path="execution/:id/material" element={<ProtectedRoute roles={['admin','planner','executor','biller','viewer']} module="execution"><MaterialTripForm/></ProtectedRoute>}/>
 
         {/* Reports — all roles */}
         <Route path="billing" element={

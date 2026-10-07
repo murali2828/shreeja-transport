@@ -5,7 +5,7 @@ const multer       = require('multer');
 const ExcelJS      = require('exceljs');
 const nodemailer   = require('nodemailer');
 const { pool, query } = require('../config/db');
-const { authenticate, authorizeOrModule } = require('../middleware/auth');
+const { authenticate, authorize, authorizeOrModule } = require('../middleware/auth');
 const { saleTankerSql } = require('../utils/saleTanker');
 
 const { createTransport } = require('../config/mailer');
@@ -64,7 +64,7 @@ async function calcCost(client, tankerId, expectedKm, expectedTotalQty) {
 }
 
 // GET /api/plans
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authenticate, authorizeOrModule('planning', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   try {
     const { plan_for_date, status } = req.query;
     // is_sale_tanker is overwritten with the shared rule (flag OR "SALE…"
@@ -97,7 +97,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // GET /api/plans/coverage?plan_for_date=YYYY-MM-DD
-router.get('/coverage', authenticate, async (req, res) => {
+router.get('/coverage', authenticate, authorizeOrModule('planning', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   try {
     const { plan_for_date } = req.query;
     if (!plan_for_date) return res.status(400).json({ error: 'plan_for_date required' });
@@ -153,7 +153,7 @@ router.get('/coverage', authenticate, async (req, res) => {
 // GET /api/plans/:id
 // Digits only — otherwise this catch-all shadows later literal routes
 // (/movement-export, /email-config, ...).
-router.get('/:id(\\d+)', authenticate, async (req, res) => {
+router.get('/:id(\\d+)', authenticate, authorizeOrModule('planning', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   try {
     const plan = await query(`
       SELECT tp.*,
@@ -404,7 +404,7 @@ router.post('/publish', authenticate, authorizeOrModule('planning', 'admin','pla
 // ── Plan Email Config CRUD ────────────────────────────────────────────────────
 
 // GET /api/plans/email-config
-router.get('/email-config', authenticate, authorizeOrModule('planning', 'admin'), async (req, res) => {
+router.get('/email-config', authenticate, authorize('admin'), async (req, res) => {
   try {
     const r = await query('SELECT * FROM plan_email_configs ORDER BY created_at');
     res.json(r.rows);
@@ -412,7 +412,7 @@ router.get('/email-config', authenticate, authorizeOrModule('planning', 'admin')
 });
 
 // POST /api/plans/email-config
-router.post('/email-config', authenticate, authorizeOrModule('planning', 'admin'), async (req, res) => {
+router.post('/email-config', authenticate, authorize('admin'), async (req, res) => {
   const { email, name } = req.body;
   if (!email) return res.status(400).json({ error: 'email required' });
   try {
@@ -425,7 +425,7 @@ router.post('/email-config', authenticate, authorizeOrModule('planning', 'admin'
 });
 
 // PUT /api/plans/email-config/:id
-router.put('/email-config/:id', authenticate, authorizeOrModule('planning', 'admin'), async (req, res) => {
+router.put('/email-config/:id', authenticate, authorize('admin'), async (req, res) => {
   const { email, name, is_active } = req.body;
   try {
     const r = await query(
@@ -438,7 +438,7 @@ router.put('/email-config/:id', authenticate, authorizeOrModule('planning', 'adm
 });
 
 // DELETE /api/plans/email-config/:id
-router.delete('/email-config/:id', authenticate, authorizeOrModule('planning', 'admin'), async (req, res) => {
+router.delete('/email-config/:id', authenticate, authorize('admin'), async (req, res) => {
   try {
     await query('DELETE FROM plan_email_configs WHERE id=$1', [req.params.id]);
     res.json({ deleted: true });
@@ -449,7 +449,7 @@ router.delete('/email-config/:id', authenticate, authorizeOrModule('planning', '
 // Tanker Movement Plan: the COMPLETED plan of a day exported in the SAME
 // layout as the trip-plan upload template (identical row-3 headers) —
 // trip header on the first BMCU row, additional BMCU rows carry only G/H.
-router.get('/movement-export', authenticate, async (req, res) => {
+router.get('/movement-export', authenticate, authorizeOrModule('planning', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   const { plan_for_date } = req.query;
   if (!plan_for_date) return res.status(400).json({ error: 'plan_for_date required' });
   try {
@@ -603,7 +603,7 @@ router.get('/movement-export', authenticate, async (req, res) => {
 });
 
 // GET /api/plans/template/download
-router.get('/template/download', authenticate, async (req, res) => {
+router.get('/template/download', authenticate, authorizeOrModule('planning', 'admin', 'planner', 'executor', 'biller', 'viewer'), async (req, res) => {
   try {
     const tankers    = await query('SELECT tanker_number, capacity_litres FROM tankers WHERE is_active=TRUE ORDER BY tanker_number');
     // Sorted by NAME — required for the prefix-search dropdown (OFFSET over a

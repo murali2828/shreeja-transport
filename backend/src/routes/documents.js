@@ -105,7 +105,7 @@ function statusOf(expiry) {
 
 // ─── Documents ────────────────────────────────────────────────────────────────
 // GET /api/documents?tanker_id=&doc_type=&status=&vendor_id=&q=
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authenticate, authorizeOrModule('masters', 'admin', 'executor', 'biller'), async (req, res) => {
   try {
     const { tanker_id, doc_type, vendor_id, q } = req.query;
     const params = [];
@@ -134,7 +134,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // GET /api/documents/expiring?within=30
-router.get('/expiring', authenticate, async (req, res) => {
+router.get('/expiring', authenticate, authorizeOrModule('masters', 'admin', 'executor', 'biller'), async (req, res) => {
   try {
     const within = parseInt(req.query.within || '30', 10);
     const r = await query(`
@@ -225,7 +225,7 @@ router.post('/:id/file', authenticate, authorizeOrModule('masters', 'admin','exe
 });
 
 // GET /api/documents/:id/file  — download/stream the scanned document
-router.get('/:id/file', authenticate, async (req, res) => {
+router.get('/:id/file', authenticate, authorizeOrModule('masters', 'admin', 'executor', 'biller'), async (req, res) => {
   try {
     const r = await query(
       'SELECT file_path, file_data, file_name, file_mime FROM tanker_documents WHERE id=$1', [req.params.id]
