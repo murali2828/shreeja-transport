@@ -55,8 +55,8 @@ export default function QaDispatchEntry() {
   // Chips from Tanker Master ('2C' → FC, BC; '3C' → FC, MC, BC); several may be ticked when one BMCU's milk is split.
   const compartments = tanker?.compartment_codes || ['FC', 'MC', 'BC'];
   const toggleComp = c => set('compartment', f.compartment.includes(c) ? f.compartment.filter(x => x !== c) : ['FC', 'MC', 'BC'].filter(x => x === c || f.compartment.includes(x)));
-  // Shift chips: previous evening, same morning, same evening (e.g. 23E 24M 24E)
-  const shiftChips = f.lifting_date ? [`${addDays(f.lifting_date, -1).slice(8)}E`, `${f.lifting_date.slice(8)}M`, `${f.lifting_date.slice(8)}E`] : [];
+  // Shift chips: previous day's M and E, then the lifting day's M and E (e.g. 06M 06E 07M 07E)
+  const shiftChips = f.lifting_date ? (() => { const p = addDays(f.lifting_date, -1).slice(8), d = f.lifting_date.slice(8); return [`${p}M`, `${p}E`, `${d}M`, `${d}E`]; })() : [];
   const toggleShift = s => set('shifts', f.shifts.includes(s) ? f.shifts.filter(x => x !== s) : [...f.shifts, s].sort());
 
   // Live derived figures (same formulas as the server)

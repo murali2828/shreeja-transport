@@ -19,7 +19,7 @@ export default function QaDispatchList() {
   const [flt, setFlt] = useState({ from: iso(new Date(Date.now() - 6 * 86400000)), to: iso(new Date()), tanker_id: '', bmcu_id: '', route_id: '' });
   const set = (k, v) => setFlt(p => ({ ...p, [k]: v }));
   const { data: lk } = useQuery({ queryKey: ['qa-lookups'], queryFn: () => getQaLookups().then(r => r.data), staleTime: 10 * 60_000 });
-  const { data: rows = [], isLoading } = useQuery({ queryKey: ['qa-entries', flt], queryFn: () => getQaEntries(flt).then(r => r.data) });
+  const { data: rows = [], isLoading, error } = useQuery({ queryKey: ['qa-entries', flt], queryFn: () => getQaEntries(flt).then(r => r.data) });
   const delMut = useMutation({ mutationFn: id => deleteQaEntry(id), onSuccess: () => { toast.success('Entry deleted'); qc.invalidateQueries(['qa-entries']); },
     onError: e => toast.error(e.response?.data?.error || e.message) });
   const excel = () => downloadQaEntriesExcel(flt).then(r => {
@@ -35,7 +35,9 @@ export default function QaDispatchList() {
         <button className="btn-primary flex items-center gap-1.5 ml-auto" onClick={() => navigate('/quality/entry')}><Plus size={14}/> New entry</button>
         <button className="btn-secondary flex items-center gap-1.5" onClick={excel}><Download size={14}/> Excel</button>
       </div>
-      <div className="card p-3 grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
+      {error && <div className="card p-3 text-sm text-red-700 bg-red-50">Could not load entries: {error.response?.data?.error || error.message}</div>}
+      {/* relative z-20: the table card below has a backdrop blur that would otherwise paint over the open dropdowns */}
+      <div className="card p-3 grid grid-cols-2 md:grid-cols-5 gap-2 items-end relative z-20">
         <label className="text-xs">From<input type="date" className="input w-full py-1.5" value={flt.from} onChange={e => set('from', e.target.value)}/></label>
         <label className="text-xs">To<input type="date" className="input w-full py-1.5" value={flt.to} onChange={e => set('to', e.target.value)}/></label>
         <div className="text-xs">Tanker<SearchableSelect value={flt.tanker_id} onChange={v => set('tanker_id', v)} placeholder="All" options={(lk?.tankers || []).map(t => ({ value: String(t.id), label: t.tanker_number }))}/></div>
