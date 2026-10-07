@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { hasRole, isOnlyRole, rolesLabel } from '../utils/roles';
+import { hasRole, isOnlyRole, rolesLabel, isReadOnly } from '../utils/roles';
 import {
   Truck, LayoutDashboard, MapPin, Route, Users, Settings,
   ClipboardList, Package, Play, CheckSquare, BarChart2, Mail, IndianRupee,
@@ -44,7 +44,7 @@ export default function Sidebar({ collapsed = false }) {
   const isViewer   = hasRole(user, 'viewer');
   const isBiller  = hasRole(user, 'biller') || isAdmin;
   const isExecutor = isOnlyRole(user, 'executor');
-  const isViewerOnly = isOnlyRole(user, 'viewer'); // read-only: no create / approve entries in the menu
+  const isViewerOnly = isReadOnly(user) || isOnlyRole(user, 'viewer'); // read-only: no create / approve entries in the menu
 
   // Module-level visibility now comes from the user's DB-backed role
   // permissions (falls back to legacy booleans above for the narrow special

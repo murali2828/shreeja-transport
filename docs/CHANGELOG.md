@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Added
+- Roles: **Read-only** switch (migration 057, `roles.read_only`; the built-in viewer is read-only and stays so). A user whose roles are all read-only can view the modules those roles tick but every create / change is refused by the auth gates; the login response carries `read_only` so the menu hides create actions and billing opens without edit controls. Lets finance / MIS get a role with billing + reports that only looks (owner, 2026-10-07).
+
 ### Security
 - Role alignment after the audit of 2026-10-07 (migration 056 gives executor its execution flag so its menu matches the API): execution, plan and trip-document reads need the execution scope (admin / planner / executor / biller / viewer); reports and analytics need the reports module; tanker rates, vendors and tanker documents need masters or the roles that use them; Tanker Position is limited server-side to admins and `TANKER_POSITION_USERS`; plan email configuration is admin only; the viewer role no longer reads billing; change-request portal decisions pass the execution gate; every masters / planning / execution page guard also accepts the matching module so custom roles work; Dashboard quick actions follow the user's modules.
 - Viewer role sees only the Execution section (migration 055 resets its module flags to execution only; billing, reports and tanker-rate pages now require their module) and the menu hides Other Gate Pass, Approvals and the Start button for viewer-only users (owner, 2026-10-07).

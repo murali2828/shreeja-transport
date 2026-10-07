@@ -45,16 +45,30 @@ async function authenticate(req, res, next) {
 const rolesOf = u => (Array.isArray(u?.roles) && u.roles.length ? u.roles : [u?.role].filter(Boolean));
 const hasRole = (u, ...names) => rolesOf(u).some(r => names.includes(r));
 
-// Viewer is read-only (owner, 2026-10-07): whatever modules the viewer role
-// is given, a user whose roles are ALL 'viewer' may only GET. Any other held
-// role lifts the restriction for that user. Applied by every gate below.
+// Read-only roles (roles.read_only, migration 057; the built-in viewer is
+// one): a user whose roles are ALL read-only may only GET, whatever module
+// flags those roles carry. Any held role that is not read-only lifts the
+// restriction. Looked up per role with a 60 s cache; applied by every gate.
 const READ_METHODS = ['GET', 'HEAD', 'OPTIONS'];
-const isReadOnlyUser = u => { const r = rolesOf(u); return r.length > 0 && r.every(x => x === 'viewer'); };
-function denyIfReadOnlyWrite(req, res) {
-  if (!READ_METHODS.includes(req.method) && isReadOnlyUser(req.user)) {
-    res.status(403).json({ error: 'Viewer role is read-only — it can see transactions and reports but not change them' });
-    return true;
+const readOnlyCache = new Map(); // role name -> { ro, until }
+async function isReadOnlyUser(u) {
+  const names = rolesOf(u);
+  if (!names.length) return false;
+  if (names.includes('admin')) return false;
+  const missing = names.filter(n => !(readOnlyCache.get(n)?.until > Date.now()));
+  if (missing.length) {
+    const r = await query('SELECT name, read_only FROM roles WHERE name = ANY($1)', [missing]);
+    const until = Date.now() + ACTIVE_TTL_MS;
+    for (const n of missing) readOnlyCache.set(n, { ro: false, until });
+    for (const row of r.rows) readOnlyCache.set(row.name, { ro: row.read_only === true, until });
   }
+  return names.every(n => readOnlyCache.get(n)?.ro === true);
+}
+async function denyIfReadOnlyWrite(req, res) {
+  if (READ_METHODS.includes(req.method)) return false;
+  let ro = false;
+  try { ro = await isReadOnlyUser(req.user); } catch (err) { console.error('[auth] read-only check failed:', err.message); }
+  if (ro) { res.status(403).json({ error: 'Your role is read-only — you can view transactions and reports but not change them' }); return true; }
   return false;
 }
 
@@ -67,8 +81,8 @@ async function permissionsFor(roleNames) {
 }
 
 function authorize(...roles) {
-  return (req, res, next) => {
-    if (denyIfReadOnlyWrite(req, res)) return;
+  return async (req, res, next) => {
+    if (await denyIfReadOnlyWrite(req, res)) return;
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (!hasRole(req.user, ...roles)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
@@ -85,7 +99,7 @@ const MODULES = ['masters', 'planning', 'execution', 'billing', 'reports', 'qual
 // 'admin' roles row can never lock the admin account out.
 function authorizeModule(moduleKey) {
   return async (req, res, next) => {
-    if (denyIfReadOnlyWrite(req, res)) return;
+    if (await denyIfReadOnlyWrite(req, res)) return;
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (hasRole(req.user, 'admin')) return next();
     try {
@@ -110,7 +124,7 @@ function authorizeModule(moduleKey) {
 // authorize(...roles) already allowed — it only adds custom-role users.
 function authorizeOrModule(moduleKey, ...roles) {
   return async (req, res, next) => {
-    if (denyIfReadOnlyWrite(req, res)) return;
+    if (await denyIfReadOnlyWrite(req, res)) return;
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (hasRole(req.user, 'admin')) return next();
     if (hasRole(req.user, ...roles)) return next();

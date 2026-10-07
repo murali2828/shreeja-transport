@@ -5,3 +5,5 @@ export const rolesOf = u => (Array.isArray(u?.roles) && u.roles.length ? u.roles
 export const hasRole = (u, ...names) => rolesOf(u).some(r => names.includes(r));
 export const isOnlyRole = (u, name) => { const r = rolesOf(u); return r.length === 1 && r[0] === name; };
 export const rolesLabel = u => rolesOf(u).join(', ');
+// roles.read_only (migration 057): the login response carries user.read_only
+export const isReadOnly = u => u?.read_only === true;

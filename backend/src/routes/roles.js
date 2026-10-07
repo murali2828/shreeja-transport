@@ -26,15 +26,15 @@ router.get('/', authenticate, authorize('admin'), async (req, res) => {
 
 // POST /api/roles
 router.post('/', authenticate, authorize('admin'), async (req, res) => {
-  const { name, label, permissions } = req.body;
+  const { name, label, permissions, read_only } = req.body;
   if (!name || !label) return res.status(400).json({ error: 'name and label required' });
   if (!NAME_RE.test(name)) return res.status(400).json({ error: 'name may contain only lowercase letters, numbers, and underscore (no spaces)' });
   const { perms, error } = normalizePermissions(permissions);
   if (error) return res.status(400).json({ error });
   try {
     const r = await query(
-      'INSERT INTO roles (name, label, is_system, permissions) VALUES ($1,$2,FALSE,$3) RETURNING *',
-      [name, label, JSON.stringify(perms)]
+      'INSERT INTO roles (name, label, is_system, permissions, read_only) VALUES ($1,$2,FALSE,$3,$4) RETURNING *',
+      [name, label, JSON.stringify(perms), read_only === true]
     );
     res.status(201).json(r.rows[0]);
   } catch (err) {
@@ -45,7 +45,7 @@ router.post('/', authenticate, authorize('admin'), async (req, res) => {
 
 // PUT /api/roles/:id
 router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
-  const { label, permissions } = req.body;
+  const { label, permissions, read_only } = req.body;
   const { perms, error } = normalizePermissions(permissions);
   if (error) return res.status(400).json({ error });
   try {
@@ -56,6 +56,10 @@ router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
     if (label !== undefined) {
       params.push(label);
       sets.push(`label = $${params.length}`);
+    }
+    if (read_only !== undefined && existing.rows[0].name !== 'viewer') { // viewer stays read-only
+      params.push(read_only === true);
+      sets.push(`read_only = $${params.length}`);
     }
     params.push(req.params.id);
     const r = await query(

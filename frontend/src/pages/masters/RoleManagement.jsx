@@ -21,15 +21,15 @@ const NAME_RE = /^[a-z0-9_]+$/;
 export default function RoleManagement() {
   const qc = useQueryClient();
   const [modal, setModal] = useState(null); // 'add' | role row | null
-  const [form, setForm] = useState({ name: '', label: '', permissions: { ...EMPTY_PERMS } });
+  const [form, setForm] = useState({ name: '', label: '', permissions: { ...EMPTY_PERMS }, read_only: false });
 
   const { data: roles = [], isLoading } = useQuery({
     queryKey: ['roles'],
     queryFn:  () => getRoles().then(r => r.data),
   });
 
-  const openAdd = () => { setForm({ name: '', label: '', permissions: { ...EMPTY_PERMS } }); setModal('add'); };
-  const openEdit = (row) => { setForm({ name: row.name, label: row.label, permissions: { ...EMPTY_PERMS, ...row.permissions } }); setModal(row); };
+  const openAdd = () => { setForm({ name: '', label: '', permissions: { ...EMPTY_PERMS }, read_only: false }); setModal('add'); };
+  const openEdit = (row) => { setForm({ name: row.name, label: row.label, permissions: { ...EMPTY_PERMS, ...row.permissions }, read_only: !!row.read_only }); setModal(row); };
   const close = () => setModal(null);
   const togglePerm = (key) => setForm(p => ({ ...p, permissions: { ...p.permissions, [key]: !p.permissions[key] } }));
 
@@ -39,9 +39,9 @@ export default function RoleManagement() {
       if (modal === 'add') {
         if (!form.name) throw new Error('Name is required');
         if (!NAME_RE.test(form.name)) throw new Error('Name may contain only lowercase letters, numbers, and underscore (no spaces)');
-        return createRole({ name: form.name, label: form.label, permissions: form.permissions });
+        return createRole({ name: form.name, label: form.label, permissions: form.permissions, read_only: form.read_only });
       }
-      return updateRole(modal.id, { label: form.label, permissions: form.permissions });
+      return updateRole(modal.id, { label: form.label, permissions: form.permissions, read_only: form.read_only });
     },
     onSuccess: () => {
       toast.success(modal === 'add' ? 'Role created' : 'Role updated');
@@ -81,6 +81,7 @@ export default function RoleManagement() {
               <th className="table-th">Label</th>
               <th className="table-th">Name</th>
               {MODULES.map(m => <th key={m.key} className="table-th text-center">{m.label}</th>)}
+              <th className="table-th text-center">Read-only</th>
               <th className="table-th w-24">Actions</th>
             </tr>
           </thead>
@@ -104,6 +105,7 @@ export default function RoleManagement() {
                     {r.permissions?.[m.key] ? <span className="text-green-600 font-bold">✓</span> : <span className="text-gray-300">—</span>}
                   </td>
                 ))}
+                  <td className="table-td text-center">{r.read_only ? <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold">READ-ONLY</span> : '—'}</td>
                 <td className="table-td">
                   <div className="flex items-center gap-1">
                     <button onClick={() => openEdit(r)} className="btn-secondary btn-sm p-1.5" title="Edit role">✏</button>
@@ -140,6 +142,11 @@ export default function RoleManagement() {
                   onChange={e => setForm(p => ({ ...p, name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') }))}/>
               </Field>
             )}
+            <label className="flex items-center gap-2 text-sm px-2 py-1.5 mb-3 rounded-lg border border-amber-200 bg-amber-50 cursor-pointer">
+              <input type="checkbox" checked={!!form.read_only} disabled={modal !== 'add' && modal.name === 'viewer'}
+                onChange={e => setForm(p => ({ ...p, read_only: e.target.checked }))}/>
+              <span><b>Read-only</b> — users holding only read-only roles can view the ticked modules but never create or change anything</span>
+            </label>
             <Field label="Module Access">
               <div className="grid grid-cols-2 gap-2">
                 {MODULES.map(m => (

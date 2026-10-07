@@ -178,7 +178,7 @@ docker cp shreeja-qa-backend:/tmp/history_result.csv .                          
 
 ## Routine tasks
 
-- New user / role: Masters → Users / Roles (admin). Custom roles get module permissions.
+- New user / role: Masters → Users / Roles (admin). Custom roles get module permissions; tick **Read-only** for a role that may look but never change (e.g. finance with Billing + Reports). A user may hold several roles; permissions add up, and only a user whose roles are all read-only is restricted.
 - Rotate the Assure key: set `ASSURE_API_KEY_NEXT`, `up -d`, hand over, then move it into `ASSURE_API_KEY`, clear `_NEXT`, `up -d`.
 - Tanker document expiry mails: `jobs/docAlerts.js` sends at 30/15/7/1 days and on expiry to recipients configured in Masters → Documents.
 - Before a fortnight billing run: all trips acknowledged before the cutoff (`BILLING_ACK_CUTOFF_TIME`, default 06:00 on the 16th / 1st); tolls (FASTag PDF) uploaded; vendors mapped to every tanker; coordinates complete.
