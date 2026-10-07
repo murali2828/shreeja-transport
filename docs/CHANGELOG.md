@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- QA Dispatch Entry: compartment chips come from the tanker's compartment count in Tanker Master (`2C` → FC, BC; `3C` → FC, MC, BC) and several may be ticked on one row when one BMCU's milk is split; stored and reported as e.g. `FC,MC` (migration 054, owner 2026-10-07).
+
 ### Added
 - Users can hold several roles (migration 053, `users.roles`): Masters → Users offers role chips; a user's module permissions are the union of all their roles, the token's primary `role` is `admin` whenever admin is among them, and every role list check (`authorize`, `authorizeOrModule`, page guards, sidebar) accepts any held role (owner, 2026-10-07).
 - Quality module (migration 052): role `quality` / module permission `quality`; Quality → QA Dispatch Entry (phone-first: lifting date, route, tanker, BMCU with route members starred, compartment and shift chips, scale reading; dispatch litres / fat % / CLR with SNF, kgs, kg fat / SNF derived; truck-sheet date / shift / litres / fat % / SNF % with kgs derived; live variation; Save & next BMCU) and QA Dispatch Report (filters, edit, admin delete, Excel in the team's column order). `GET/POST/PUT/DELETE /api/quality/entries`, `GET /api/quality/lookups`, `GET /api/quality/entries/excel`. Independent of the tanker team's data (ADR-021, 2026-10-07).

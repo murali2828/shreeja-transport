@@ -18,7 +18,7 @@ const fx = (v, d = 2) => (v == null || isNaN(v) ? '—' : v.toLocaleString('en-I
 const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (iso, k) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + k); return d.toISOString().slice(0, 10); };
 
-const EMPTY = { lifting_date: today(), route_id: '', tanker_id: '', bmcu_id: '', compartment: 'FC', scale_reading: '', shifts: [],
+const EMPTY = { lifting_date: today(), route_id: '', tanker_id: '', bmcu_id: '', compartment: ['FC'], scale_reading: '', shifts: [],
   d_qty_litres: '', d_fat_pct: '', d_clr: '', ts_date: '', ts_shift: '', ts_qty_litres: '', ts_fat_pct: '', ts_snf_pct: '', remarks: '' };
 
 export default function QaDispatchEntry() {
@@ -38,7 +38,7 @@ export default function QaDispatchEntry() {
   useEffect(() => {
     if (!editing) return;
     setF({ lifting_date: editing.lifting_date, route_id: String(editing.route_id || ''), tanker_id: String(editing.tanker_id), bmcu_id: String(editing.bmcu_id),
-      compartment: editing.compartment, scale_reading: editing.scale_reading ?? '', shifts: editing.shifts ? editing.shifts.split(',') : [],
+      compartment: editing.compartment ? editing.compartment.split(',') : [], scale_reading: editing.scale_reading ?? '', shifts: editing.shifts ? editing.shifts.split(',') : [],
       d_qty_litres: editing.d_qty_litres ?? '', d_fat_pct: editing.d_fat_pct ?? '', d_clr: editing.d_clr ?? '',
       ts_date: editing.ts_date || '', ts_shift: editing.ts_shift || '', ts_qty_litres: editing.ts_qty_litres ?? '', ts_fat_pct: editing.ts_fat_pct ?? '', ts_snf_pct: editing.ts_snf_pct ?? '',
       remarks: editing.remarks || '' });
@@ -52,7 +52,9 @@ export default function QaDispatchEntry() {
     const sorted = member.size ? [...all].sort((a, b) => (member.has(b.id) - member.has(a.id)) || a.bmcu_code.localeCompare(b.bmcu_code)) : all;
     return sorted.map(b => ({ value: String(b.id), label: `${b.bmcu_code} — ${b.bmcu_name}${member.has(b.id) ? ' ★' : ''}` }));
   }, [lk, route]);
-  const compartments = (tanker?.compartments || 3) >= 3 ? ['FC', 'MC', 'BC'] : (tanker?.compartments || 3) === 2 ? ['FC', 'BC'] : ['FC'];
+  // Chips from Tanker Master ('2C' → FC, BC; '3C' → FC, MC, BC); several may be ticked when one BMCU's milk is split.
+  const compartments = tanker?.compartment_codes || ['FC', 'MC', 'BC'];
+  const toggleComp = c => set('compartment', f.compartment.includes(c) ? f.compartment.filter(x => x !== c) : ['FC', 'MC', 'BC'].filter(x => x === c || f.compartment.includes(x)));
   // Shift chips: previous evening, same morning, same evening (e.g. 23E 24M 24E)
   const shiftChips = f.lifting_date ? [`${addDays(f.lifting_date, -1).slice(8)}E`, `${f.lifting_date.slice(8)}M`, `${f.lifting_date.slice(8)}E`] : [];
   const toggleShift = s => set('shifts', f.shifts.includes(s) ? f.shifts.filter(x => x !== s) : [...f.shifts, s].sort());
@@ -68,7 +70,7 @@ export default function QaDispatchEntry() {
   const v = (a, b) => (a != null && b != null ? a - b : null);
   const vars = { qty: v(n(f.d_qty_litres), n(f.ts_qty_litres)), fat: v(n(f.d_fat_pct), n(f.ts_fat_pct)), snf: v(dSnf, n(f.ts_snf_pct)) };
 
-  const payload = () => ({ ...f, shifts: f.shifts.join(','), ts_date: f.ts_date || f.lifting_date });
+  const payload = () => ({ ...f, compartment: f.compartment.join(','), shifts: f.shifts.join(','), ts_date: f.ts_date || f.lifting_date });
   const saveMut = useMutation({
     mutationFn: ({ next }) => (editId ? updateQaEntry(editId, payload()) : createQaEntry(payload())).then(r => ({ row: r.data, next })),
     onSuccess: ({ row, next }) => {
@@ -83,6 +85,7 @@ export default function QaDispatchEntry() {
   const check = () => {
     const miss = [];
     if (!f.lifting_date) miss.push('lifting date'); if (!f.tanker_id) miss.push('tanker'); if (!f.bmcu_id) miss.push('BMCU');
+    if (!f.compartment.length) miss.push('at least one compartment');
     if (f.d_qty_litres === '') miss.push('dispatch litres');
     if (miss.length) { toast.error('Enter: ' + miss.join(', ')); return false; }
     return true;
@@ -123,7 +126,7 @@ export default function QaDispatchEntry() {
           <SearchableSelect value={f.tanker_id} onChange={v => set('tanker_id', v)} placeholder="Select tanker…" options={(lk?.tankers || []).map(t => ({ value: String(t.id), label: t.tanker_number }))}/></div>
         <div><span className="text-[11px] font-semibold text-gray-600">BMCU * {route?.bmcu_ids?.length ? <span className="text-gray-400 font-normal">(★ = on this route)</span> : null}</span>
           <SearchableSelect value={f.bmcu_id} onChange={v => set('bmcu_id', v)} placeholder="Select BMCU…" options={bmcuOptions}/></div>
-        <div><span className="text-[11px] font-semibold text-gray-600">Compartment *</span>{chips(compartments, f.compartment, x => set('compartment', x))}</div>
+        <div><span className="text-[11px] font-semibold text-gray-600">Compartment(s) * <span className="text-gray-400 font-normal">tick all the milk went into</span></span>{chips(compartments, f.compartment, toggleComp, true)}</div>
         {num('scale_reading', 'Scale reading', '0.01')}
         <div><span className="text-[11px] font-semibold text-gray-600">Shifts</span>
           {chips(shiftChips, f.shifts, toggleShift, true)}

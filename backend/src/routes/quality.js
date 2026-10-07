@@ -12,6 +12,15 @@ const { fmtDateDisplay } = require('../utils/date');
 const { computeDispatch, computeTruckSheet, variations, n } = require('../services/qaDispatch');
 
 const gate = [authenticate, authorizeModule('quality')];
+const COMPARTMENTS = ['FC', 'MC', 'BC'];
+// Tanker Master keeps compartments as text ('2C', '3C', '3'); 2 → FC, BC; 3+ → FC, MC, BC; unknown → all.
+const compartmentCodes = txt => { const k = parseInt(String(txt || '').replace(/[^0-9]/g, ''), 10); return k === 2 ? ['FC', 'BC'] : k === 1 ? ['FC'] : COMPARTMENTS; };
+// 'MC,FC' / ['FC','MC'] → 'FC,MC' in canonical order; null when empty or invalid.
+const normalizeCompartments = v => {
+  const list = (Array.isArray(v) ? v : String(v || '').split(',')).map(s => String(s).trim().toUpperCase()).filter(Boolean);
+  if (!list.length || list.some(c => !COMPARTMENTS.includes(c))) return null;
+  return COMPARTMENTS.filter(c => list.includes(c)).join(',');
+};
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const SHIFTS = /^(\d{1,2}[EM])(,\d{1,2}[EM])*$/i;
 
@@ -30,7 +39,7 @@ router.get('/lookups', ...gate, async (req, res) => {
       WHERE tp.route_id IS NOT NULL AND tp.plan_for_date >= CURRENT_DATE - 180 AND tp.status NOT IN ('cancelled','deleted')`)).rows;
     const byRoute = {};
     for (const m of members) (byRoute[m.route_id] ||= []).push(m.bmcu_id);
-    res.json({ tankers, bmcus, routes: routes.map(r => ({ ...r, bmcu_ids: byRoute[r.id] || [] })) });
+    res.json({ tankers: tankers.map(t => ({ ...t, compartment_codes: compartmentCodes(t.compartments) })), bmcus, routes: routes.map(r => ({ ...r, bmcu_ids: byRoute[r.id] || [] })) });
   } catch (err) { res.status(500).json({ error: 'Failed to load lookups' }); }
 });
 
@@ -38,7 +47,7 @@ async function validate(b) {
   const errs = [];
   if (!ISO.test(b.lifting_date || '')) errs.push('lifting date');
   if (b.ts_date && !ISO.test(b.ts_date)) errs.push('truck sheet date');
-  if (!['FC', 'MC', 'BC'].includes(b.compartment)) errs.push('compartment (FC / MC / BC)');
+  if (!normalizeCompartments(b.compartment)) errs.push('compartment (one or more of FC / MC / BC)');
   if (b.shifts && !SHIFTS.test(String(b.shifts).replace(/\s/g, ''))) errs.push('shifts (e.g. 23E,24M,24E)');
   for (const [k, label] of [['scale_reading', 'scale reading'], ['d_qty_litres', 'dispatch litres'], ['d_fat_pct', 'dispatch fat %'], ['d_clr', 'CLR'],
                             ['ts_qty_litres', 'truck sheet litres'], ['ts_fat_pct', 'truck sheet fat %'], ['ts_snf_pct', 'truck sheet SNF %']]) {
@@ -58,7 +67,7 @@ function rowValues(b, { tanker, bmcu, route }, user) {
   const d = computeDispatch({ qty_litres: b.d_qty_litres, fat_pct: b.d_fat_pct, clr: b.d_clr });
   const t = computeTruckSheet({ qty_litres: b.ts_qty_litres, fat_pct: b.ts_fat_pct, snf_pct: b.ts_snf_pct });
   return [b.lifting_date, route?.id || null, route?.route_name || null, tanker.id, tanker.tanker_number, bmcu.id, bmcu.bmcu_code, bmcu.bmcu_name,
-    b.compartment, n(b.scale_reading), b.shifts ? String(b.shifts).replace(/\s/g, '').toUpperCase() : null,
+    normalizeCompartments(b.compartment), n(b.scale_reading), b.shifts ? String(b.shifts).replace(/\s/g, '').toUpperCase() : null,
     d.d_qty_litres, d.d_fat_pct, d.d_clr, d.d_snf_pct, d.d_qty_kgs, d.d_kg_fat, d.d_kg_snf,
     b.ts_date || b.lifting_date, b.ts_shift ? String(b.ts_shift).replace(/\s/g, '').toUpperCase() : null,
     t.ts_qty_litres, t.ts_fat_pct, t.ts_snf_pct, t.ts_qty_kgs, t.ts_kg_fat, t.ts_kg_snf,
