@@ -6,6 +6,7 @@ const jwt        = require('jsonwebtoken');
 const crypto     = require('crypto');
 const nodemailer = require('nodemailer');
 const { query }  = require('../config/db');
+const { permissionsFor } = require('../middleware/auth');
 const { authenticate, authorize } = require('../middleware/auth');
 
 // Ensure must_change_password column exists
@@ -66,8 +67,11 @@ router.post('/login', async (req, res) => {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
     const mustChange = !!user.must_change_password;
+    // Multiple roles (migration 053): primary role is 'admin' when admin is among them.
+    const roles = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role];
+    const primary = roles.includes('admin') ? 'admin' : (user.role && roles.includes(user.role) ? user.role : roles[0]);
     const token = jwt.sign(
-      { id: user.id, user_id: user.user_id, role: user.role, full_name: user.full_name, must_change_password: mustChange },
+      { id: user.id, user_id: user.user_id, role: primary, roles, full_name: user.full_name, must_change_password: mustChange },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
@@ -75,12 +79,11 @@ router.post('/login', async (req, res) => {
     // billing_enabled env kill-switch below, which stays untouched).
     let permissions = null;
     try {
-      const rr = await query('SELECT permissions FROM roles WHERE name = $1', [user.role]);
-      permissions = rr.rows[0]?.permissions || null;
+      permissions = await permissionsFor(roles);
     } catch (err) {
       console.error('[auth] role permissions lookup failed:', err.message);
     }
-    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: user.role, permissions, must_change_password: mustChange, billing_enabled: process.env.BILLING_ENABLED === 'true', optimizer_v2_enabled: process.env.OPTIMIZER_V2_ENABLED === 'true' } });
+    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: primary, roles, permissions, must_change_password: mustChange, billing_enabled: process.env.BILLING_ENABLED === 'true', optimizer_v2_enabled: process.env.OPTIMIZER_V2_ENABLED === 'true' } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -88,7 +91,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', authenticate, async (req, res) => {
   try {
     const r = await query(
-      'SELECT id, user_id, username, full_name, role, email FROM users WHERE id=$1', [req.user.id]
+      'SELECT id, user_id, username, full_name, role, roles, email FROM users WHERE id=$1', [req.user.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
     res.json(r.rows[0]);
@@ -99,7 +102,7 @@ router.get('/me', authenticate, async (req, res) => {
 router.get('/users', authenticate, authorize('admin'), async (req, res) => {
   try {
     const r = await query(
-      'SELECT id, user_id, username, full_name, role, email, is_active FROM users ORDER BY full_name'
+      'SELECT id, user_id, username, full_name, role, roles, email, is_active FROM users ORDER BY full_name'
     );
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -107,6 +110,18 @@ router.get('/users', authenticate, authorize('admin'), async (req, res) => {
 
 // Roles are now DB-backed (see routes/roles.js) — validate against the
 // `roles` table so admin-created custom roles are assignable immediately.
+// roles: array from the Users screen (or legacy single `role`). Primary role =
+// 'admin' if present, else the first; stored in users.role for compatibility.
+async function normalizeRoles(body) {
+  let list = Array.isArray(body.roles) ? body.roles : (body.role ? [body.role] : []);
+  list = [...new Set(list.map(r => String(r).trim()).filter(Boolean))];
+  if (!list.length) return { error: 'At least one role is required' };
+  const known = (await query('SELECT name FROM roles WHERE name = ANY($1)', [list])).rows.map(r => r.name);
+  const unknown = list.filter(r => !known.includes(r));
+  if (unknown.length) return { error: `Unknown role: ${unknown.join(', ')}` };
+  return { roles: list, primary: list.includes('admin') ? 'admin' : list[0] };
+}
+
 async function isValidRole(role) {
   const r = await query('SELECT 1 FROM roles WHERE name = $1', [role]);
   return r.rows.length > 0;
@@ -116,7 +131,10 @@ async function isValidRole(role) {
 router.post('/users', authenticate, authorize('admin'), async (req, res) => {
   // Accept `user_id` (preferred) or legacy `username` as the login identifier.
   const userId = (req.body.user_id || req.body.username || '').trim();
-  const { password, full_name, role, email } = req.body;
+  const { password, full_name, email } = req.body;
+  const nr = await normalizeRoles(req.body);
+  if (nr.error) return res.status(400).json({ error: nr.error });
+  const role = nr.primary;
   if (!userId || !password || !full_name || !role)
     return res.status(400).json({ error: 'User ID, password, full_name, role required' });
   if (!USER_ID_RE.test(userId))
@@ -127,8 +145,8 @@ router.post('/users', authenticate, authorize('admin'), async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     // username column mirrors user_id so legacy code paths keep working.
     const r = await query(
-      'INSERT INTO users (user_id, username, password_hash, full_name, role, email, must_change_password) VALUES ($1,$1,$2,$3,$4,$5,TRUE) RETURNING id, user_id, username, full_name, role, email, must_change_password',
-      [userId, hash, full_name, role, email || null]
+      'INSERT INTO users (user_id, username, password_hash, full_name, role, roles, email, must_change_password) VALUES ($1,$1,$2,$3,$4,$5,$6,TRUE) RETURNING id, user_id, username, full_name, role, roles, email, must_change_password',
+      [userId, hash, full_name, role, nr.roles, email || null]
     );
     res.status(201).json(r.rows[0]);
   } catch (err) {
@@ -139,10 +157,13 @@ router.post('/users', authenticate, authorize('admin'), async (req, res) => {
 
 // PUT /api/auth/users/:id
 router.put('/users/:id', authenticate, authorize('admin'), async (req, res) => {
-  const { full_name, role, email, is_active, password } = req.body;
+  const { full_name, email, is_active, password } = req.body;
   const userId = req.body.user_id != null ? String(req.body.user_id).trim() : undefined;
-  if (role !== undefined && !(await isValidRole(role)))
-    return res.status(400).json({ error: `Unknown role: ${role}` });
+  let nr = null;
+  if (req.body.roles !== undefined || req.body.role !== undefined) {
+    nr = await normalizeRoles(req.body);
+    if (nr.error) return res.status(400).json({ error: nr.error });
+  }
   if (userId !== undefined && !USER_ID_RE.test(userId))
     return res.status(400).json({ error: 'User ID may contain only letters, numbers, and . _ @ + - (no spaces)' });
   try {
@@ -152,7 +173,7 @@ router.put('/users/:id', authenticate, authorize('admin'), async (req, res) => {
     const params = [];
     const set = (col, val) => { params.push(val); sets.push(`${col}=$${params.length}`); };
     if (full_name !== undefined) set('full_name', full_name);
-    if (role !== undefined)      set('role', role);
+    if (nr)                      { set('role', nr.primary); set('roles', nr.roles); }
     if (email !== undefined)     set('email', email || null);
     if (is_active !== undefined) set('is_active', is_active ?? true);
     if (userId !== undefined && userId !== '') {
@@ -168,7 +189,7 @@ router.put('/users/:id', authenticate, authorize('admin'), async (req, res) => {
     params.push(req.params.id);
     const r = await query(
       `UPDATE users SET ${sets.join(', ')}
-       WHERE id=$${params.length} RETURNING id, user_id, username, full_name, role, email, is_active`,
+       WHERE id=$${params.length} RETURNING id, user_id, username, full_name, role, roles, email, is_active`,
       params
     );
     if (!r.rows.length) return res.status(404).json({ error: 'User not found' });

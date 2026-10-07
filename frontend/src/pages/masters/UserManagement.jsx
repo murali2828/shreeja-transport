@@ -15,7 +15,7 @@ const ROLE_COLORS = {
 };
 const ROLE_ICONS = { admin: Shield, planner: Settings, executor: User, viewer: User };
 
-const EMPTY = { user_id: '', email: '', full_name: '', role: 'executor', password: '', is_active: true };
+const EMPTY = { user_id: '', email: '', full_name: '', role: 'executor', roles: ['executor'], password: '', is_active: true };
 
 // A User ID may be an email address or an alphanumeric handle — no spaces.
 const USER_ID_RE = /^[A-Za-z0-9._@+-]+$/;
@@ -53,7 +53,7 @@ export default function UserManagement() {
 
   const openAdd  = () => { setForm(EMPTY); setShowPw(true); setModal('add'); };
   const openEdit = (row) => {
-    setForm({ ...row, password: '', is_active: row.is_active });
+    setForm({ ...row, roles: row.roles && row.roles.length ? row.roles : [row.role], password: '', is_active: row.is_active });
     setShowPw(false);
     setModal(row);
   };
@@ -69,7 +69,7 @@ export default function UserManagement() {
 
   const saveMut = useMutation({
     mutationFn: () => {
-      if (!form.full_name || !form.email || !form.role) throw new Error('All fields required');
+      if (!form.full_name || !form.email || !(form.roles || []).length) throw new Error('All fields required, including at least one role');
       if (modal === 'add' && !form.password) throw new Error('Password required for new users');
       if (modal === 'add' && !form.user_id)  throw new Error('User ID required');
       if (form.user_id && !USER_ID_RE.test(form.user_id))
@@ -142,9 +142,10 @@ export default function UserManagement() {
                   <td className="table-td font-mono text-xs text-gray-600">{u.user_id || u.username}</td>
                   <td className="table-td text-xs text-gray-600">{u.email}</td>
                   <td className="table-td">
-                    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLORS[u.role]}`}>
-                      <RoleIcon size={10}/> {u.role}
-                    </span>
+                    {(u.roles && u.roles.length ? u.roles : [u.role]).map(rn => (
+                      <span key={rn} className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium mr-1 ${ROLE_COLORS[rn] || 'bg-gray-100 text-gray-700'}`}>
+                        {rn === u.role ? <RoleIcon size={10}/> : null} {rn}
+                      </span>))}
                   </td>
                   <td className="table-td"><ActiveBadge active={u.is_active}/></td>
                   <td className="table-td">
@@ -178,13 +179,16 @@ export default function UserManagement() {
                 <input className="input w-full" value={form.full_name}
                   onChange={e => set('full_name', e.target.value)}/>
               </Field>
-              <Field label="Role" required>
-                <select className="input w-full" value={form.role}
-                  onChange={e => set('role', e.target.value)}>
-                  {roles.map(r => (
-                    <option key={r.name} value={r.name}>{r.label}</option>
-                  ))}
-                </select>
+              <Field label="Roles (one or more)" required>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {roles.map(r => { const on = (form.roles || []).includes(r.name); return (
+                    <label key={r.name} className={`px-2.5 py-1 rounded-full text-xs font-semibold border cursor-pointer ${on ? 'bg-[#0078d4] text-white border-[#0078d4]' : 'bg-white text-gray-700 border-gray-300'}`}>
+                      <input type="checkbox" className="hidden" checked={on}
+                        onChange={e => { const next = e.target.checked ? [...(form.roles || []), r.name] : (form.roles || []).filter(x => x !== r.name); set('roles', next); set('role', next.includes('admin') ? 'admin' : (next[0] || '')); }}/>
+                      {r.label}
+                    </label>); })}
+                </div>
+                <div className="text-[11px] text-gray-500 mt-1">Permissions are the union of the selected roles.</div>
               </Field>
               <Field label="User ID" required>
                 <input className="input w-full" placeholder="email or alphanumeric, no spaces"

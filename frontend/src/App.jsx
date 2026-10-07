@@ -70,8 +70,9 @@ function ProtectedRoute({ children, roles, module, allowMustChange }) {
   // Force password change before accessing any other page
   if (user.must_change_password && !allowMustChange) return <Navigate to="/change-password" replace />;
   // `module`: allowed when the role's module permission is on (admin always); `roles`: legacy role list.
-  const byModule = module && (user.role === 'admin' || user.permissions?.[module] === true);
-  const byRole   = roles && roles.includes(user.role);
+  const mine = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role];
+  const byModule = module && (mine.includes('admin') || user.permissions?.[module] === true);
+  const byRole   = roles && roles.some(r => mine.includes(r));
   if ((roles || module) && !byModule && !byRole) return <Navigate to="/" replace />;
   return children;
 }
@@ -80,7 +81,7 @@ function ProtectedRoute({ children, roles, module, allowMustChange }) {
 function HomeRedirect({ children }) {
   const { user } = useAuth();
   const p = user?.permissions || {};
-  const onlyQuality = user && user.role !== 'admin' && p.quality === true && !p.masters && !p.planning && !p.execution && !p.billing && !p.reports;
+  const onlyQuality = user && !(user.roles || [user.role]).includes('admin') && p.quality === true && !p.masters && !p.planning && !p.execution && !p.billing && !p.reports;
   return onlyQuality ? <Navigate to="/quality/entry" replace /> : children;
 }
 

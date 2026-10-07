@@ -40,10 +40,23 @@ async function authenticate(req, res, next) {
   next();
 }
 
+// Multiple roles per user (migration 053): the JWT carries `roles`; `role`
+// is the primary one and is 'admin' whenever admin is among them.
+const rolesOf = u => (Array.isArray(u?.roles) && u.roles.length ? u.roles : [u?.role].filter(Boolean));
+const hasRole = (u, ...names) => rolesOf(u).some(r => names.includes(r));
+
+// Union of the module permissions of every role the user holds.
+async function permissionsFor(roleNames) {
+  const r = await query('SELECT permissions FROM roles WHERE name = ANY($1)', [roleNames]);
+  const out = {};
+  for (const row of r.rows) for (const [k, v] of Object.entries(row.permissions || {})) if (v === true) out[k] = true;
+  return out;
+}
+
 function authorize(...roles) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    if (!roles.includes(req.user.role)) {
+    if (!hasRole(req.user, ...roles)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
     next();
@@ -59,9 +72,9 @@ const MODULES = ['masters', 'planning', 'execution', 'billing', 'reports', 'qual
 function authorizeModule(moduleKey) {
   return async (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    if (req.user.role === 'admin') return next();
+    if (hasRole(req.user, 'admin')) return next();
     try {
-      const r = await query('SELECT permissions FROM roles WHERE name = $1', [req.user.role]);
+      const r = { rows: [{ permissions: await permissionsFor(rolesOf(req.user)) }] };
       const perms = r.rows[0]?.permissions;
       if (!perms || perms[moduleKey] !== true) {
         return res.status(403).json({ error: 'Insufficient permissions' });
@@ -83,10 +96,10 @@ function authorizeModule(moduleKey) {
 function authorizeOrModule(moduleKey, ...roles) {
   return async (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    if (req.user.role === 'admin') return next();
-    if (roles.includes(req.user.role)) return next();
+    if (hasRole(req.user, 'admin')) return next();
+    if (hasRole(req.user, ...roles)) return next();
     try {
-      const r = await query('SELECT permissions FROM roles WHERE name = $1', [req.user.role]);
+      const r = { rows: [{ permissions: await permissionsFor(rolesOf(req.user)) }] };
       const perms = r.rows[0]?.permissions;
       if (!perms || perms[moduleKey] !== true) {
         return res.status(403).json({ error: 'Insufficient permissions' });
@@ -98,4 +111,4 @@ function authorizeOrModule(moduleKey, ...roles) {
   };
 }
 
-module.exports = { authenticate, authorize, authorizeModule, authorizeOrModule, MODULES };
+module.exports = { authenticate, authorize, authorizeModule, authorizeOrModule, MODULES, rolesOf, hasRole, permissionsFor };

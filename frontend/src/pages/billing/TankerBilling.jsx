@@ -24,7 +24,7 @@ const STATUS_LABEL = {
 export default function TankerBilling() {
   const qc = useQueryClient();
   const { user } = useAuth();
-  const canEdit = ['admin', 'biller'].includes(user?.role);
+  const canEdit = (user?.roles || [user?.role]).some(r => ['admin', 'biller'].includes(r));
   const [openRunId, setOpenRunId] = useState(null);
   const [view, setView] = useState('runs'); // runs | report
   // Billing periods are strictly fortnights: 1–15 or 16–month-end.

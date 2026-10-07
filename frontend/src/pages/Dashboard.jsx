@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Truck, ClipboardList, Play, CheckSquare, TrendingUp, Zap, Route } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import { isOnlyRole } from '../utils/roles';
 import { getPlans, getExecutions, getDistanceSummary, getTankerPosition } from '../api/index';
 
 // Tanker Position dashboard access: admins + transport incharge/module owner
@@ -74,7 +75,7 @@ export default function Dashboard() {
   const { data: distSummary } = useQuery({
     queryKey: ['distance-summary'],
     queryFn:  () => getDistanceSummary().then(r => r.data),
-    enabled:  user?.role !== 'executor',
+    enabled:  !isOnlyRole(user, 'executor'),
   });
 
   const published = todayPlans.filter(p => p.status === 'published').length;
@@ -159,7 +160,7 @@ export default function Dashboard() {
       )}
 
       {/* Quick actions */}
-      {user?.role !== 'executor' && (
+      {!isOnlyRole(user, 'executor') && (
         <div>
           <h3 className="section-title">Quick Actions</h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -174,7 +175,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {user?.role === 'executor' && (
+      {isOnlyRole(user, 'executor') && (
         <div>
           <h3 className="section-title">Quick Actions</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

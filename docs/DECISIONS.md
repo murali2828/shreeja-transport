@@ -20,7 +20,7 @@ Format: `## ADR-NNN: Title (YYYY-MM-DD)` → Context / Decision / Consequences.
 ## ADR-003: Stateless JWT auth with DB-backed roles and hardcoded admin bypass (before 2026-07-24; roles table 2026-08-26)
 - Context: no session store; admins need to create custom roles without code changes.
 - Decision: 8h JWT in `Authorization: Bearer`; `roles.permissions` JSON per module (masters/planning/execution/billing/reports); `authorizeOrModule` adds custom roles to the legacy role lists; admin is allowed in code, never only by a DB row; `is_active` re-checked with a 60 s cache.
-- Consequences: a deactivated user loses access within a minute; a corrupted roles row cannot lock admins out; JWTs cannot be revoked individually.
+- Consequences: a deactivated user loses access within a minute; a corrupted roles row cannot lock admins out; JWTs cannot be revoked individually. Since 2026-10-07 (migration 053) a user may hold several roles: `users.roles` is the set, `users.role` the primary (`admin` if held), permissions are the union; `hasRole()` / `rolesOf()` in `middleware/auth.js` and `utils/roles.js` are the only ways to test a role.
 
 ## ADR-004: Central audit middleware plus field-level change logs (before 2026-07-24, inferred; login id added 2026-09-18)
 - Context: auditors ask "who changed this trip and when".

@@ -21,7 +21,7 @@ const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', {
 export default function TankerRates() {
   const qc = useQueryClient();
   const { user } = useAuth();
-  const canEdit = ['admin', 'planner'].includes(user?.role);
+  const canEdit = (user?.roles || [user?.role]).some(r => ['admin', 'planner'].includes(r));
   const fileRef = useRef(null);
 
   const [fState, setFState] = useState('');

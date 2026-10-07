@@ -57,7 +57,7 @@ export default function Layout() {
                   <div className="px-4 py-3" style={{ borderBottom:'1px solid rgba(0,120,212,.1)' }}>
                     <div className="font-semibold text-gray-800 text-sm">{user?.full_name}</div>
                     <div className="text-xs text-gray-500 mt-0.5">{user?.email}</div>
-                    <span className={`badge badge-${user?.role} mt-1.5`}>{user?.role}</span>
+                    <span className={`badge badge-${user?.role} mt-1.5`}>{(user?.roles || [user?.role]).join(', ')}</span>
                   </div>
                   <button onClick={() => { setUserMenu(false); logoutUser(); }}
                     className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors">

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { hasRole, isOnlyRole, rolesLabel } from '../utils/roles';
 import {
   Truck, LayoutDashboard, MapPin, Route, Users, Settings,
   ClipboardList, Package, Play, CheckSquare, BarChart2, Mail, IndianRupee,
@@ -38,11 +39,11 @@ function NavSection({ label, children, defaultOpen = true }) {
 
 export default function Sidebar({ collapsed = false }) {
   const { user } = useAuth();
-  const isAdmin   = user?.role === 'admin';
-  const isPlanner  = user?.role === 'planner' || isAdmin;
-  const isViewer   = user?.role === 'viewer';
-  const isBiller  = user?.role === 'biller' || isAdmin;
-  const isExecutor = user?.role === 'executor';
+  const isAdmin   = hasRole(user, 'admin');
+  const isPlanner  = hasRole(user, 'planner') || isAdmin;
+  const isViewer   = hasRole(user, 'viewer');
+  const isBiller  = hasRole(user, 'biller') || isAdmin;
+  const isExecutor = isOnlyRole(user, 'executor');
 
   // Module-level visibility now comes from the user's DB-backed role
   // permissions (falls back to legacy booleans above for the narrow special
@@ -153,7 +154,7 @@ export default function Sidebar({ collapsed = false }) {
             </div>
             <div className="min-w-0">
               <div className="text-xs font-semibold text-white truncate">{user?.full_name}</div>
-              <div className="text-xs capitalize" style={{ color:'rgba(255,255,255,0.55)' }}>{user?.role}</div>
+              <div className="text-xs capitalize" style={{ color:'rgba(255,255,255,0.55)' }}>{rolesLabel(user)}</div>
             </div>
           </div>
         </div>
