@@ -40,7 +40,7 @@ router.get('/lookups', ...gate, async (req, res) => {
     const byRoute = {};
     for (const m of members) (byRoute[m.route_id] ||= []).push(m.bmcu_id);
     res.json({ tankers: tankers.map(t => ({ ...t, compartment_codes: compartmentCodes(t.compartments) })), bmcus, routes: routes.map(r => ({ ...r, bmcu_ids: byRoute[r.id] || [] })) });
-  } catch (err) { res.status(500).json({ error: 'Failed to load lookups' }); }
+  } catch (err) { console.error('[quality] lookups error:', err); res.status(500).json({ error: `Failed to load lookups: ${err.message}` }); }
 });
 
 async function validate(b) {
@@ -135,7 +135,7 @@ function listSql(q) {
 
 router.get('/entries', ...gate, async (req, res) => {
   try { const { sql, params } = listSql(req.query); res.json((await query(sql, params)).rows.map(withVar)); }
-  catch (err) { res.status(500).json({ error: 'Failed to load entries' }); }
+  catch (err) { console.error('[quality] list error:', err); res.status(500).json({ error: `Failed to load entries: ${err.message}` }); }
 });
 
 // Excel in the quality team's format (column order fixed, 2026-10-07).
