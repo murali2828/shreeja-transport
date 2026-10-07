@@ -12,7 +12,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { fmtDate } from '../../utils/date';
 
 const fx = (v, d = 2) => (v == null || v === '' ? '—' : parseFloat(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d }));
-const iso = d => d.toISOString().slice(0, 10);
+const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; // local date, not UTC
 
 export default function QaDispatchList() {
   const qc = useQueryClient(); const navigate = useNavigate(); const { user } = useAuth();

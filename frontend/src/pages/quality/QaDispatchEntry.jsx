@@ -15,8 +15,10 @@ import { fmtDate } from '../../utils/date';
 const KG_FACTOR = 1.0285;
 const n = v => (v === '' || v == null ? null : parseFloat(v));
 const fx = (v, d = 2) => (v == null || isNaN(v) ? '—' : v.toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d }));
-const today = () => new Date().toISOString().slice(0, 10);
-const addDays = (iso, k) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + k); return d.toISOString().slice(0, 10); };
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+// Local-date arithmetic: toISOString() would shift midnight IST back to the previous UTC day.
+const pad = v => String(v).padStart(2, '0');
+const addDays = (iso, k) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + k); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 
 const EMPTY = { lifting_date: today(), route_id: '', tanker_id: '', bmcu_id: '', compartment: ['FC'], scale_reading: '', shifts: [],
   d_qty_litres: '', d_fat_pct: '', d_clr: '', ts_date: '', ts_shift: '', ts_qty_litres: '', ts_fat_pct: '', ts_snf_pct: '', remarks: '' };
