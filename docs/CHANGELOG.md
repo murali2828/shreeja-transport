@@ -8,6 +8,7 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
 ### Security
+- Viewer role sees only the Execution section (migration 055 resets its module flags to execution only; billing, reports and tanker-rate pages now require their module) and the menu hides Other Gate Pass, Approvals and the Start button for viewer-only users (owner, 2026-10-07).
 - Viewer role is read-only: a user holding only `viewer` is refused every POST / PUT / DELETE by all three authorisation gates, whatever module flags the role carries (it was able to save executions and edit billing runs through its execution / billing module flags); change-request creation now goes through the execution gate (owner, 2026-10-07).
 
 ### Changed

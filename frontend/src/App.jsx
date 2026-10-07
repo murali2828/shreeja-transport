@@ -122,7 +122,7 @@ function AppRoutes() {
           <ProtectedRoute roles={['admin']}><LocationMasters/></ProtectedRoute>
         }/>
         <Route path="masters/tanker-rates" element={
-          <ProtectedRoute roles={['admin','viewer']}><TankerRates/></ProtectedRoute>
+          <ProtectedRoute roles={['admin']} module="masters"><TankerRates/></ProtectedRoute>
         }/>
         <Route path="masters/distances" element={
           <ProtectedRoute roles={['admin']}><DistanceMaster/></ProtectedRoute>
@@ -184,13 +184,13 @@ function AppRoutes() {
 
         {/* Reports — all roles */}
         <Route path="billing" element={
-          <ProtectedRoute roles={['admin','biller','viewer']}><TankerBilling/></ProtectedRoute>
+          <ProtectedRoute roles={['admin','biller']} module="billing"><TankerBilling/></ProtectedRoute>
         }/>
-        <Route path="reports" element={<DailyTSReport/>}/>
-        <Route path="reports/analytics" element={<Analytics/>}/>
-        <Route path="reports/bmcu-breakup" element={<BmcuBreakup/>}/>
-        <Route path="reports/trip-durations" element={<TripDurations/>}/>
-        <Route path="reports/day-utilisation" element={<DayUtilisation/>}/>
+        <Route path="reports" element={<ProtectedRoute module="reports"><DailyTSReport/></ProtectedRoute>}/>
+        <Route path="reports/analytics" element={<ProtectedRoute module="reports"><Analytics/></ProtectedRoute>}/>
+        <Route path="reports/bmcu-breakup" element={<ProtectedRoute module="reports"><BmcuBreakup/></ProtectedRoute>}/>
+        <Route path="reports/trip-durations" element={<ProtectedRoute module="reports"><TripDurations/></ProtectedRoute>}/>
+        <Route path="reports/day-utilisation" element={<ProtectedRoute module="reports"><DayUtilisation/></ProtectedRoute>}/>
         <Route path="reports/audit" element={
           <ProtectedRoute roles={['admin']}><AuditLog/></ProtectedRoute>
         }/>

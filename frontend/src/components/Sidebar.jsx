@@ -44,6 +44,7 @@ export default function Sidebar({ collapsed = false }) {
   const isViewer   = hasRole(user, 'viewer');
   const isBiller  = hasRole(user, 'biller') || isAdmin;
   const isExecutor = isOnlyRole(user, 'executor');
+  const isViewerOnly = isOnlyRole(user, 'viewer'); // read-only: no create / approve entries in the menu
 
   // Module-level visibility now comes from the user's DB-backed role
   // permissions (falls back to legacy booleans above for the narrow special
@@ -113,11 +114,11 @@ export default function Sidebar({ collapsed = false }) {
           {ni('/execution',        <Play size={15}/>,        'Active Trips')}
           {ni('/tracking',         <Navigation size={15}/>,  'Live Tracking')}
           {ni('/execution/closed', <CheckSquare size={15}/>, 'Closed Trips')}
-          {ni('/execution/gate-pass', <Play size={15}/>, 'Other Gate Pass')}
+          {!isViewerOnly && ni('/execution/gate-pass', <Play size={15}/>, 'Other Gate Pass')}
           {/* Tanker Position: hardcoded admin-or-whitelist special case, left untouched */}
           {(isAdmin || ['pp01','mahesh.k@shreejamilk.com','dceo','krithiga.a@shreejamilk.com'].includes(String(user?.user_id || '').toLowerCase()))
             && ni('/tanker-position', <Truck size={15}/>, 'Tanker Position')}
-          {ni('/approvals', <CheckSquare size={15}/>, 'Approvals')}
+          {!isViewerOnly && ni('/approvals', <CheckSquare size={15}/>, 'Approvals')}
         </NavSection>
       )}
 

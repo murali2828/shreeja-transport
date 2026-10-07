@@ -6,6 +6,7 @@ import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight, MapPin } from
 import toast from 'react-hot-toast';
 import { getPlans, getExecutions, createExecution, cancelExecution, getExecutionCoverage, setMissedBmcuRemark } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
+import { isOnlyRole } from '../../utils/roles';
 import { fmtDate } from '../../utils/date';
 
 // Fixed remark vocabulary for missed BMCUs — must match MISSED_REMARKS in backend/src/routes/executions.js
@@ -289,7 +290,7 @@ export default function ExecutionList() {
                             <MapPin size={12}/>
                           </button>
                         )}
-                        {!exec && (
+                        {!exec && !isOnlyRole(user, 'viewer') && (
                           <button onClick={() => startMut.mutate(p.id)}
                             disabled={startMut.isPending}
                             className="btn-primary btn-sm flex items-center gap-1">
