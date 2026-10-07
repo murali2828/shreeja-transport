@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Fixed
+- Analytics km (Total KM, L/km, tanker leaderboard, transport cost) now reads the billed km when the trip is in a billing run, else the current Distance Master / Google chain, and ignores cancelled executions; the execution's keyed Actual KM follows the recomputed chain on every save unless the executor typed over it. The seeded Actual KM had gone stale when points changed after Start, leaving the dashboard 31,000 km under billing run #20 on the same 530 trips (2026-10-07).
+
 ### Changed
 - Billing: acknowledgement cutoff moved from 23:59:59 of the period's last day to 06:00 on the following morning (16th / 1st), configurable as `BILLING_ACK_CUTOFF_TIME`; night deliveries of the last day acknowledged before 06:00 now bill in their own fortnight (owner, 2026-10-05).
 

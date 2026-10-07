@@ -363,6 +363,20 @@ async function applyExecutionData(client, execId, data, userId, opts = {}) {
   );
 
   const dist = await computeExecutionDistance(client, execId, userId);
+  // Keep the keyed km in step with the chain unless the executor overrode it:
+  // actual_km is seeded from the chain at Start, and when it still equals the
+  // previous chain value (nobody typed over it) and the caller did not send a
+  // different figure, it follows the recomputed chain (2026-10-07; stale seeds
+  // put Analytics 31,000 km under billing run #20).
+  const prev = exec.rows[0];
+  const sent = actual_km !== undefined && actual_km !== null && actual_km !== '' ? parseFloat(actual_km) : null;
+  const prevActual = prev.actual_km == null ? null : parseFloat(prev.actual_km);
+  const prevCalc   = prev.calculated_km == null ? null : parseFloat(prev.calculated_km);
+  const untouched  = (sent == null || sent === prevActual) && (prevActual == null || prevActual === prevCalc);
+  if (untouched && dist.total_km > 0 && dist.total_km !== prevActual) {
+    await client.query('UPDATE trip_executions SET actual_km=$1 WHERE id=$2', [dist.total_km, execId]);
+    r.rows[0].actual_km = dist.total_km;
+  }
   return { execution: r.rows[0], dist };
 }
 

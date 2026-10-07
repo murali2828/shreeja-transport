@@ -32,8 +32,14 @@ const baseTripsCte = `
     SELECT tp.id AS plan_id, tp.plan_for_date, tp.delivery_point_id,
            te.id AS execution_id, te.status AS exec_status, te.updated_at,
            t.id AS tanker_id, t.tanker_number, t.capacity_litres,
-           COALESCE(te.actual_km, te.calculated_km, 0) AS km,
-           COALESCE(t.per_km_rate,0) * COALESCE(te.actual_km, te.calculated_km, 0) AS trip_cost,
+           -- Km basis (2026-10-07): the billed km once the trip is in a billing
+           -- run, else the current Distance Master / Google chain
+           -- (calculated_km is refreshed on every save), else the keyed km.
+           -- The seeded actual_km went stale whenever points changed after
+           -- Start, which put the dashboard 31,000 km under run #20.
+           COALESCE(brt.billed_km, NULLIF(te.calculated_km, 0), te.actual_km, 0) AS km,
+           COALESCE(t.per_km_rate,0) * COALESCE(brt.billed_km, NULLIF(te.calculated_km, 0), te.actual_km, 0) AS trip_cost,
+           (brt.id IS NOT NULL) AS in_billing_run,
            rm.route_name, dp.name AS delivery_point,
            tp.created_by AS planner_id, pu.full_name AS planner_name,
            COALESCE(tp.expected_total_qty, 0) AS planned_litres,
@@ -42,11 +48,12 @@ const baseTripsCte = `
            -- panels keep these trips; UTILISATION figures must skip them.
            ${saleTankerSql('tp', 't')} AS is_sale
     FROM trip_plans tp
-    JOIN trip_executions te ON te.trip_plan_id = tp.id
+    JOIN trip_executions te ON te.trip_plan_id = tp.id AND te.status <> 'cancelled'
     LEFT JOIN tankers t          ON t.id  = tp.tanker_id
     LEFT JOIN route_masters rm   ON rm.id = tp.route_id
     LEFT JOIN delivery_points dp ON dp.id = tp.delivery_point_id
     LEFT JOIN users pu           ON pu.id = tp.created_by
+    LEFT JOIN LATERAL (SELECT b.id, b.billed_km FROM billing_run_trips b WHERE b.execution_id = te.id ORDER BY b.id DESC LIMIT 1) brt ON TRUE
     WHERE tp.plan_for_date BETWEEN $1 AND $2
       AND tp.status NOT IN ('cancelled','deleted')
       AND ($3::int IS NULL OR tp.delivery_point_id = $3::int)
