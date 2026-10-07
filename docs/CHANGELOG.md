@@ -7,6 +7,10 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Added
+- Quality module (migration 052): role `quality` / module permission `quality`; Quality → QA Dispatch Entry (phone-first: lifting date, route, tanker, BMCU with route members starred, compartment and shift chips, scale reading; dispatch litres / fat % / CLR with SNF, kgs, kg fat / SNF derived; truck-sheet date / shift / litres / fat % / SNF % with kgs derived; live variation; Save & next BMCU) and QA Dispatch Report (filters, edit, admin delete, Excel in the team's column order). `GET/POST/PUT/DELETE /api/quality/entries`, `GET /api/quality/lookups`, `GET /api/quality/entries/excel`. Independent of the tanker team's data (ADR-021, 2026-10-07).
+- Installable web app (PWA): manifest, icons and service worker via `vite-plugin-pwa`; app shell cached, `/api` network-only; nginx serves the manifest and worker `no-cache`. QA phones: Chrome → Add to Home screen (2026-10-07).
+
 ### Fixed
 - Analytics km (Total KM, L/km, tanker leaderboard, transport cost) now reads the billed km when the trip is in a billing run, else the current Distance Master / Google chain, and ignores cancelled executions; the execution's keyed Actual KM follows the recomputed chain on every save unless the executor typed over it. The seeded Actual KM had gone stale when points changed after Start, leaving the dashboard 31,000 km under billing run #20 on the same 530 trips (2026-10-07).
 

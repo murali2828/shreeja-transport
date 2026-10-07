@@ -14,7 +14,7 @@ A longer, older narrative lives in the root [`ARCHITECTURE.md`](../ARCHITECTURE.
 
 | Layer | What | Where |
 |---|---|---|
-| Frontend | React 18 SPA, Vite build, Tailwind, TanStack Query, axios, react-router, Leaflet map, recharts, ExcelJS-free (downloads come from backend) | `frontend/src` |
+| Frontend | React 18 SPA (installable PWA via `vite-plugin-pwa`: app shell cached, `/api` network-only), Vite build, Tailwind, TanStack Query, axios, react-router, Leaflet map, recharts, ExcelJS-free (downloads come from backend) | `frontend/src` |
 | Web tier | nginx serves the SPA and proxies `/api/` to `backend:5000` | `frontend/nginx.conf` |
 | Backend | Express 4 API, CommonJS, raw parameterised SQL via `pg` Pool (max 20) | `backend/src` |
 | DB | Postgres 16 (`postgres:16-alpine`), TZ Asia/Kolkata, statement timeout 60 s | compose `db` service |
@@ -43,6 +43,7 @@ A longer, older narrative lives in the root [`ARCHITECTURE.md`](../ARCHITECTURE.
 | `/api/reports`, `/api/analytics` | own files | Daily TS, BMCU breakup, trip durations, day utilisation, analytics KPIs, Excel + email | `authorizeOrModule('reports', ...)` |
 | `/api/billing` | `routes/billing.js` | fortnightly vendor billing runs, tolls (FASTag PDF parse), 3-level approval, vendor cards | `authorizeOrModule('billing', admin, biller)`; mounted only when `BILLING_ENABLED=true` |
 | `/api/billing/toll-changes` | `routes/billingTollChanges.js` | toll challan change requests on submitted / approved runs: create with proposed file, PP01 email approval (single-use token) or portal decision (migration 051) | billing; token for decide |
+| `/api/quality` | `routes/quality.js` | Quality team's tanker dispatch vs truck-sheet (RMRD) entries: lookups, CRUD, list, Excel in the team's format (migration 052; formulas in `services/qaDispatch.js`) | `authorizeModule('quality')` |
 | `/api/tracking` | `routes/tracking.js` | WheelsEye live positions, poll-now, trip playback analysis, fleet report | execution/admin |
 | `/api/audit` | `routes/audit.js` | request + field-level audit logs, Excel | admin |
 | `/api/integrations/assure` | `routes/integrations.js` | read-only trips/loadings/receipts feed for Shreeja Assure | `X-Assure-Key` header, not JWT |
@@ -68,7 +69,7 @@ Utils: `utils/saleTanker.js` (sale-tanker SQL rule), `utils/geo.js` (Haversine, 
 - `src/api/index.js` — the only axios instance (`baseURL /api`, Bearer token from localStorage, auto-logout on 401) and every API helper.
 - `src/App.jsx` — React Router tree; `ProtectedRoute` role/module guards; `hooks/useAuth.jsx` holds the user.
 - `src/components` — `Layout`, `Sidebar` (role-aware), `MasterTable` (shared CRUD modal/table), `SearchableSelect`.
-- `src/pages` — `masters/`, `planning/`, `execution/` (ExecutionForm, AcknowledgementForm, Approvals, TankerPosition, LiveTracking, NonTripGatePass, ClosedTrips), `billing/` (TankerBilling, BillingDecision), `reports/` (DailyTSReport, BmcuBreakup, TripDurations, DayUtilisation, Analytics, AuditLog), `auth/`, `changeRequests/`.
+- `src/pages` — `quality/` (QaDispatchEntry phone-first, QaDispatchList), `masters/`, `planning/`, `execution/` (ExecutionForm, AcknowledgementForm, Approvals, TankerPosition, LiveTracking, NonTripGatePass, ClosedTrips), `billing/` (TankerBilling, BillingDecision), `reports/` (DailyTSReport, BmcuBreakup, TripDurations, DayUtilisation, Analytics, AuditLog), `auth/`, `changeRequests/`.
 - `src/utils/printDocs.js` — print-window HTML for gate pass / COA / non-trip gate pass; `utils/date.js` — DD-MM-YYYY display.
 
 ## Data flow
@@ -106,11 +107,12 @@ attribution) → Haversine × `ROAD_DISTANCE_FACTOR` (default 1.3), flagged as e
 
 Tables (from `backend/migrations/001`–`044`), grouped:
 
-- **Identity**: `users` (login `user_id`, bcrypt `password_hash`, `role`, `is_active`, `must_change_password`), `roles` (name, `permissions` JSON per module: masters/planning/execution/billing/reports), `password_reset_tokens` (created at runtime by `routes/auth.js`, not by a migration).
+- **Identity**: `users` (login `user_id`, bcrypt `password_hash`, `role`, `is_active`, `must_change_password`), `roles` (name, `permissions` JSON per module: masters/planning/execution/billing/reports/quality), `password_reset_tokens` (created at runtime by `routes/auth.js`, not by a migration).
 - **Masters**: `tankers` (capacity, chambers, vendor, rates), `vendors`, `tanker_rates` (per-km by state/type), `tanker_documents`, `bmcus` (lat/lng, 044: `chilling_capacity_litres`, `lift_policy`), `starting_points`, `testing_points`, `delivery_points`, `route_masters` + `route_bmcus`, `distance_master` (unique normalised pair, `distance_km`, `google_km`), `report_email_config`, `plan_email_configs`, `app_settings` (e.g. vendor-email toggle).
 - **Planning**: `trip_plans` (`plan_for_date`, tanker, route, start/delivery points, expected km/cost, `is_sale_tanker`, 049: `trip_kind` milk/material + `material_id`, status draft/published/cancelled/deleted, `created_by`), `trip_plan_bmcus`, optimizer tables `optimization_sessions/inputs/trips/trip_bmcus` (044: `algorithm`, `constraints`, `shift_scope`, `comparison`, `summary` on sessions; per-trip `delivery_point_id`, `start_point_id`, `transport_type`, `rate_state`, `flags`), `bmcu_demand_forecast` (044: forecast + actual litres per BMCU × shift × date).
 - **Execution**: `materials` + `trip_material_data` (049: purchase qty/fat/SNF, supplier and customer scans under `UPLOAD_DIR/material`, keyed km), `trip_executions` (status in_progress→saved→pending_ack→closed, or cancelled; unique live per plan), `trip_execution_bmcus`, `trip_execution_bmcu_shifts`, `trip_execution_bmcu_entries` (balance milk, new MPP, internal shifting raw/chilled), `trip_third_party_sales`, `trip_acknowledgements` (per chamber, `entered_by`), `bmcu_missed_remarks`, `trip_document_prints`, `non_trip_gate_passes`.
 - **Billing**: `billing_runs` (fortnight from/to, status), `billing_run_trips` (billed km, rate, amount, legs JSON, `carried_forward`), `billing_run_tolls`, `billing_run_approvals` (3 levels, email tokens).
+- **Quality**: `qa_dispatch_entries` (052: per tanker × BMCU × compartment × lifting date, dispatch side with CLR-derived SNF, truck-sheet side, derived kgs / kg fat / kg SNF; independent of executions).
 - **Governance**: `execution_change_requests`, `audit_logs`, `data_change_logs`, `schema_migrations`.
 - **Tracking**: `tanker_gps_latest`, `tanker_gps_history` (pruned to `WHEELSEYE_HISTORY_DAYS`).
 

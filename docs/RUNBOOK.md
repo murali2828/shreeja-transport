@@ -169,6 +169,13 @@ docker cp shreeja-qa-backend:/tmp/history_result.csv .                          
   historic rates to the Tanker Rate Master (RATES sheet of the workbook), execute the
   fortnights again.
 
+## Quality team: QA dispatch entry on phones
+
+1. Admin creates each QA user with role **quality** (Masters → Users). That role sees only the Quality section.
+2. On the phone open https://tms.shreejamilk.com (QA: qatms…) in Chrome, sign in, then ⋮ → **Add to Home screen** / **Install app**; on iPhone Safari: Share → **Add to Home Screen**. The icon opens the portal full-screen; a QA-only user lands on QA Dispatch Entry.
+3. Entry needs network; nothing is stored offline. After a deploy the app shell refreshes on the next open (service worker `autoUpdate`).
+4. Report: Quality → QA Dispatch Report → Excel (the team's column order). Duplicate tanker + BMCU + compartment + lifting date is refused; edit the existing row instead. Only admins delete.
+
 ## Routine tasks
 
 - New user / role: Masters → Users / Roles (admin). Custom roles get module permissions.

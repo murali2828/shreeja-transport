@@ -202,6 +202,13 @@ export const createVendor  = (d)     => api.post('/vendors', d);
 // Materials master + material (pasteurised milk) trips — migration 049
 export const getMaterials        = (params) => api.get('/materials', { params });
 export const removeRunTrip = (runId, tripId) => api.delete(`/billing/runs/${runId}/trips/${tripId}`);
+// Quality team — QA tanker dispatch entries (migration 052)
+export const getQaLookups          = ()        => api.get('/quality/lookups');
+export const getQaEntries          = (params)  => api.get('/quality/entries', { params });
+export const createQaEntry         = (d)       => api.post('/quality/entries', d);
+export const updateQaEntry         = (id, d)   => api.put(`/quality/entries/${id}`, d);
+export const deleteQaEntry         = (id)      => api.delete(`/quality/entries/${id}`);
+export const downloadQaEntriesExcel = (params) => api.get('/quality/entries/excel', { params, responseType: 'blob' });
 export const createMaterial      = (d)      => api.post('/materials', d);
 export const updateMaterial      = (id, d)  => api.put(`/materials/${id}`, d);
 export const saveMaterialTrip    = (execId, fd) => api.put(`/material-trips/${execId}`, fd);

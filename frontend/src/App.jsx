@@ -37,6 +37,8 @@ import ExecutionList        from './pages/execution/ExecutionList';
 import ExecutionForm        from './pages/execution/ExecutionForm';
 import AcknowledgementForm  from './pages/execution/AcknowledgementForm';
 import MaterialTripForm     from './pages/execution/MaterialTripForm';
+import QaDispatchEntry      from './pages/quality/QaDispatchEntry';
+import QaDispatchList       from './pages/quality/QaDispatchList';
 import ClosedTrips          from './pages/execution/ClosedTrips';
 import Approvals            from './pages/execution/Approvals';
 import NonTripGatePass      from './pages/execution/NonTripGatePass';
@@ -61,14 +63,25 @@ const queryClient = new QueryClient({
 });
 
 // ─── Role-based Route Guard ───────────────────────────────────────────────────
-function ProtectedRoute({ children, roles, allowMustChange }) {
+function ProtectedRoute({ children, roles, module, allowMustChange }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex items-center justify-center h-screen text-gray-400">Loading…</div>;
   if (!user)   return <Navigate to="/login" replace />;
   // Force password change before accessing any other page
   if (user.must_change_password && !allowMustChange) return <Navigate to="/change-password" replace />;
-  if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
+  // `module`: allowed when the role's module permission is on (admin always); `roles`: legacy role list.
+  const byModule = module && (user.role === 'admin' || user.permissions?.[module] === true);
+  const byRole   = roles && roles.includes(user.role);
+  if ((roles || module) && !byModule && !byRole) return <Navigate to="/" replace />;
   return children;
+}
+
+// Users whose only module is Quality land on the QA entry page instead of the dashboard.
+function HomeRedirect({ children }) {
+  const { user } = useAuth();
+  const p = user?.permissions || {};
+  const onlyQuality = user && user.role !== 'admin' && p.quality === true && !p.masters && !p.planning && !p.execution && !p.billing && !p.reports;
+  return onlyQuality ? <Navigate to="/quality/entry" replace /> : children;
 }
 
 function AppRoutes() {
@@ -88,7 +101,11 @@ function AppRoutes() {
       <Route path="/" element={
         <ProtectedRoute><Layout/></ProtectedRoute>
       }>
-        <Route index element={<Dashboard/>}/>
+        <Route index element={<HomeRedirect><Dashboard/></HomeRedirect>}/>
+
+        {/* Quality team — module permission 'quality' (migration 052) */}
+        <Route path="quality/entry"   element={<ProtectedRoute module="quality"><QaDispatchEntry/></ProtectedRoute>}/>
+        <Route path="quality/entries" element={<ProtectedRoute module="quality"><QaDispatchList/></ProtectedRoute>}/>
 
         {/* Masters — admin + planner */}
         <Route path="masters/tankers" element={

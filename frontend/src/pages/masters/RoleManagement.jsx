@@ -12,9 +12,10 @@ const MODULES = [
   { key: 'execution', label: 'Execution' },
   { key: 'billing',   label: 'Billing' },
   { key: 'reports',   label: 'Reports' },
+  { key: 'quality',   label: 'Quality (QA dispatch entry)' },
 ];
 
-const EMPTY_PERMS = { masters: false, planning: false, execution: false, billing: false, reports: false };
+const EMPTY_PERMS = { masters: false, planning: false, execution: false, billing: false, reports: false, quality: false };
 const NAME_RE = /^[a-z0-9_]+$/;
 
 export default function RoleManagement() {

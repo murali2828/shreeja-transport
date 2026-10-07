@@ -55,6 +55,7 @@ export default function Sidebar({ collapsed = false }) {
   const canExecution = isAdmin || perms.execution === true;
   const canBilling  = isAdmin || perms.billing === true;
   const canReports  = isAdmin || perms.reports === true;
+  const canQuality  = isAdmin || perms.quality === true;
 
   const ni = (to, icon, label, end) =>
     <NavItem to={to} end={end} icon={icon} label={label} collapsed={collapsed}/>;
@@ -133,6 +134,13 @@ export default function Sidebar({ collapsed = false }) {
           {ni('/reports/trip-durations', <BarChart2 size={15}/>, 'Trip Durations')}
           {ni('/reports/day-utilisation', <BarChart2 size={15}/>, 'Day Utilisation')}
           {isAdmin && ni('/reports/audit', <Users size={15}/>, 'User Activity')}
+        </NavSection>
+      )}
+
+      {canQuality && (
+        <NavSection label={collapsed ? '' : 'Quality'}>
+          {ni('/quality/entry', <ClipboardList size={15}/>, 'QA Dispatch Entry')}
+          {ni('/quality/entries', <BarChart2 size={15}/>, 'QA Dispatch Report')}
         </NavSection>
       )}
 

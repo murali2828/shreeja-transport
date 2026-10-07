@@ -50,7 +50,7 @@ function authorize(...roles) {
   };
 }
 
-const MODULES = ['masters', 'planning', 'execution', 'billing', 'reports'];
+const MODULES = ['masters', 'planning', 'execution', 'billing', 'reports', 'quality']; // quality: QA dispatch entry (migration 052)
 
 // authorizeModule(moduleKey): module-level access gate backed by the `roles`
 // table's `permissions` JSON. Admin is always allowed via a hardcoded check —

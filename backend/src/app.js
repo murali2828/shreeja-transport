@@ -84,6 +84,7 @@ app.use('/api/distances',  require('./routes/distances'));
 app.use('/api/optimize',   require('./routes/optimize'));
 app.use('/api/vendors',    require('./routes/vendors'));
 app.use('/api/materials',  require('./routes/materials'));
+app.use('/api/quality',    require('./routes/quality'));      // QA dispatch entries (migration 052)
 app.use('/api/material-trips', require('./routes/materialTrips'));
 app.use('/api/documents',  require('./routes/documents'));
 app.use('/api/audit',      require('./routes/audit'));
