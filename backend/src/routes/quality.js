@@ -123,14 +123,15 @@ router.delete('/entries/:id', authenticate, authorizeModule('quality'), async (r
 function listSql(q) {
   const where = []; const params = [];
   const add = (cond, v) => { params.push(v); where.push(cond.replace('?', '$' + params.length)); };
-  if (ISO.test(q.from || '')) add('lifting_date >= ?', q.from);
-  if (ISO.test(q.to || '')) add('lifting_date <= ?', q.to);
-  if (q.tanker_id) add('tanker_id = ?', q.tanker_id);
-  if (q.bmcu_id) add('bmcu_id = ?', q.bmcu_id);
-  if (q.route_id) add('route_id = ?', q.route_id);
-  return { sql: `SELECT *, lifting_date::text AS lifting_date, ts_date::text AS ts_date, submission_date::text AS submission_date
-                 FROM qa_dispatch_entries ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-                 ORDER BY lifting_date DESC, tanker_number, bmcu_code, compartment LIMIT 2000`, params };
+  if (ISO.test(q.from || '')) add('e.lifting_date >= ?', q.from);
+  if (ISO.test(q.to || '')) add('e.lifting_date <= ?', q.to);
+  if (q.tanker_id) add('e.tanker_id = ?', q.tanker_id);
+  if (q.bmcu_id) add('e.bmcu_id = ?', q.bmcu_id);
+  if (q.route_id) add('e.route_id = ?', q.route_id);
+  // Aliases shadow the columns, so WHERE / ORDER BY qualify them with the table alias.
+  return { sql: `SELECT e.*, e.lifting_date::text AS lifting_date, e.ts_date::text AS ts_date, e.submission_date::text AS submission_date
+                 FROM qa_dispatch_entries e ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+                 ORDER BY e.lifting_date DESC, e.tanker_number, e.bmcu_code, e.compartment LIMIT 2000`, params };
 }
 
 router.get('/entries', ...gate, async (req, res) => {
