@@ -956,7 +956,9 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
            v.vendor_code AS vendor_sap_code,
            COALESCE(ack.litres, t.ack_litres) AS milk_litres, COALESCE(ack.kgs, t.ack_kgs) AS milk_kgs,
            COALESCE(CASE WHEN ack.kgs > 0 THEN ack.kg_fat / ack.kgs * 100 END, t.ack_fat_pct) AS fat_pct,
-           COALESCE(CASE WHEN ack.kgs > 0 THEN ack.kg_snf / ack.kgs * 100 END, t.ack_snf_pct) AS snf_pct
+           COALESCE(CASE WHEN ack.kgs > 0 THEN ack.kg_snf / ack.kgs * 100 END, t.ack_snf_pct) AS snf_pct,
+           COALESCE(ack.kg_fat, t.ack_kgs * t.ack_fat_pct / 100) AS kg_fat,
+           COALESCE(ack.kg_snf, t.ack_kgs * t.ack_snf_pct / 100) AS kg_snf
     FROM billing_run_trips t
     LEFT JOIN vendors v ON v.id = t.vendor_id
     LEFT JOIN LATERAL (
@@ -1011,23 +1013,24 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     // System / Google / Master KM, Excluded or Remarks columns (excluded
     // lines still show ₹0). Remarks remain on screen.
     head(ws, ['Date', 'Tanker', 'Capacity (KL)', 'SAP Vendor Code', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
-      'Qty in Lts', 'Qty in Kgs', 'Fat %', 'SNF %', 'State', 'Transport Type',
+      'Qty in Lts', 'Qty in Kgs', 'Fat %', 'Fat Kgs', 'SNF %', 'SNF Kgs', 'State', 'Transport Type',
       'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %', 'BMCU Details']);
-    ws.getColumn(20).width = 60;
+    ws.getColumn(22).width = 60;
     const amt = t => t.excluded ? 0 : (+t.amount || 0);
     rows.forEach(t => {
       const l = +t.milk_litres || 0, cap = +t.capacity_litres || 0;
       ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number, rN(t.capacity_litres / 1000, 1),
         t.vendor_sap_code, t.vendor_name, t.route_name, t.start_point, t.delivery_point,
-        rN(t.milk_litres), rN(t.milk_kgs), rN(t.fat_pct, 3), rN(t.snf_pct, 3),
+        rN(t.milk_litres), rN(t.milk_kgs), rN(t.fat_pct, 3), rN(t.kg_fat, 3), rN(t.snf_pct, 3), rN(t.kg_snf, 3),
         t.state, t.transport_type,
         t.billed_km, t.rate_per_km, amt(t), l > 0 ? rN(amt(t) / l, 4) : null, cap > 0 && l > 0 ? rN(l / cap * 100) : null,
         bmcuDetails(t.execution_id)]);
     });
     const sumL = rows.reduce((s, t) => s + (+t.milk_litres || 0), 0), sumKg = rows.reduce((s, t) => s + (+t.milk_kgs || 0), 0);
     const sumCap = rows.reduce((s, t) => s + (+t.capacity_litres || 0), 0), sumAmt = rows.reduce((s, t) => s + amt(t), 0);
+    const sumKf = rows.reduce((s, t) => s + (+t.kg_fat || 0), 0), sumKs = rows.reduce((s, t) => s + (+t.kg_snf || 0), 0);
     const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '',
-      rN(sumL), rN(sumKg), '', '', '', '',
+      rN(sumL), rN(sumKg), sumKg > 0 ? rN(sumKf / sumKg * 100, 3) : '', rN(sumKf, 3), sumKg > 0 ? rN(sumKs / sumKg * 100, 3) : '', rN(sumKs, 3), '', '',
       rN(rows.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
       rN(sumAmt), sumL > 0 ? rN(sumAmt / sumL, 4) : null, sumCap > 0 && sumL > 0 ? rN(sumL / sumCap * 100) : null, '']);
     totRow.font = { bold: true };
@@ -1854,10 +1857,10 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     ws1.addRow([]);
     const sum = (rows, k) => rN(rows.reduce((s, r) => s + (+r[k] || 0), 0));
     const pct = (rows, k, base) => { const b = rows.reduce((s, r) => s + (+r[base] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[k] || 0), 0) / b * 100, 3) : null; };
-    const MILK_HEADS = ['Qty in Lts', 'Qty in Kgs', 'Fat %', 'SNF %', 'Fat Kgs', 'SNF Kgs'];                      // Trip Wise wording
-    const MILK_HEADS_AGG = ['Milk Received in Ltrs', "Milk Received in KG's", 'FAT %', 'SNF%', "FAT KG's", "SNF KG's"]; // Date / Tanker Wise wording
-    const milkCells = r => [rN(r.milk_litres), rN(r.milk_kgs), r.fat_pct, r.snf_pct, rN(r.kg_fat, 3), rN(r.kg_snf, 3)];
-    const milkTotals = rows => [sum(rows, 'milk_litres'), sum(rows, 'milk_kgs'), pct(rows, 'kg_fat', 'milk_kgs'), pct(rows, 'kg_snf', 'milk_kgs'), sum(rows, 'kg_fat'), sum(rows, 'kg_snf')];
+    const MILK_HEADS = ['Qty in Lts', 'Qty in Kgs', 'Fat %', 'Fat Kgs', 'SNF %', 'SNF Kgs'];                      // Trip Wise wording
+    const MILK_HEADS_AGG = ['Milk Received in Ltrs', "Milk Received in KG's", 'FAT %', "FAT KG's", 'SNF%', "SNF KG's"]; // Date / Tanker Wise wording
+    const milkCells = r => [rN(r.milk_litres), rN(r.milk_kgs), r.fat_pct, rN(r.kg_fat, 3), r.snf_pct, rN(r.kg_snf, 3)];
+    const milkTotals = rows => [sum(rows, 'milk_litres'), sum(rows, 'milk_kgs'), pct(rows, 'kg_fat', 'milk_kgs'), sum(rows, 'kg_fat'), pct(rows, 'kg_snf', 'milk_kgs'), sum(rows, 'kg_snf')];
     const ratio = (rows, num, den, d = 2) => { const b = rows.reduce((s, r) => s + (+r[den] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[num] || 0), 0) / b, d) : null; };
     const util = rows => { const c = rows.reduce((s, r) => s + (+r.capacity_litres || 0), 0); return c > 0 ? rN(rows.reduce((s, r) => s + (+r.milk_litres || 0), 0) / c * 100) : null; };
 
