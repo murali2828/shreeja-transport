@@ -1011,24 +1011,25 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     // System / Google / Master KM, Excluded or Remarks columns (excluded
     // lines still show ₹0). Remarks remain on screen.
     head(ws, ['Date', 'Tanker', 'Capacity (KL)', 'SAP Vendor Code', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
-      'BMCU Count', 'BMCU Details', 'Qty in Lts', 'Qty in Kgs', 'Fat %', 'SNF %', 'State', 'Transport Type',
-      'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %']);
-    ws.getColumn(10).width = 60;
+      'Qty in Lts', 'Qty in Kgs', 'Fat %', 'SNF %', 'State', 'Transport Type',
+      'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %', 'BMCU Details']);
+    ws.getColumn(20).width = 60;
     const amt = t => t.excluded ? 0 : (+t.amount || 0);
     rows.forEach(t => {
       const l = +t.milk_litres || 0, cap = +t.capacity_litres || 0;
       ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number, rN(t.capacity_litres / 1000, 1),
-        t.vendor_sap_code, t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id),
+        t.vendor_sap_code, t.vendor_name, t.route_name, t.start_point, t.delivery_point,
         rN(t.milk_litres), rN(t.milk_kgs), rN(t.fat_pct, 3), rN(t.snf_pct, 3),
         t.state, t.transport_type,
-        t.billed_km, t.rate_per_km, amt(t), l > 0 ? rN(amt(t) / l, 4) : null, cap > 0 && l > 0 ? rN(l / cap * 100) : null]);
+        t.billed_km, t.rate_per_km, amt(t), l > 0 ? rN(amt(t) / l, 4) : null, cap > 0 && l > 0 ? rN(l / cap * 100) : null,
+        bmcuDetails(t.execution_id)]);
     });
     const sumL = rows.reduce((s, t) => s + (+t.milk_litres || 0), 0), sumKg = rows.reduce((s, t) => s + (+t.milk_kgs || 0), 0);
     const sumCap = rows.reduce((s, t) => s + (+t.capacity_litres || 0), 0), sumAmt = rows.reduce((s, t) => s + amt(t), 0);
-    const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '', '', '',
+    const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '',
       rN(sumL), rN(sumKg), '', '', '', '',
       rN(rows.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
-      rN(sumAmt), sumL > 0 ? rN(sumAmt / sumL, 4) : null, sumCap > 0 && sumL > 0 ? rN(sumL / sumCap * 100) : null]);
+      rN(sumAmt), sumL > 0 ? rN(sumAmt / sumL, 4) : null, sumCap > 0 && sumL > 0 ? rN(sumL / sumCap * 100) : null, '']);
     totRow.font = { bold: true };
     return ws;
   };
@@ -1861,17 +1862,16 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     const util = rows => { const c = rows.reduce((s, r) => s + (+r.capacity_litres || 0), 0); return c > 0 ? rN(rows.reduce((s, r) => s + (+r.milk_litres || 0), 0) / c * 100) : null; };
 
     head(ws1, ['S.No', 'Date', 'Run #', 'Run Status', 'Tanker', 'Capacity (KL)', 'SAP Vendor Code', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
-      'BMCU Count', 'BMCU Details', 'State', 'Transport Type', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %',
-      ...MILK_HEADS, 'Remarks']);
-    ws1.getColumn(13).width = 60;
+      'State', 'Transport Type', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %',
+      ...MILK_HEADS, 'Remarks', 'BMCU Details']);
+    ws1.getColumn(26).width = 60;
     d.trips.forEach((t, i) => ws1.addRow([i + 1, fmtDateDisplay(t.plan_for_date), t.run_id, t.run_status, t.tanker_number,
       t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.vendor_sap_code, t.vendor_name, t.route_name, t.start_point, t.delivery_point,
-      t.bmcu_count, t.bmcu_coverage,
       t.state, t.transport_type, t.billed_km, t.rate_per_km, t.amount, t.cost_per_litre, t.utilisation_pct,
-      ...milkCells(t), t.remarks]));
-    ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
+      ...milkCells(t), t.remarks, t.bmcu_coverage]));
+    ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '', '',
       sum(d.trips, 'billed_km'), ratio(d.trips, 'amount', 'billed_km'),
-      sum(d.trips, 'amount'), ratio(d.trips, 'amount', 'milk_litres', 4), util(d.trips), ...milkTotals(d.trips), '']).font = { bold: true };
+      sum(d.trips, 'amount'), ratio(d.trips, 'amount', 'milk_litres', 4), util(d.trips), ...milkTotals(d.trips), '', '']).font = { bold: true };
     ws1.views = [{ state: 'frozen', ySplit: 3 }];
 
     // Milk columns sit after Trips on Date Wise (withCost) and after Total
