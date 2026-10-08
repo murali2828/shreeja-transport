@@ -1036,9 +1036,10 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     const sumL = rows.reduce((s, t) => s + (+t.milk_litres || 0), 0), sumKg = rows.reduce((s, t) => s + (+t.milk_kgs || 0), 0);
     const sumCap = rows.reduce((s, t) => s + (+t.capacity_litres || 0), 0), sumAmt = rows.reduce((s, t) => s + amt(t), 0);
     const sumKf = rows.reduce((s, t) => s + (+t.kg_fat || 0), 0), sumKs = rows.reduce((s, t) => s + (+t.kg_snf || 0), 0);
+    const sumKm = rows.reduce((s, t) => s + (+t.billed_km || 0), 0);
     const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '',
       rN(sumL), rN(sumKg), sumKg > 0 ? rN(sumKf / sumKg * 100) : '', rN(sumKf), sumKg > 0 ? rN(sumKs / sumKg * 100) : '', rN(sumKs), '', '',
-      rN(rows.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
+      rN(sumKm), sumKm > 0 ? rN(sumAmt / sumKm) : null,
       rN(sumAmt), sumL > 0 ? rN(sumAmt / sumL) : null, sumCap > 0 && sumL > 0 ? rN(sumL / sumCap * 100) : null, '']);
     for (let c = 3; c <= 21; c++) if (c !== 4 && c !== 5 && c !== 6 && c !== 7 && c !== 8 && c !== 15 && c !== 16) ws.getColumn(c).numFmt = '0.00';
     totRow.font = { bold: true };
