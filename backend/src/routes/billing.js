@@ -1825,7 +1825,8 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     ws1.addRow([]);
     const sum = (rows, k) => rN(rows.reduce((s, r) => s + (+r[k] || 0), 0));
     const pct = (rows, k, base) => { const b = rows.reduce((s, r) => s + (+r[base] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[k] || 0), 0) / b * 100, 3) : null; };
-    const MILK_HEADS = ['Qty in Lts', 'Qty in Kgs', 'Fat %', 'SNF %', 'Fat Kgs', 'SNF Kgs'];
+    const MILK_HEADS = ['Qty in Lts', 'Qty in Kgs', 'Fat %', 'SNF %', 'Fat Kgs', 'SNF Kgs'];                      // Trip Wise wording
+    const MILK_HEADS_AGG = ['Milk Received in Ltrs', "Milk Received in KG's", 'FAT %', 'SNF%', "FAT KG's", "SNF KG's"]; // Date / Tanker Wise wording
     const milkCells = r => [rN(r.milk_litres), rN(r.milk_kgs), r.fat_pct, r.snf_pct, rN(r.kg_fat, 3), rN(r.kg_snf, 3)];
     const milkTotals = rows => [sum(rows, 'milk_litres'), sum(rows, 'milk_kgs'), pct(rows, 'kg_fat', 'milk_kgs'), pct(rows, 'kg_snf', 'milk_kgs'), sum(rows, 'kg_fat'), sum(rows, 'kg_snf')];
     const ratio = (rows, num, den, d = 2) => { const b = rows.reduce((s, r) => s + (+r[den] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[num] || 0), 0) / b, d) : null; };
@@ -1846,8 +1847,8 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     const sheet = (name, rows, firstHead, firstKey, secondKey, withToll = false, withMilk = false, withCost = false) => {
       const ws = wb.addWorksheet(name);
       head(ws, [firstHead, secondKey === 'vendor_name' ? 'Vendor' : 'Tankers', 'Trips',
-        ...(withCost ? ['Tankers capacity (L)'] : []),
-        ...(withMilk ? MILK_HEADS : []),
+        ...(withCost ? ['Tankers capacity'] : []),
+        ...(withMilk ? MILK_HEADS_AGG : []),
         'Billed KM', 'Amount (₹)',
         ...(withCost ? ['Rate Per KM', 'Cost Per Ltr', 'Utilization %'] : []),
         ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : [])]);
