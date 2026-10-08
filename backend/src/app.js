@@ -71,6 +71,7 @@ app.use('/api/executions', require('./routes/executions'));
 app.use('/api/reports',    require('./routes/reports'));
 app.use('/api/analytics',  require('./routes/analytics'));
 app.use('/api/tanker-rates', require('./routes/tankerRates'));
+app.use('/api/diesel-rates', require('./routes/dieselRates')); // diesel price per state × fortnight (migration 058)
 // Billing is gated: enabled only where BILLING_ENABLED=true (QA during UAT).
 // Production runs with the flag unset until the module gets business sign-off.
 if (process.env.BILLING_ENABLED === 'true') {

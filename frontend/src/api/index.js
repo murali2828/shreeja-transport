@@ -336,7 +336,32 @@ export const downloadTankerRateTemplate = () =>
     URL.revokeObjectURL(url);
   });
 
+// ── Diesel Rates (per state × fortnight, migration 058) ───────────────────────
+export const getDieselRates          = (p)     => api.get('/diesel-rates', { params: p });
+export const getDieselRateMatrix     = (p)     => api.get('/diesel-rates/matrix', { params: p });
+export const getDieselPricesOn       = (date)  => api.get('/diesel-rates/period', { params: { date } });
+export const createDieselRate        = (d)     => api.post('/diesel-rates', d);
+export const updateDieselRate        = (id, d) => api.put(`/diesel-rates/${id}`, d);
+export const deleteDieselRate        = (id)    => api.delete(`/diesel-rates/${id}`);
+export const previewRatesFromDiesel  = (d)     => api.post('/diesel-rates/generate-preview', d);
+export const generateRatesFromDiesel = (d)     => api.post('/diesel-rates/generate', d);
+export const downloadRateAnnexure    = (effective_from) =>
+  api.get('/diesel-rates/annexure', { params: { effective_from }, responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `rate_annexure_${effective_from}.xlsx`; a.click();
+    URL.revokeObjectURL(url);
+  });
+
 // ── Analytics ─────────────────────────────────────────────────────────────────
 export const getAnalyticsSummary  = (p)     => api.get('/analytics/summary', { params: p });
+export const getCostDrivers       = (p)     => api.get('/analytics/cost-drivers', { params: p });
+export const downloadCostDriversExcel = (p) =>
+  api.get('/analytics/cost-drivers/excel', { params: p, responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `cost_drivers_${p.from}_${p.to}.xlsx`; a.click();
+    URL.revokeObjectURL(url);
+  });
 
 export default api;

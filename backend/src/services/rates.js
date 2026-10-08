@@ -49,6 +49,51 @@ function pickRate(rows, state, transportType, capacityLitres) {
   return best ? { id: best.id, rate_per_km: parseFloat(best.rate_per_km) } : null;
 }
 
+// Diesel price of a state on a date (diesel_rates, migration 058); null when
+// no period covers the date. The price behind a rate row is its own
+// tanker_rates.diesel_price; this is the master for new periods.
+async function dieselPriceFor(state, date) {
+  if (!state || !date) return null;
+  const r = await query(`
+    SELECT price_per_litre FROM diesel_rates
+    WHERE state = $1 AND $2::date BETWEEN effective_from AND effective_to
+    ORDER BY effective_from DESC LIMIT 1`, [state, date]);
+  return r.rows[0] ? parseFloat(r.rows[0].price_per_litre) : null;
+}
+
+// Every state's diesel price valid on a date → { state: price }.
+async function loadDieselForDate(date) {
+  const r = await query(`
+    SELECT DISTINCT ON (state) state, price_per_litre FROM diesel_rates
+    WHERE $1::date BETWEEN effective_from AND effective_to
+    ORDER BY state, effective_from DESC`, [date]);
+  const out = {};
+  for (const x of r.rows) out[x.state] = parseFloat(x.price_per_litre);
+  return out;
+}
+
+// Fortnight check shared by billing periods and rate/diesel periods:
+// 1–15 or 16–month end of one month. Returns an error string or null.
+function fortnightError(from, to) {
+  if (!from || !to) return 'from and to dates are required';
+  if (to < from) return 'to date is before from date';
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  const sameMonth = fy === ty && fm === tm;
+  const monthEnd = new Date(Date.UTC(fy, fm, 0)).getUTCDate();
+  const ok = sameMonth && ((fd === 1 && td === 15) || (fd === 16 && td === monthEnd));
+  return ok ? null : `Periods are fortnights only: 1–15 or 16–${monthEnd} of a month`;
+}
+
+// The fortnight before [from, to]: [from, to] of the previous half month.
+function previousFortnight(from) {
+  const [y, m, d] = from.split('-').map(Number);
+  if (d > 15) return { from: `${y}-${String(m).padStart(2, '0')}-01`, to: `${y}-${String(m).padStart(2, '0')}-15` };
+  const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
+  const end = new Date(Date.UTC(py, pm, 0)).getUTCDate();
+  return { from: `${py}-${String(pm).padStart(2, '0')}-16`, to: `${py}-${String(pm).padStart(2, '0')}-${end}` };
+}
+
 function stateFromRegistration(tankerNumber) {
   const m = String(tankerNumber || '').trim().toUpperCase().match(/^([A-Z]{2})/);
   return m ? REG_PREFIX_STATE[m[1]] || null : null;
@@ -72,4 +117,5 @@ async function loadBillingStates(days = 90) {
 module.exports = {
   STATES, findRate, loadRatesForDate, pickRate, transportTypeFor,
   stateFromRegistration, loadBillingStates,
+  dieselPriceFor, loadDieselForDate, fortnightError, previousFortnight,
 };

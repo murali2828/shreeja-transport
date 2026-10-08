@@ -7,7 +7,7 @@ import { hasRole, isOnlyRole, rolesLabel, isReadOnly } from '../utils/roles';
 import {
   Truck, LayoutDashboard, MapPin, Route, Users, Settings,
   ClipboardList, Package, Play, CheckSquare, BarChart2, Mail, IndianRupee,
-  ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText, ShieldCheck
+  ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText, ShieldCheck, Fuel
 } from 'lucide-react';
 
 function NavItem({ to, icon, label, end = false, collapsed = false }) {
@@ -80,6 +80,7 @@ export default function Sidebar({ collapsed = false }) {
           {ni('/masters/locations',  <Navigation size={15}/>,  'Locations')}
           {ni('/masters/distances',  <Route size={15}/>,       'Distance Master')}
           {ni('/masters/tanker-rates', <Truck size={15}/>,     'Tanker Rates')}
+          {ni('/masters/diesel-rates', <Fuel size={15}/>,      'Diesel Rates')}
           {isAdmin && (
             <>
               {ni('/masters/users',        <Users size={15}/>, 'Users')}

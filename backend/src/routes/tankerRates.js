@@ -11,6 +11,7 @@ const ExcelJS = require('exceljs');
 const multer  = require('multer');
 const { query } = require('../config/db');
 const { authenticate, authorizeOrModule } = require('../middleware/auth');
+const { dieselPriceFor } = require('../services/rates');
 
 const XL_FILTER = (req, file, cb) => {
   const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname || '');
@@ -132,6 +133,8 @@ router.post('/', authenticate, authorizeOrModule('masters', 'admin'), async (req
     const dup = await findOverlap(v.row);
     if (dup) return res.status(409).json({
       error: `Duplicate: a rate for ${v.row.state} / ${v.row.capacity_kl} KL / ${v.row.transport_type} already covers ${dup.effective_from} → ${dup.effective_to}` });
+    // Diesel price defaults to the Diesel Rates master for the period (migration 058).
+    if (v.row.diesel_price == null) v.row.diesel_price = await dieselPriceFor(v.row.state, v.row.effective_from);
     const r = await query(`
       INSERT INTO tanker_rates
         (effective_from, effective_to, state, capacity_kl, transport_type,
