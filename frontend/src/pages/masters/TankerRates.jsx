@@ -4,15 +4,13 @@
 import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Download, Upload, Plus, Pencil, Trash2, X, Calculator, Fuel } from 'lucide-react';
+import { Download, Upload, Plus, Pencil, Trash2, X, Fuel } from 'lucide-react';
 import api, {
   getTankerRates, createTankerRate, updateTankerRate, deleteTankerRate,
   downloadTankerRateTemplate, uploadTankerRates,
   getDieselRateMatrix, createDieselRate, updateDieselRate,
-  previewRatesFromDiesel, generateRatesFromDiesel, downloadRateAnnexure,
 } from '../../api';
 import { useAuth } from '../../hooks/useAuth';
-import { Modal } from '../../components/MasterTable';
 import { fmtDate } from '../../utils/date';
 
 const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
@@ -21,7 +19,6 @@ const EMPTY  = { effective_from: '', effective_to: '', state: 'Andhra Pradesh',
   capacity_kl: '', transport_type: TYPES[0], mileage_km_per_litre: '', rate_per_km: '', diesel_price: '' };
 
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
-const sign = v => v == null ? '—' : (v > 0 ? '+' : '') + nf(v);
 // Fortnight → dates ('YYYY-MM' + '1' | '2'), as on the billing page.
 const fnDates = (month, fortnight) => {
   if (!month) return null;
@@ -30,17 +27,15 @@ const fnDates = (month, fortnight) => {
   return fortnight === '1' ? { from: `${month}-01`, to: `${month}-15` } : { from: `${month}-16`, to: `${month}-${String(end).padStart(2, '0')}` };
 };
 
-// Diesel ₹/L per state for a fortnight + "generate the fortnight's rates from
-// diesel" (preview → confirm). The Diesel Rates master (migration 058) is
-// otherwise filled by the template upload's diesel row and the rate form.
-function DieselPanel({ canEdit, onGenerated }) {
+// Diesel ₹/L per state for a fortnight (Diesel Rates master, migration 058).
+// Filled by the template upload's diesel row and the rate form; this strip
+// shows the fortnight's prices and lets masters correct them.
+function DieselPanel({ canEdit }) {
   const qc = useQueryClient();
   const now = new Date();
   const [month, setMonth] = useState(now.toISOString().slice(0, 7));
   const [fortnight, setFortnight] = useState(now.getDate() > 15 ? '2' : '1');
   const [prices, setPrices] = useState({});
-  const [preview, setPreview] = useState(null);
-  const [replace, setReplace] = useState(false);
   const period = fnDates(month, fortnight);
   const { data: matrix } = useQuery({ queryKey: ['diesel-rates', 'matrix'], queryFn: () => getDieselRateMatrix({ periods: 30 }).then(r => r.data) });
   const current = matrix?.periods?.find(p => p.effective_from === period?.from);
@@ -56,19 +51,6 @@ function DieselPanel({ canEdit, onGenerated }) {
       }
     },
     onSuccess: () => { toast.success('Diesel prices saved'); setPrices({}); qc.invalidateQueries({ queryKey: ['diesel-rates'] }); qc.invalidateQueries({ queryKey: ['tanker-rates'] }); },
-    onError: e => toast.error(e.response?.data?.error || e.message),
-  });
-  const previewMut = useMutation({
-    mutationFn: () => previewRatesFromDiesel({ effective_from: period.from, effective_to: period.to }),
-    onSuccess: r => { setPreview(r.data); setReplace(false); },
-    onError: e => toast.error(e.response?.data?.error || e.message),
-  });
-  const genMut = useMutation({
-    mutationFn: () => generateRatesFromDiesel({ effective_from: period.from, effective_to: period.to, replace }),
-    onSuccess: r => {
-      toast.success(`Tanker Rate Master: ${r.data.inserted} row(s) added${r.data.updated ? `, ${r.data.updated} replaced` : ''}${r.data.skipped ? `, ${r.data.skipped} skipped` : ''}`, { duration: 8000 });
-      setPreview(null); onGenerated?.();
-    },
     onError: e => toast.error(e.response?.data?.error || e.message),
   });
   const dirty = STATES.some(st => prices[st] !== undefined && prices[st] !== '');
@@ -92,75 +74,10 @@ function DieselPanel({ canEdit, onGenerated }) {
           );
         })}
         {canEdit && <button className="btn-primary btn-sm text-xs" disabled={!dirty || saveMut.isPending} onClick={() => saveMut.mutate()}>Save diesel</button>}
-        <div className="flex-1"/>
-        {canEdit && (
-          <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={previewMut.isPending}
-                  title="Carry the previous fortnight's rates forward by the diesel movement (previous rate + Δdiesel ÷ mileage) — preview first, saved only on Confirm"
-                  onClick={() => previewMut.mutate()}>
-            <Calculator size={13}/> {previewMut.isPending ? 'Calculating…' : 'Generate rates from diesel'}
-          </button>
-        )}
-        <button className="btn-secondary text-xs flex items-center gap-1.5" title="Rate annexure for this fortnight (previous vs new, per state)"
-                onClick={() => downloadRateAnnexure(period.from).catch(e => toast.error(e.response?.status === 404 ? 'No Tanker Rate Master rows for this fortnight yet' : e.message))}>
-          <Download size={13}/> Annexure
-        </button>
       </div>
       <div className="text-[11px] text-gray-500">
         {period && `${fmtDate(period.from)} → ${fmtDate(period.to)}`}{prevPeriod && ` · previous entry ${fmtDate(prevPeriod.effective_from)} shown as placeholder`} · the template's "Diesel Price" row and the rate form's diesel field also fill these prices.
       </div>
-      {preview && (
-        <Modal size="xl" title={`Tanker rates ${fmtDate(preview.effective_from)} → ${fmtDate(preview.effective_to)} from diesel — preview`}
-               onClose={() => setPreview(null)}
-               footer={
-                 <div className="flex flex-wrap items-center gap-3 w-full">
-                   {preview.existing > 0 && (
-                     <label className="text-xs flex items-center gap-1.5">
-                       <input type="checkbox" checked={replace} onChange={e => setReplace(e.target.checked)}/>
-                       Replace the {preview.existing} rate row(s) already entered for this fortnight
-                     </label>
-                   )}
-                   <div className="flex-1"/>
-                   <button className="btn-secondary text-xs" onClick={() => setPreview(null)}>Cancel</button>
-                   <button className="btn-primary text-xs" disabled={genMut.isPending || !preview.generatable}
-                           onClick={() => window.confirm(`Write ${preview.generatable} rate row(s) into the Tanker Rate Master for ${fmtDate(preview.effective_from)} → ${fmtDate(preview.effective_to)}?`) && genMut.mutate()}>
-                     {genMut.isPending ? 'Saving…' : `Confirm — save ${preview.generatable} rate(s)`}
-                   </button>
-                 </div>
-               }>
-          <div className="space-y-3 text-xs">
-            <div className="flex flex-wrap gap-4">
-              <div>Basis: rows of <b>{fmtDate(preview.previous.from)} → {fmtDate(preview.previous.to)}</b> ({preview.previous_rows} rows)</div>
-              {STATES.map(st => {
-                const a = preview.diesel_prev[st], b = preview.diesel_new[st];
-                return <div key={st}><b>{st.split(' ').map(w => w[0]).join('')}</b> diesel {a == null ? '—' : nf(a)} → {b == null ? <span className="text-red-600">not entered</span> : nf(b)}{a != null && b != null && <span className={Math.abs(b - a) < 0.005 ? 'text-gray-500' : b > a ? 'text-red-600' : 'text-green-600'}> ({Math.abs(b - a) < 0.005 ? 'no change' : sign(b - a)})</span>}</div>;
-              })}
-            </div>
-            {!preview.previous_rows && <div className="text-red-600">No Tanker Rate Master rows for the previous fortnight — enter or upload them first.</div>}
-            <div className="overflow-auto max-h-[55vh]">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-blue-50"><tr className="text-left text-gray-600">
-                  {['State', 'Capacity (KL)', 'Transport type', 'Mileage', 'Diesel prev → new', 'Rate prev', 'Rate new', 'Δ', 'Note'].map(h => <th key={h} className="px-2 py-1.5 whitespace-nowrap">{h}</th>)}
-                </tr></thead>
-                <tbody>
-                  {preview.rows.map((r, i) => (
-                    <tr key={i} className={`border-t border-gray-100 ${r.new_rate == null ? 'bg-red-50' : r.existing_id && !replace ? 'text-gray-400' : ''}`}>
-                      <td className="px-2 py-1">{r.state}</td>
-                      <td className="px-2 py-1 text-right">{nf(r.capacity_kl, 1)}</td>
-                      <td className="px-2 py-1">{r.transport_type}</td>
-                      <td className="px-2 py-1 text-right">{nf(r.mileage_km_per_litre)}</td>
-                      <td className="px-2 py-1 text-right whitespace-nowrap">{nf(r.diesel_prev)} → {nf(r.diesel_new)}</td>
-                      <td className="px-2 py-1 text-right">{nf(r.prev_rate)}</td>
-                      <td className="px-2 py-1 text-right font-semibold text-[#005ba3]">{nf(r.new_rate)}</td>
-                      <td className={`px-2 py-1 text-right ${r.delta > 0 ? 'text-red-600' : r.delta < 0 ? 'text-green-600' : ''}`}>{sign(r.delta)}</td>
-                      <td className="px-2 py-1 text-gray-600">{r.reason || (r.existing_id ? `exists (${nf(r.existing_rate)})${replace ? ' — will be replaced' : ' — kept'}` : '')}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }
@@ -242,7 +159,7 @@ export default function TankerRates() {
         )}
       </div>
 
-      <DieselPanel canEdit={canEdit} onGenerated={() => qc.invalidateQueries(['tanker-rates'])}/>
+      <DieselPanel canEdit={canEdit}/>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2">

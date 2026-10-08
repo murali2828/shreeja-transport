@@ -33,7 +33,7 @@ A longer, older narrative lives in the root [`ARCHITECTURE.md`](../ARCHITECTURE.
 | `/api/roles` | `routes/roles.js` | admin-managed roles + per-module permissions (migration 035) | admin |
 | `/api/masters` | `routes/masters.js` | tankers, BMCUs, starting/testing/delivery points, route masters, email configs | `authorizeOrModule('masters','admin')` |
 | `/api/vendors`, `/api/tanker-rates`, `/api/documents` | own files | vendor master, per-km rates (024), tanker statutory documents + uploads (`UPLOAD_DIR`) | masters module |
-| `/api/diesel-rates` | `routes/dieselRates.js` | diesel price per state × fortnight (058), maintained from the Tanker Rates screen (template diesel row, rate form, diesel strip); generate the fortnight's Tanker Rate Master rows by the escalation formula (preview → confirm); annexure Excel | masters module (reads: planner / biller / viewer) |
+| `/api/diesel-rates` | `routes/dieselRates.js` | diesel price per state × fortnight (058), maintained from the Tanker Rates screen (template diesel row, rate form, diesel strip); read by cost drivers and the Payment Report cumulatives | masters module (reads: planner / biller / viewer) |
 | `/api/materials`, `/api/material-trips` | `routes/materials.js`, `routes/materialTrips.js` | Material master (SAP code) and material (pasteurised milk) trip execution: supplier document + scan, keyed km with Google reference, customer acknowledgement + scan (migration 049) | masters module / execution |
 | `/api/distances` | `routes/distances.js` | Distance Master CRUD, Excel template/upload, Google refresh | masters module |
 | `/api/plans` | `routes/plans.js` | trip plan CRUD, publish, coverage, movement-plan export, plan email config | `authorizeOrModule('planning', ...)` |
