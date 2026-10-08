@@ -1747,6 +1747,30 @@ async function reportData(q) {
       v.toll_amount = rN(tollByVendor.get(v.vendor_name) || 0);
       v.total_payable = rN((parseFloat(v.amount) || 0) + v.toll_amount);
     }
+    // Toll per date (finance, 2026-10-08): challans are per tanker per run,
+    // never per day, so a tanker's toll is spread evenly over its trips of
+    // that run in this report; the Date Wise toll column then sums to the
+    // Tanker / Vendor Wise toll total for the same filter.
+    const tripsPerRunTanker = new Map();
+    for (const t of trips.rows) { const k = `${t.run_id}|${t.tanker_number}`; tripsPerRunTanker.set(k, (tripsPerRunTanker.get(k) || 0) + 1); }
+    const tollPerRunTanker = new Map();
+    for (const tl of tollQ.rows) {
+      if (q.tanker && tl.tanker_number !== q.tanker) continue;
+      const vn = tankerVendor.get(tl.tanker_number);
+      if (vn === undefined || (q.vendor && vn !== q.vendor)) continue;
+      const k = `${tl.run_id}|${tl.tanker_number}`;
+      tollPerRunTanker.set(k, (tollPerRunTanker.get(k) || 0) + (parseFloat(tl.amount) || 0));
+    }
+    const tollByDate = new Map();
+    for (const t of trips.rows) {
+      const k = `${t.run_id}|${t.tanker_number}`;
+      const share = (tollPerRunTanker.get(k) || 0) / (tripsPerRunTanker.get(k) || 1);
+      tollByDate.set(t.plan_for_date, (tollByDate.get(t.plan_for_date) || 0) + share);
+    }
+    for (const d of dates.rows) {
+      d.toll_amount = rN(tollByDate.get(d.date) || 0);
+      d.total_payable = rN((parseFloat(d.amount) || 0) + d.toll_amount);
+    }
   }
   // Derived per row: fat / SNF %, ₹/km, cost per litre, utilisation %.
   const derive = r => {
@@ -1966,7 +1990,8 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
         ...(withCost ? ['Rate Per KM', 'Cost Per Ltr', 'Utilization %'] : []),
         ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : []),
         ...(milkLast ? MILK_HEADS_AGG : [])]);
-      rows.forEach(r => ws.addRow([firstKey === 'date' ? fmtDateDisplay(r[firstKey]) : r[firstKey], r[secondKey], r.trips,
+      // Date Wise dates as DD.MM.YYYY (finance, 2026-10-08); other sheets keep DD-MM-YYYY.
+      rows.forEach(r => ws.addRow([firstKey === 'date' ? fmtDateDisplay(r[firstKey]).replace(/-/g, '.') : r[firstKey], r[secondKey], r.trips,
         ...(withCost ? [rN(r.capacity_litres)] : []),
         ...(milkFirst ? milkCells(r) : []),
         rN(r.billed_km), rN(r.amount),
@@ -1981,7 +2006,7 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
         ...(withToll ? [sum(rows, 'toll_amount'), sum(rows, 'total_payable')] : []),
         ...(milkLast ? milkTotals(rows) : [])]).font = { bold: true };
     };
-    sheet('Date Wise', d.dates, 'Date', 'date', 'tankers', false, true, true);
+    sheet('Date Wise', d.dates, 'Date', 'date', 'tankers', true, true, true);
     sheet('Tanker Wise', d.tankers, 'Tanker', 'tanker_number', 'vendor_name', true, true);
     sheet('Vendor Wise', d.vendors, 'Vendor', 'vendor_name', 'tankers', true);
 

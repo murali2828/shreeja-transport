@@ -1417,7 +1417,8 @@ function PaymentReport() {
           {tab === 'years' && <CumulativeYears years={data.years} isAdmin={isAdmin} onHistoryChanged={() => qc.invalidateQueries({ queryKey: ['billing-report'] })}/>}
 
           {!['trips', 'months', 'years'].includes(tab) && (() => {
-            const withToll = tab === 'tankers' || tab === 'vendors';
+            const withToll = tab === 'tankers' || tab === 'vendors' || tab === 'dates';
+            const fmtDateDot = d => fmtDate(d).replace(/-/g, '.'); // Date Wise shows DD.MM.YYYY (finance, 2026-10-08)
             return (
             <div className="card overflow-hidden">
               <table className="w-full text-xs">
@@ -1431,7 +1432,7 @@ function PaymentReport() {
                 <tbody>
                   {(rows || []).map((r, i) => (
                     <tr key={i} className="border-t border-gray-100">
-                      <td className="px-3 py-1.5 font-semibold">{r.date || r.tanker_number || r.vendor_name}</td>
+                      <td className="px-3 py-1.5 font-semibold">{tab === 'dates' ? fmtDateDot(r.date) : (r.tanker_number || r.vendor_name)}</td>
                       <td className="px-3 py-1.5">{tab === 'tankers' ? r.vendor_name : r.tankers}</td>
                       <td className="px-3 py-1.5 text-right">{r.trips}</td>
                       <td className="px-3 py-1.5 text-right">{nf(r.billed_km)}</td>
