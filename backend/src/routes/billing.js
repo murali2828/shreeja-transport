@@ -1081,6 +1081,41 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
   head(ws4, ['Level', 'Approver', 'Status', 'Remarks', 'Decided At']);
   approvals.forEach(a => ws4.addRow([a.level, a.approver_email, a.status, a.remarks, a.decided_at ? new Date(a.decided_at).toLocaleString('en-IN') : '']));
 
+  // Portal look for every sheet (same palette as the Tanker Rates template):
+  // blue title band, light-blue bold header with borders, zebra rows, yellow
+  // bold TOTAL, header frozen.
+  const FILL = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
+  const thin = { style: 'thin', color: { argb: 'FFBFC7D1' } };
+  const BOX = { top: thin, bottom: thin, left: thin, right: thin };
+  wb.eachSheet(ws => {
+    const titleRow = String(ws.getRow(1).getCell(1).value || '').startsWith('Tanker Payment Billing') ? 1 : 0;
+    const headerRow = titleRow ? 3 : 1;
+    const cols = ws.getRow(headerRow).cellCount;
+    if (titleRow) {
+      ws.mergeCells(1, 1, 1, Math.max(cols, 2));
+      const t = ws.getCell(1, 1);
+      t.fill = FILL('FF005BA3'); t.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+      t.alignment = { vertical: 'middle' }; ws.getRow(1).height = 22;
+    }
+    const h = ws.getRow(headerRow);
+    h.height = 30;
+    for (let c = 1; c <= cols; c++) {
+      const cell = h.getCell(c);
+      cell.fill = FILL('FFDCE9F7'); cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } };
+      cell.border = BOX; cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    }
+    for (let r = headerRow + 1; r <= ws.rowCount; r++) {
+      const row = ws.getRow(r);
+      const isTotal = String(row.getCell(1).value || '').toUpperCase() === 'TOTAL';
+      for (let c = 1; c <= cols; c++) {
+        const cell = row.getCell(c);
+        cell.border = BOX;
+        if (isTotal) { cell.fill = FILL('FFFFF9C4'); cell.font = { bold: true }; }
+        else if ((r - headerRow) % 2 === 0) cell.fill = FILL('FFF5F8FC');
+      }
+    }
+    ws.views = [{ state: 'frozen', ySplit: headerRow }];
+  });
   return { wb, run, trips, tankers, vendors };
 }
 
