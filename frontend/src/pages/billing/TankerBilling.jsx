@@ -1339,8 +1339,18 @@ function PaymentReport() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const isAdmin = hasRole(user, 'admin');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  // Period = a fortnight or a full month (finance, 2026-10-08): tolls are per
+  // fortnight, so a free date range cannot be reconciled.
+  const [month, setMonth] = useState('');       // 'YYYY-MM'
+  const [part, setPart] = useState('full');     // '1' | '2' | 'full'
+  const periodDates = () => {
+    if (!month) return null;
+    const [y, m] = month.split('-').map(Number);
+    const end = String(new Date(y, m, 0).getDate()).padStart(2, '0');
+    if (part === '1') return { from: `${month}-01`, to: `${month}-15` };
+    if (part === '2') return { from: `${month}-16`, to: `${month}-${end}` };
+    return { from: `${month}-01`, to: `${month}-${end}` };
+  };
   const [status, setStatus] = useState('approved');
   const [tanker, setTanker] = useState('');
   const [vendor, setVendor] = useState('');
@@ -1354,8 +1364,9 @@ function PaymentReport() {
   });
 
   const run = () => {
-    if (!from || !to) return toast.error('Select From and To dates');
-    setParams({ from, to, status, tanker: tanker || undefined, vendor: vendor || undefined });
+    const pd = periodDates();
+    if (!pd) return toast.error('Select the month');
+    setParams({ from: pd.from, to: pd.to, status, tanker: tanker || undefined, vendor: vendor || undefined });
   };
   const excel = () => {
     if (!params) return toast.error('Run the report first');
@@ -1374,8 +1385,14 @@ function PaymentReport() {
   return (
     <div className="space-y-3">
       <div className="card p-3 flex flex-wrap items-end gap-2 text-xs">
-        <label>From *<input type="date" className="input mt-1" value={from} onChange={e => setFrom(e.target.value)}/></label>
-        <label>To *<input type="date" className="input mt-1" value={to} min={from} onChange={e => setTo(e.target.value)}/></label>
+        <label>Month *<input type="month" className="input mt-1" value={month} onChange={e => setMonth(e.target.value)}/></label>
+        <label>Period *
+          <select className="input mt-1" value={part} onChange={e => setPart(e.target.value)}>
+            <option value="1">1st fortnight (1 – 15)</option>
+            <option value="2">2nd fortnight (16 – month end)</option>
+            <option value="full">Full month</option>
+          </select>
+        </label>
         <label>Runs
           <select className="input mt-1" value={status} onChange={e => setStatus(e.target.value)}>
             <option value="approved">Approved only (payable)</option>
@@ -1417,8 +1434,9 @@ function PaymentReport() {
           {tab === 'years' && <CumulativeYears years={data.years} isAdmin={isAdmin} onHistoryChanged={() => qc.invalidateQueries({ queryKey: ['billing-report'] })}/>}
 
           {!['trips', 'months', 'years'].includes(tab) && (() => {
-            const withToll = tab === 'tankers' || tab === 'vendors' || tab === 'dates';
+            const withToll = tab === 'tankers' || tab === 'vendors';
             const fmtDateDot = d => fmtDate(d).replace(/-/g, '.'); // Date Wise shows DD.MM.YYYY (finance, 2026-10-08)
+            const fortnights = tab === 'dates' ? (data.fortnights || []) : [];
             return (
             <div className="card overflow-hidden">
               <table className="w-full text-xs">
@@ -1426,7 +1444,7 @@ function PaymentReport() {
                   <tr>{[tab === 'dates' ? 'Date' : tab === 'tankers' ? 'Tanker' : 'Vendor',
                         tab === 'tankers' ? 'Vendor' : 'Tankers', 'Trips',
                         'Billed KM', 'Amount (₹)',
-                        ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : [])]
+                        ...(withToll || tab === 'dates' ? ['Toll (₹)', 'Total Payable (₹)'] : [])]
                         .map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
                 </thead>
                 <tbody>
@@ -1439,6 +1457,19 @@ function PaymentReport() {
                       <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.amount)}</td>
                       {withToll && <td className="px-3 py-1.5 text-right">{nf(r.toll_amount)}</td>}
                       {withToll && <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.total_payable)}</td>}
+                      {tab === 'dates' && <td/>}{tab === 'dates' && <td/>}
+                    </tr>
+                  ))}
+                  {/* Date Wise: one subtotal row per billing run (fortnight) carrying that run's toll — tolls are per run, never per day. */}
+                  {fortnights.map(f => (
+                    <tr key={f.run_id} className="bg-amber-50 font-semibold border-t border-amber-200">
+                      <td className="px-3 py-1.5 whitespace-nowrap">Run #{f.run_id} · {fmtDateDot(f.from_date)} → {fmtDateDot(f.to_date)}</td>
+                      <td className="px-3 py-1.5">{f.tankers}</td>
+                      <td className="px-3 py-1.5 text-right">{f.trips}</td>
+                      <td className="px-3 py-1.5 text-right">{nf(f.billed_km)}</td>
+                      <td className="px-3 py-1.5 text-right text-[#005ba3]">{nf(f.amount)}</td>
+                      <td className="px-3 py-1.5 text-right">{nf(f.toll_amount)}</td>
+                      <td className="px-3 py-1.5 text-right text-[#005ba3]">{nf(f.total_payable)}</td>
                     </tr>
                   ))}
                   <tr className="bg-blue-100 font-bold">
@@ -1446,8 +1477,8 @@ function PaymentReport() {
                     <td className="px-3 py-2 text-right">{(rows || []).reduce((s, r) => s + (+r.trips || 0), 0)}</td>
                     <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.billed_km || 0), 0))}</td>
                     <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.amount || 0), 0))}</td>
-                    {withToll && <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.toll_amount || 0), 0))}</td>}
-                    {withToll && <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.total_payable || 0), 0))}</td>}
+                    {(withToll || tab === 'dates') && <td className="px-3 py-2 text-right">{nf((withToll ? rows || [] : fortnights).reduce((s, r) => s + (+r.toll_amount || 0), 0))}</td>}
+                    {(withToll || tab === 'dates') && <td className="px-3 py-2 text-right text-[#005ba3]">{nf((withToll ? rows || [] : fortnights).reduce((s, r) => s + (+r.total_payable || 0), 0))}</td>}
                   </tr>
                 </tbody>
               </table>

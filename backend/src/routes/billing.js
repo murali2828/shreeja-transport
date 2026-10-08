@@ -1724,6 +1724,7 @@ async function reportData(q) {
     ${base} GROUP BY COALESCE(t.vendor_name,'— No vendor mapped —') ORDER BY 1`, params);
   // Toll challans for the runs represented in the filtered trips; vendor
   // attribution follows the tanker's vendor in those trips.
+  let fortnights = [];
   const runIds = [...new Set(trips.rows.map(t => t.run_id))];
   if (runIds.length) {
     const tollQ = await query(
@@ -1747,30 +1748,23 @@ async function reportData(q) {
       v.toll_amount = rN(tollByVendor.get(v.vendor_name) || 0);
       v.total_payable = rN((parseFloat(v.amount) || 0) + v.toll_amount);
     }
-    // Toll per date (finance, 2026-10-08): challans are per tanker per run,
-    // never per day, so a tanker's toll is spread evenly over its trips of
-    // that run in this report; the Date Wise toll column then sums to the
-    // Tanker / Vendor Wise toll total for the same filter.
-    const tripsPerRunTanker = new Map();
-    for (const t of trips.rows) { const k = `${t.run_id}|${t.tanker_number}`; tripsPerRunTanker.set(k, (tripsPerRunTanker.get(k) || 0) + 1); }
-    const tollPerRunTanker = new Map();
+    // Toll per fortnight (finance, 2026-10-08): challans are per tanker per
+    // run, never per day, so the Date Wise view carries one subtotal row per
+    // billing run (= fortnight) with that run's toll; day rows show no toll.
+    const runInfo = (await query(`SELECT id, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id = ANY($1)`, [runIds])).rows;
+    const byRun = new Map(runInfo.map(r => [r.id, { run_id: r.id, from_date: r.from_date, to_date: r.to_date, trips: 0, tankers: new Set(), billed_km: 0, amount: 0, toll_amount: 0 }]));
+    for (const t of trips.rows) {
+      const r = byRun.get(t.run_id); if (!r) continue;
+      r.trips++; r.tankers.add(t.tanker_number); r.billed_km += parseFloat(t.billed_km) || 0; r.amount += parseFloat(t.amount) || 0;
+    }
     for (const tl of tollQ.rows) {
       if (q.tanker && tl.tanker_number !== q.tanker) continue;
       const vn = tankerVendor.get(tl.tanker_number);
       if (vn === undefined || (q.vendor && vn !== q.vendor)) continue;
-      const k = `${tl.run_id}|${tl.tanker_number}`;
-      tollPerRunTanker.set(k, (tollPerRunTanker.get(k) || 0) + (parseFloat(tl.amount) || 0));
+      const r = byRun.get(tl.run_id); if (r) r.toll_amount += parseFloat(tl.amount) || 0;
     }
-    const tollByDate = new Map();
-    for (const t of trips.rows) {
-      const k = `${t.run_id}|${t.tanker_number}`;
-      const share = (tollPerRunTanker.get(k) || 0) / (tripsPerRunTanker.get(k) || 1);
-      tollByDate.set(t.plan_for_date, (tollByDate.get(t.plan_for_date) || 0) + share);
-    }
-    for (const d of dates.rows) {
-      d.toll_amount = rN(tollByDate.get(d.date) || 0);
-      d.total_payable = rN((parseFloat(d.amount) || 0) + d.toll_amount);
-    }
+    fortnights = [...byRun.values()].sort((a, b) => a.from_date.localeCompare(b.from_date) || a.run_id - b.run_id)
+      .map(r => ({ ...r, tankers: r.tankers.size, billed_km: rN(r.billed_km), amount: rN(r.amount), toll_amount: rN(r.toll_amount), total_payable: rN(r.amount + r.toll_amount) }));
   }
   // Derived per row: fat / SNF %, ₹/km, cost per litre, utilisation %.
   const derive = r => {
@@ -1786,7 +1780,7 @@ async function reportData(q) {
   };
   trips.rows.forEach(derive); dates.rows.forEach(derive); tankers.rows.forEach(derive);
   const cumulative = await cumulativeData(q);
-  return { trips: trips.rows, dates: dates.rows, tankers: tankers.rows, vendors: vendors.rows, ...cumulative };
+  return { trips: trips.rows, dates: dates.rows, fortnights, tankers: tankers.rows, vendors: vendors.rows, ...cumulative };
 }
 
 // ── Month / year cumulative (finance format sheets) ─────────────────────────
@@ -1936,9 +1930,22 @@ router.post('/history-upload', authenticate, authorizeOrModule('masters', 'admin
   }
 });
 
+// The report covers whole fortnights or whole months only (finance,
+// 2026-10-08): tolls are per fortnight, so a free date range cannot be reconciled.
+function reportPeriodError(from, to) {
+  if (!from || !to) return 'from and to are required';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return 'from and to must be YYYY-MM-DD';
+  const [fy, fm, fd] = from.split('-').map(Number), [ty, tm, td] = to.split('-').map(Number);
+  const end = new Date(Date.UTC(fy, fm, 0)).getUTCDate();
+  const sameMonth = fy === ty && fm === tm;
+  if (sameMonth && fd === 1 && (td === 15 || td === end)) return null;
+  if (sameMonth && fd === 16 && td === end) return null;
+  return 'The Payment Report covers a fortnight (1–15, 16–month end) or a full month';
+}
 router.get('/report-data', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   const { from, to } = req.query;
-  if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+  const pe = reportPeriodError(from, to);
+  if (pe) return res.status(400).json({ error: pe });
   try { res.json(await reportData(req.query)); }
   catch (err) { console.error('Billing report-data error:', err); res.status(500).json({ error: 'Failed to build report' }); }
 });
@@ -1946,7 +1953,8 @@ router.get('/report-data', authenticate, authorizeOrModule('billing', ...canBill
 // Excel of the cross-run report
 router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   const { from, to } = req.query;
-  if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+  const pe = reportPeriodError(from, to);
+  if (pe) return res.status(400).json({ error: pe });
   try {
     const d = await reportData(req.query);
     const statusLabel = (req.query.status || 'approved') === 'all' ? 'All runs' : 'APPROVED runs only';
@@ -2006,7 +2014,19 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
         ...(withToll ? [sum(rows, 'toll_amount'), sum(rows, 'total_payable')] : []),
         ...(milkLast ? milkTotals(rows) : [])]).font = { bold: true };
     };
-    sheet('Date Wise', d.dates, 'Date', 'date', 'tankers', true, true, true);
+    sheet('Date Wise', d.dates, 'Date', 'date', 'tankers', false, true, true);
+    {
+      // Fortnight (billing run) subtotals with the run's toll — tolls are per run, never per day.
+      const wsDW = wb.getWorksheet('Date Wise');
+      const totalRow = wsDW.lastRow;
+      const fnRows = d.fortnights.map(f => [`Run #${f.run_id} · ${fmtDateDisplay(f.from_date).replace(/-/g, '.')} → ${fmtDateDisplay(f.to_date).replace(/-/g, '.')}`,
+        f.tankers, f.trips, '', '', '', '', '', '', '', f.billed_km, f.amount, '', '', '', f.toll_amount, f.total_payable]);
+      const totalVals = totalRow.values.slice(1);
+      wsDW.spliceRows(totalRow.number, 1, ...fnRows, [...totalVals.slice(0, 15), sum(d.fortnights, 'toll_amount'), sum(d.fortnights, 'total_payable')]);
+      wsDW.getRow(1).getCell(16).value = 'Toll (₹)'; wsDW.getRow(1).getCell(17).value = 'Total Payable (₹)';
+      wsDW.getRow(1).getCell(16).font = { bold: true }; wsDW.getRow(1).getCell(17).font = { bold: true };
+      for (let r = totalRow.number; r <= wsDW.rowCount; r++) wsDW.getRow(r).font = { bold: true };
+    }
     sheet('Tanker Wise', d.tankers, 'Tanker', 'tanker_number', 'vendor_name', true, true);
     sheet('Vendor Wise', d.vendors, 'Vendor', 'vendor_name', 'tankers', true);
 
