@@ -30,6 +30,24 @@ const BASE_URL = () => process.env.APP_BASE_URL || 'https://tms.shreejamilk.com'
 const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
 
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
+// Fit every column of a sheet to its longest value (header words wrap, so a
+// header counts by its longest word); bounded so long BMCU chains don't
+// stretch the sheet.
+function autoWidth(ws, { min = 8, max = 60, skipRows = 0 } = {}) {
+  const widths = [];
+  ws.eachRow((row, r) => {
+    if (r <= skipRows) return;
+    row.eachCell({ includeEmpty: false }, (cell, c) => {
+      let v = cell.value;
+      if (v && typeof v === 'object') v = v.result ?? v.text ?? (v.richText ? v.richText.map(t => t.text).join('') : '');
+      if (v == null) return;
+      let s = typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v);
+      if (cell.font && cell.font.bold && cell.alignment && cell.alignment.wrapText) s = s.split(/\s+/).sort((a, b) => b.length - a.length)[0] || '';
+      widths[c] = Math.max(widths[c] || 0, s.length);
+    });
+  });
+  widths.forEach((w, c) => { if (w) ws.getColumn(c).width = Math.min(max, Math.max(min, w + 2)); });
+}
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
   .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -1137,6 +1155,7 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
       }
     }
     ws.views = [{ state: 'frozen', ySplit: headerRow }];
+    autoWidth(ws, { skipRows: titleRow ? 2 : 0 });
   });
   return { wb, run, trips, tankers, vendors };
 }
@@ -2022,6 +2041,8 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     }
     ws6.getColumn(1).width = 30;
     ws6.views = [{ state: 'frozen', xSplit: 1, ySplit: 3 }];
+    wb.eachSheet(ws => autoWidth(ws, { skipRows: ws === ws1 ? 2 : ws === ws6 ? 1 : 0 }));
+    ws6.getColumn(1).width = 30;
 
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=tanker_payment_report_${from}_${to}.xlsx`);
