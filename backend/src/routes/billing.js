@@ -948,10 +948,21 @@ router.get('/runs/:id/summary', authenticate, authorizeOrModule('billing', ...ca
 async function buildRunWorkbook(runId, { vendorIds } = {}) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
   const scoped = Array.isArray(vendorIds) && vendorIds.length > 0;
+  // Milk figures live from the acknowledgements (older runs, before
+  // migration 034, carry no stored fat / SNF); SAP code = vendor master code.
   const trips = (await query(`
     SELECT t.*, t.plan_for_date::text AS plan_for_date,
-           (t.is_sale_tanker OR t.tanker_number ILIKE 'SALE%') AS is_sale_tanker
-    FROM billing_run_trips t WHERE t.run_id=$1 ${scoped ? 'AND t.vendor_id = ANY($2)' : ''}
+           (t.is_sale_tanker OR t.tanker_number ILIKE 'SALE%') AS is_sale_tanker,
+           v.vendor_code AS vendor_sap_code,
+           COALESCE(ack.litres, t.ack_litres) AS milk_litres, COALESCE(ack.kgs, t.ack_kgs) AS milk_kgs,
+           COALESCE(CASE WHEN ack.kgs > 0 THEN ack.kg_fat / ack.kgs * 100 END, t.ack_fat_pct) AS fat_pct,
+           COALESCE(CASE WHEN ack.kgs > 0 THEN ack.kg_snf / ack.kgs * 100 END, t.ack_snf_pct) AS snf_pct
+    FROM billing_run_trips t
+    LEFT JOIN vendors v ON v.id = t.vendor_id
+    LEFT JOIN LATERAL (
+      SELECT SUM(a.qty_litres) AS litres, SUM(a.qty_kgs) AS kgs, SUM(a.kg_fat) AS kg_fat, SUM(a.kg_snf) AS kg_snf
+      FROM trip_acknowledgements a WHERE a.execution_id = t.execution_id) ack ON TRUE
+    WHERE t.run_id=$1 ${scoped ? 'AND t.vendor_id = ANY($2)' : ''}
     ORDER BY t.plan_for_date, t.tanker_number`, scoped ? [runId, vendorIds] : [runId])).rows;
   const { tankers, vendors, dates } = await runSummaries(runId, { vendorIds });
   const approvals = (await query('SELECT level, approver_email, status, remarks, decided_at FROM billing_run_approvals WHERE run_id=$1 ORDER BY level', [runId])).rows;
@@ -995,20 +1006,29 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     const ws = wb.addWorksheet(sheetName);
     ws.addRow([`Tanker Payment Billing — Run #${runId} · ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} · Status: ${run.status}`]).font = { bold: true, size: 13 };
     ws.addRow([]);
-    head(ws, ['Date', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
-      'BMCU Count', 'BMCU Details', 'Ack Kgs', 'Ack Fat%', 'Ack SNF%', 'State', 'Transport Type', 'System KM', 'Google KM', 'Master KM',
-      'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Excluded', 'Remarks']);
-    ws.getColumn(9).width = 60;
-    rows.forEach(t => ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number, rN(t.capacity_litres / 1000, 1),
-      t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id), t.ack_kgs,
-      t.ack_fat_pct, t.ack_snf_pct,
-      t.state, t.transport_type, t.system_km, t.google_km, t.master_km,
-      t.billed_km, t.rate_per_km, t.excluded ? 0 : t.amount, t.excluded ? 'Yes' : '', t.remarks]));
-    const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '', '', '',
-      rN(rows.reduce((s, t) => s + (+t.system_km || 0), 0)),
-      rN(rows.reduce((s, t) => s + (+t.google_km || 0), 0)), '',
+    // Finance's layout (2026-10-08): SAP vendor code, milk received in
+    // litres and kgs with fat / SNF %, cost per litre and utilisation; no
+    // System / Google / Master KM, Excluded or Remarks columns (excluded
+    // lines still show ₹0). Remarks remain on screen.
+    head(ws, ['Date', 'Tanker', 'Capacity (KL)', 'SAP Vendor Code', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
+      'BMCU Count', 'BMCU Details', 'Qty in Lts', 'Qty in Kgs', 'Fat %', 'SNF %', 'State', 'Transport Type',
+      'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %']);
+    ws.getColumn(10).width = 60;
+    const amt = t => t.excluded ? 0 : (+t.amount || 0);
+    rows.forEach(t => {
+      const l = +t.milk_litres || 0, cap = +t.capacity_litres || 0;
+      ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number, rN(t.capacity_litres / 1000, 1),
+        t.vendor_sap_code, t.vendor_name, t.route_name, t.start_point, t.delivery_point, t.bmcu_count, bmcuDetails(t.execution_id),
+        rN(t.milk_litres), rN(t.milk_kgs), rN(t.fat_pct, 3), rN(t.snf_pct, 3),
+        t.state, t.transport_type,
+        t.billed_km, t.rate_per_km, amt(t), l > 0 ? rN(amt(t) / l, 4) : null, cap > 0 && l > 0 ? rN(l / cap * 100) : null]);
+    });
+    const sumL = rows.reduce((s, t) => s + (+t.milk_litres || 0), 0), sumKg = rows.reduce((s, t) => s + (+t.milk_kgs || 0), 0);
+    const sumCap = rows.reduce((s, t) => s + (+t.capacity_litres || 0), 0), sumAmt = rows.reduce((s, t) => s + amt(t), 0);
+    const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '', '', '',
+      rN(sumL), rN(sumKg), '', '', '', '',
       rN(rows.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
-      rN(rows.reduce((s, t) => s + (t.excluded ? 0 : (+t.amount || 0)), 0)), '', '']);
+      rN(sumAmt), sumL > 0 ? rN(sumAmt / sumL, 4) : null, sumCap > 0 && sumL > 0 ? rN(sumL / sumCap * 100) : null]);
     totRow.font = { bold: true };
     return ws;
   };
@@ -1017,19 +1037,19 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
   if (saleTrips.length) tripCols(saleTrips, 'Sale Tankers');
 
   const ws2 = wb.addWorksheet('Tanker Wise');
-  head(ws2, ['Tanker', 'Vendor', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)']);
-  tankers.forEach(t => ws2.addRow([t.tanker_number, t.vendor_name, t.trips, rN(t.billed_km), rN(t.system_km), rN(t.google_km), rN(t.amount), rN(t.toll_amount), rN(t.total_payable)]));
+  head(ws2, ['Tanker', 'Vendor', 'Trips', 'Billed KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)']);
+  tankers.forEach(t => ws2.addRow([t.tanker_number, t.vendor_name, t.trips, rN(t.billed_km), rN(t.amount), rN(t.toll_amount), rN(t.total_payable)]));
   ws2.addRow(['TOTAL', '', tankers.reduce((s, t) => s + t.trips, 0),
-    rN(tankers.reduce((s, t) => s + (+t.billed_km || 0), 0)), '', '',
+    rN(tankers.reduce((s, t) => s + (+t.billed_km || 0), 0)),
     rN(tankers.reduce((s, t) => s + (+t.amount || 0), 0)),
     rN(tankers.reduce((s, t) => s + (+t.toll_amount || 0), 0)),
     rN(tankers.reduce((s, t) => s + (+t.total_payable || 0), 0))]).font = { bold: true };
 
   const ws3 = wb.addWorksheet('Vendor Wise');
-  head(ws3, ['Vendor', 'Tankers', 'Trips', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)']);
-  vendors.forEach(v => ws3.addRow([v.vendor_name, v.tankers, v.trips, rN(v.billed_km), rN(v.system_km), rN(v.google_km), rN(v.amount), rN(v.toll_amount), rN(v.total_payable)]));
+  head(ws3, ['Vendor', 'Tankers', 'Trips', 'Billed KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)']);
+  vendors.forEach(v => ws3.addRow([v.vendor_name, v.tankers, v.trips, rN(v.billed_km), rN(v.amount), rN(v.toll_amount), rN(v.total_payable)]));
   ws3.addRow(['TOTAL', '', vendors.reduce((s, v) => s + v.trips, 0),
-    rN(vendors.reduce((s, v) => s + (+v.billed_km || 0), 0)), '', '',
+    rN(vendors.reduce((s, v) => s + (+v.billed_km || 0), 0)),
     rN(vendors.reduce((s, v) => s + (+v.amount || 0), 0)),
     rN(vendors.reduce((s, v) => s + (+v.toll_amount || 0), 0)),
     rN(vendors.reduce((s, v) => s + (+v.total_payable || 0), 0))]).font = { bold: true };
