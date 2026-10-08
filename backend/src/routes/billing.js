@@ -1920,8 +1920,22 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     METRICS.forEach(([label, k]) => {
       const row = [label];
       groups.forEach(g => d.years.forEach(y => { const m = g.idx === 'ytd' ? y.ytd : y.months[g.idx]; row.push(m.trips || m.source ? m[k] : null); }));
-      ws6.addRow(row);
+      ws6.addRow(row).getCell(1).font = { bold: true };
     });
+    // Finance's colouring: a fill per month group, YTD green, borders throughout.
+    const GROUP_FILLS = ['FFF8CBAD', 'FFDDEBF7', 'FFE2EFDA', 'FFFFF2CC', 'FFD9D2E9', 'FFFCE4D6', 'FFDEEAF6', 'FFEDEDED', 'FFF4B183', 'FFBDD7EE', 'FFC6E0B4', 'FFFFE699'];
+    const lastRow = 3 + METRICS.length, thin = { style: 'thin', color: { argb: 'FF808080' } };
+    for (let r = 2; r <= lastRow; r++) for (let c = 1; c <= 1 + groups.length * fyLabels.length; c++) {
+      const cell = ws6.getCell(r, c);
+      cell.border = { top: thin, bottom: thin, left: thin, right: thin };
+      if (c > 1) {
+        const gi = Math.floor((c - 2) / fyLabels.length);
+        const argb = groups[gi].idx === 'ytd' ? 'FF00B050' : GROUP_FILLS[gi % GROUP_FILLS.length];
+        if (r <= 3 || groups[gi].idx === 'ytd') cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } };
+        if (r <= 3) cell.alignment = { horizontal: 'center' };
+        else cell.numFmt = ['fat_pct', 'snf_pct', 'ts_pct', 'rate_per_km', 'cost_per_litre', 'utilisation_pct', 'diesel_price', 'avg_km'].includes(METRICS[r - 4][1]) ? '0.00' : '#,##0';
+      }
+    }
     ws6.getColumn(1).width = 30;
     ws6.views = [{ state: 'frozen', xSplit: 1, ySplit: 3 }];
 
