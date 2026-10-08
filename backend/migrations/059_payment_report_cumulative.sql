@@ -2,11 +2,10 @@
 -- 2026-10-08): the Trip / Date / Tanker sheets carry milk received (from
 -- acknowledgements), cost per litre and utilisation, and two cumulative
 -- sheets (month-wise for the financial year, month × year matrix with YTD)
--- compare the year with earlier years. Two things the portal lacked:
---  1. the SAP vendor code finance keys payments against;
---  2. the monthly figures of earlier financial years (before the portal), kept
---     as keyed history so the Year Cumulative sheet can show 2023-24 onward.
-ALTER TABLE vendors ADD COLUMN IF NOT EXISTS sap_code VARCHAR(40);
+-- compare the year with earlier years. The SAP vendor code is the Vendor
+-- master's vendor_code (already maintained). What the portal lacked: the
+-- monthly figures of earlier financial years (before the portal), kept as
+-- keyed history so the Year Cumulative sheet can show 2023-24 onward.
 
 CREATE TABLE IF NOT EXISTS transport_monthly_history (
   id                       SERIAL PRIMARY KEY,

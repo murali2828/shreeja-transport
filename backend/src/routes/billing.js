@@ -1582,7 +1582,7 @@ async function reportData(q) {
 
   // Milk received per trip = the plant's acknowledgement (all chambers); the
   // finance format reports it beside the payment with cost per litre and
-  // utilisation (litres ÷ tanker capacity). SAP vendor code from the vendor master.
+  // utilisation (litres ÷ tanker capacity). SAP vendor code = vendors.vendor_code.
   const ackJoin = `LEFT JOIN LATERAL (
       SELECT SUM(a.qty_litres) AS litres, SUM(a.qty_kgs) AS kgs, SUM(a.kg_fat) AS kg_fat, SUM(a.kg_snf) AS kg_snf
       FROM trip_acknowledgements a WHERE a.execution_id = t.execution_id) ack ON TRUE`;
@@ -1593,7 +1593,7 @@ async function reportData(q) {
   const trips = await query(`
     SELECT t.run_id, br.status AS run_status, t.plan_for_date::text AS plan_for_date,
            t.tanker_number, t.capacity_litres, COALESCE(t.vendor_name,'— No vendor mapped —') AS vendor_name,
-           v.sap_code AS vendor_sap_code,
+           v.vendor_code AS vendor_sap_code,
            t.route_name, t.delivery_point, t.state, t.transport_type,
            t.system_km, t.google_km, t.master_km, t.estimated_km,
            t.billed_km, t.rate_per_km, t.amount, t.remarks,
