@@ -1614,11 +1614,12 @@ async function reportData(q) {
     SELECT t.run_id, br.status AS run_status, t.plan_for_date::text AS plan_for_date,
            t.tanker_number, t.capacity_litres, COALESCE(t.vendor_name,'— No vendor mapped —') AS vendor_name,
            v.vendor_code AS vendor_sap_code,
-           t.route_name, t.delivery_point, t.state, t.transport_type,
+           t.route_name, t.start_point, t.delivery_point, t.state, t.transport_type,
            t.system_km, t.google_km, t.master_km, t.estimated_km,
            t.billed_km, t.rate_per_km, t.amount, t.remarks,
            ack.litres AS milk_litres, ack.kgs AS milk_kgs, ack.kg_fat, ack.kg_snf,
-           (SELECT string_agg(COALESCE(b.bmcu_name, b.bmcu_code), ', ' ORDER BY teb.seq_no)
+           (SELECT COUNT(*) FROM trip_execution_bmcus teb WHERE teb.execution_id = t.execution_id AND teb.is_deleted = FALSE)::int AS bmcu_count,
+           (SELECT string_agg(b.bmcu_code || ' - ' || b.bmcu_name, ' → ' ORDER BY teb.seq_no)
               FROM trip_execution_bmcus teb JOIN bmcus b ON b.id = teb.bmcu_id
              WHERE teb.execution_id = t.execution_id AND teb.is_deleted = FALSE) AS bmcu_coverage
     ${baseAck} LEFT JOIN vendors v ON v.id = t.vendor_id
@@ -1859,16 +1860,18 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     const ratio = (rows, num, den, d = 2) => { const b = rows.reduce((s, r) => s + (+r[den] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[num] || 0), 0) / b, d) : null; };
     const util = rows => { const c = rows.reduce((s, r) => s + (+r.capacity_litres || 0), 0); return c > 0 ? rN(rows.reduce((s, r) => s + (+r.milk_litres || 0), 0) / c * 100) : null; };
 
-    head(ws1, ['S.No', 'Date', 'Run #', 'Run Status', 'Tanker', 'Capacity (KL)', 'SAP Vendor Code', 'Vendor', 'Route', 'Delivery Point',
-      'State', 'Transport Type', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %',
-      ...MILK_HEADS, 'BMCU Coverage', 'Remarks']);
+    head(ws1, ['S.No', 'Date', 'Run #', 'Run Status', 'Tanker', 'Capacity (KL)', 'SAP Vendor Code', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
+      'BMCU Count', 'BMCU Details', 'State', 'Transport Type', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %',
+      ...MILK_HEADS, 'Remarks']);
+    ws1.getColumn(13).width = 60;
     d.trips.forEach((t, i) => ws1.addRow([i + 1, fmtDateDisplay(t.plan_for_date), t.run_id, t.run_status, t.tanker_number,
-      t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.vendor_sap_code, t.vendor_name, t.route_name, t.delivery_point,
+      t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.vendor_sap_code, t.vendor_name, t.route_name, t.start_point, t.delivery_point,
+      t.bmcu_count, t.bmcu_coverage,
       t.state, t.transport_type, t.billed_km, t.rate_per_km, t.amount, t.cost_per_litre, t.utilisation_pct,
-      ...milkCells(t), t.bmcu_coverage, t.remarks]));
-    ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '',
+      ...milkCells(t), t.remarks]));
+    ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
       sum(d.trips, 'billed_km'), ratio(d.trips, 'amount', 'billed_km'),
-      sum(d.trips, 'amount'), ratio(d.trips, 'amount', 'milk_litres', 4), util(d.trips), ...milkTotals(d.trips), '', '']).font = { bold: true };
+      sum(d.trips, 'amount'), ratio(d.trips, 'amount', 'milk_litres', 4), util(d.trips), ...milkTotals(d.trips), '']).font = { bold: true };
     ws1.views = [{ state: 'frozen', ySplit: 3 }];
 
     // Milk columns sit after Trips on Date Wise (withCost) and after Total
