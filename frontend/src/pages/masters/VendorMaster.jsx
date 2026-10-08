@@ -8,7 +8,7 @@ import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHe
 
 const EMPTY = {
   vendor_code: '', vendor_name: '', contact_person: '', phone: '', email: '',
-  gst_number: '', pan_number: '', address: '', is_active: true,
+  gst_number: '', pan_number: '', address: '', sap_code: '', is_active: true,
 };
 
 export default function VendorMaster() {
@@ -96,6 +96,7 @@ export default function VendorMaster() {
                 <th className="table-th">Contact</th>
                 <th className="table-th">Phone</th>
                 <th className="table-th">GST</th>
+                <th className="table-th">SAP Code</th>
                 <th className="table-th text-center">Tankers</th>
                 <th className="table-th">Status</th>
                 <th className="table-th w-16">Actions</th>
@@ -111,6 +112,7 @@ export default function VendorMaster() {
                   <td className="table-td text-gray-600">{v.contact_person || '—'}</td>
                   <td className="table-td text-gray-600">{v.phone || '—'}</td>
                   <td className="table-td text-gray-600 font-mono text-xs">{v.gst_number || '—'}</td>
+                  <td className="table-td text-gray-600 font-mono text-xs">{v.sap_code || '—'}</td>
                   <td className="table-td text-center">{v.tanker_count || 0}</td>
                   <td className="table-td"><ActiveBadge active={v.is_active}/></td>
                   <td className="table-td">
@@ -154,6 +156,10 @@ export default function VendorMaster() {
             <Field label="Email">
               <input type="email" className="input w-full" value={form.email}
                 onChange={e => set('email', e.target.value)}/>
+            </Field>
+            <Field label="SAP Vendor Code">
+              <input className="input w-full" placeholder="finance's SAP code" value={form.sap_code || ''}
+                onChange={e => set('sap_code', e.target.value.toUpperCase())}/>
             </Field>
             <Field label="GST Number">
               <input className="input w-full" value={form.gst_number}

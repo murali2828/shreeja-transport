@@ -13,6 +13,19 @@ const { query } = require('../config/db');
 const { authenticate, authorizeOrModule } = require('../middleware/auth');
 const { dieselPriceFor } = require('../services/rates');
 
+// Diesel Rates master (migration 058) is maintained from this screen: every
+// rate row keyed or uploaded with a diesel price upserts the state × period
+// price, so the Tanker Rates template's "Diesel Price" row is the only entry.
+async function upsertDiesel(state, from, to, price, user, source) {
+  if (price == null || price <= 0) return;
+  await query(`
+    INSERT INTO diesel_rates (state, effective_from, effective_to, price_per_litre, source, created_by, created_by_name)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    ON CONFLICT (state, effective_from) DO UPDATE SET price_per_litre = EXCLUDED.price_per_litre, effective_to = EXCLUDED.effective_to,
+      source = EXCLUDED.source, updated_at = NOW()`,
+    [state, from, to, price, source, user.id, user.user_id || user.full_name || null]).catch(err => console.error('[tanker-rates] diesel upsert:', err.message));
+}
+
 const XL_FILTER = (req, file, cb) => {
   const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname || '');
   cb(ok ? null : new Error('Only .xlsx / .xls / .csv files are allowed'), ok);
@@ -107,17 +120,18 @@ async function findOverlap(row, excludeId = null) {
 router.get('/', authenticate, authorizeOrModule('masters', 'admin', 'planner', 'biller', 'viewer'), async (req, res) => {
   try {
     const cond = []; const params = [];
-    if (req.query.state)          { params.push(req.query.state);          cond.push(`state = $${params.length}`); }
-    if (req.query.transport_type) { params.push(req.query.transport_type); cond.push(`transport_type = $${params.length}`); }
-    if (req.query.capacity_kl)    { params.push(parseFloat(req.query.capacity_kl)); cond.push(`capacity_kl = $${params.length}`); }
-    if (req.query.on_date)        { params.push(req.query.on_date);        cond.push(`$${params.length}::date BETWEEN effective_from AND effective_to`); }
+    if (req.query.state)          { params.push(req.query.state);          cond.push(`tr.state = $${params.length}`); }
+    if (req.query.transport_type) { params.push(req.query.transport_type); cond.push(`tr.transport_type = $${params.length}`); }
+    if (req.query.capacity_kl)    { params.push(parseFloat(req.query.capacity_kl)); cond.push(`tr.capacity_kl = $${params.length}`); }
+    if (req.query.on_date)        { params.push(req.query.on_date);        cond.push(`$${params.length}::date BETWEEN tr.effective_from AND tr.effective_to`); }
     const r = await query(`
-      SELECT id, effective_from::text AS effective_from, effective_to::text AS effective_to,
-             state, capacity_kl, transport_type, mileage_km_per_litre, rate_per_km,
-             diesel_price, created_by_name, created_at
-      FROM tanker_rates
+      SELECT tr.id, tr.effective_from::text AS effective_from, tr.effective_to::text AS effective_to,
+             tr.state, tr.capacity_kl, tr.transport_type, tr.mileage_km_per_litre, tr.rate_per_km,
+             COALESCE(tr.diesel_price, dm.price_per_litre) AS diesel_price, tr.created_by_name, tr.created_at
+      FROM tanker_rates tr
+      LEFT JOIN LATERAL (SELECT price_per_litre FROM diesel_rates d WHERE d.state = tr.state AND tr.effective_from BETWEEN d.effective_from AND d.effective_to ORDER BY d.effective_from DESC LIMIT 1) dm ON TRUE
       ${cond.length ? 'WHERE ' + cond.join(' AND ') : ''}
-      ORDER BY effective_from DESC, state, capacity_kl, transport_type`, params);
+      ORDER BY tr.effective_from DESC, tr.state, tr.capacity_kl, tr.transport_type`, params);
     res.json(r.rows);
   } catch (err) {
     console.error('Tanker rates list error:', err);
@@ -135,6 +149,7 @@ router.post('/', authenticate, authorizeOrModule('masters', 'admin'), async (req
       error: `Duplicate: a rate for ${v.row.state} / ${v.row.capacity_kl} KL / ${v.row.transport_type} already covers ${dup.effective_from} → ${dup.effective_to}` });
     // Diesel price defaults to the Diesel Rates master for the period (migration 058).
     if (v.row.diesel_price == null) v.row.diesel_price = await dieselPriceFor(v.row.state, v.row.effective_from);
+    else await upsertDiesel(v.row.state, v.row.effective_from, v.row.effective_to, v.row.diesel_price, req.user, 'Tanker Rates entry');
     const r = await query(`
       INSERT INTO tanker_rates
         (effective_from, effective_to, state, capacity_kl, transport_type,
@@ -159,6 +174,7 @@ router.put('/:id', authenticate, authorizeOrModule('masters', 'admin'), async (r
     const dup = await findOverlap(v.row, parseInt(req.params.id));
     if (dup) return res.status(409).json({
       error: `Duplicate: a rate for ${v.row.state} / ${v.row.capacity_kl} KL / ${v.row.transport_type} already covers ${dup.effective_from} → ${dup.effective_to}` });
+    if (v.row.diesel_price != null) await upsertDiesel(v.row.state, v.row.effective_from, v.row.effective_to, v.row.diesel_price, req.user, 'Tanker Rates entry');
     const r = await query(`
       UPDATE tanker_rates SET
         effective_from=$1, effective_to=$2, state=$3, capacity_kl=$4, transport_type=$5,
@@ -348,6 +364,13 @@ router.post('/upload', authenticate, authorizeOrModule('masters', 'admin'), uplo
     const diesel = {};
     if (dieselRowI >= 0) for (const [st, c] of statePairs.map(p => [p[0], p[1]]))
       diesel[st] = num(raw[dieselRowI][c]);
+    // The template's diesel row is the Diesel Rates master entry for the period.
+    let dieselSaved = 0;
+    for (const st of Object.keys(diesel)) if (diesel[st] != null && diesel[st] > 0) {
+      await upsertDiesel(st, effective_from, effective_to, diesel[st], req.user, 'Tanker Rates upload');
+      dieselSaved++;
+    }
+    for (const st of Object.keys(diesel)) if (diesel[st] == null) diesel[st] = await dieselPriceFor(st, effective_from);
 
     let inserted = 0;
     const errors = [];
@@ -385,7 +408,7 @@ router.post('/upload', authenticate, authorizeOrModule('masters', 'admin'), uplo
         }
       }
     }
-    res.json({ inserted, skipped: errors.length, errors: errors.slice(0, 30) });
+    res.json({ inserted, skipped: errors.length, diesel_saved: dieselSaved, errors: errors.slice(0, 30) });
   } catch (err) {
     console.error('Tanker rates upload error:', err);
     res.status(500).json({ error: 'Failed to process the uploaded file' });

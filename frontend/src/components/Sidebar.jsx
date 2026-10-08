@@ -80,7 +80,6 @@ export default function Sidebar({ collapsed = false }) {
           {ni('/masters/locations',  <Navigation size={15}/>,  'Locations')}
           {ni('/masters/distances',  <Route size={15}/>,       'Distance Master')}
           {ni('/masters/tanker-rates', <Truck size={15}/>,     'Tanker Rates')}
-          {ni('/masters/diesel-rates', <Fuel size={15}/>,      'Diesel Rates')}
           {isAdmin && (
             <>
               {ni('/masters/users',        <Users size={15}/>, 'Users')}

@@ -1580,24 +1580,40 @@ async function reportData(q) {
   const where = 'WHERE ' + cond.join(' AND ');
   const base = `FROM billing_run_trips t JOIN billing_runs br ON br.id = t.run_id ${where}`;
 
+  // Milk received per trip = the plant's acknowledgement (all chambers); the
+  // finance format reports it beside the payment with cost per litre and
+  // utilisation (litres ÷ tanker capacity). SAP vendor code from the vendor master.
+  const ackJoin = `LEFT JOIN LATERAL (
+      SELECT SUM(a.qty_litres) AS litres, SUM(a.qty_kgs) AS kgs, SUM(a.kg_fat) AS kg_fat, SUM(a.kg_snf) AS kg_snf
+      FROM trip_acknowledgements a WHERE a.execution_id = t.execution_id) ack ON TRUE`;
+  const baseAck = `FROM billing_run_trips t JOIN billing_runs br ON br.id = t.run_id ${ackJoin} ${where}`;
+  const milkCols = `SUM(ack.litres) AS milk_litres, SUM(ack.kgs) AS milk_kgs, SUM(ack.kg_fat) AS kg_fat, SUM(ack.kg_snf) AS kg_snf,
+           SUM(t.capacity_litres) AS capacity_litres`;
+
   const trips = await query(`
     SELECT t.run_id, br.status AS run_status, t.plan_for_date::text AS plan_for_date,
            t.tanker_number, t.capacity_litres, COALESCE(t.vendor_name,'— No vendor mapped —') AS vendor_name,
+           v.sap_code AS vendor_sap_code,
            t.route_name, t.delivery_point, t.state, t.transport_type,
            t.system_km, t.google_km, t.master_km, t.estimated_km,
-           t.billed_km, t.rate_per_km, t.amount, t.remarks
-    ${base} ORDER BY t.plan_for_date, t.tanker_number`, params);
+           t.billed_km, t.rate_per_km, t.amount, t.remarks,
+           ack.litres AS milk_litres, ack.kgs AS milk_kgs, ack.kg_fat, ack.kg_snf,
+           (SELECT string_agg(COALESCE(b.bmcu_name, b.bmcu_code), ', ' ORDER BY teb.seq_no)
+              FROM trip_execution_bmcus teb JOIN bmcus b ON b.id = teb.bmcu_id
+             WHERE teb.execution_id = t.execution_id AND teb.is_deleted = FALSE) AS bmcu_coverage
+    ${baseAck} LEFT JOIN vendors v ON v.id = t.vendor_id
+    ORDER BY t.plan_for_date, t.tanker_number`, params);
   const dates = await query(`
     SELECT t.plan_for_date::text AS date, COUNT(*)::int AS trips,
            COUNT(DISTINCT t.tanker_number)::int AS tankers,
            SUM(t.billed_km) AS billed_km, SUM(t.system_km) AS system_km,
-           SUM(t.google_km) AS google_km, SUM(t.amount) AS amount
-    ${base} GROUP BY t.plan_for_date ORDER BY t.plan_for_date`, params);
+           SUM(t.google_km) AS google_km, SUM(t.amount) AS amount, ${milkCols}
+    ${baseAck} GROUP BY t.plan_for_date ORDER BY t.plan_for_date`, params);
   const tankers = await query(`
     SELECT t.tanker_number, MAX(t.vendor_name) AS vendor_name, COUNT(*)::int AS trips,
            SUM(t.billed_km) AS billed_km, SUM(t.system_km) AS system_km,
-           SUM(t.google_km) AS google_km, SUM(t.amount) AS amount
-    ${base} GROUP BY t.tanker_number ORDER BY t.tanker_number`, params);
+           SUM(t.google_km) AS google_km, SUM(t.amount) AS amount, ${milkCols}
+    ${baseAck} GROUP BY t.tanker_number ORDER BY t.tanker_number`, params);
   const vendors = await query(`
     SELECT COALESCE(t.vendor_name,'— No vendor mapped —') AS vendor_name,
            COUNT(DISTINCT t.tanker_number)::int AS tankers, COUNT(*)::int AS trips,
@@ -1630,8 +1646,162 @@ async function reportData(q) {
       v.total_payable = rN((parseFloat(v.amount) || 0) + v.toll_amount);
     }
   }
-  return { trips: trips.rows, dates: dates.rows, tankers: tankers.rows, vendors: vendors.rows };
+  // Derived per row: fat / SNF %, ₹/km, cost per litre, utilisation %.
+  const derive = r => {
+    const kgs = parseFloat(r.milk_kgs) || 0, l = parseFloat(r.milk_litres) || 0;
+    const amt = parseFloat(r.amount) || 0, km = parseFloat(r.billed_km) || 0;
+    const cap = parseFloat(r.capacity_litres) || 0;
+    r.fat_pct = kgs > 0 ? rN(parseFloat(r.kg_fat) / kgs * 100, 3) : null;
+    r.snf_pct = kgs > 0 ? rN(parseFloat(r.kg_snf) / kgs * 100, 3) : null;
+    r.rate_avg = km > 0 ? rN(amt / km) : null;
+    r.cost_per_litre = l > 0 ? rN(amt / l, 4) : null;
+    r.utilisation_pct = cap > 0 && l > 0 ? rN(l / cap * 100) : null;
+    return r;
+  };
+  trips.rows.forEach(derive); dates.rows.forEach(derive); tankers.rows.forEach(derive);
+  const cumulative = await cumulativeData(q);
+  return { trips: trips.rows, dates: dates.rows, tankers: tankers.rows, vendors: vendors.rows, ...cumulative };
 }
+
+// ── Month / year cumulative (finance format sheets) ─────────────────────────
+// Month Cumulative: every month of the financial year of `from` (April → March)
+// from billing lines (same run-status / tanker / vendor filters) with the
+// plant's acknowledged milk, plus the average diesel ₹/L of the month from the
+// Diesel Rates master. Year Cumulative: month × financial year matrix with YTD;
+// years before the portal come from transport_monthly_history (migration 059);
+// a month present in the portal always wins over the keyed history.
+const FY_MONTHS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
+const MONTH_NAMES = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+const fyOf = iso => { const [y, m] = iso.split('-').map(Number); return m >= 4 ? y : y - 1; };
+const fyLabel = y => `${y}-${String(y + 1).slice(2)}`;
+const monthMetrics = r => {
+  const kgs = parseFloat(r.milk_kgs) || 0, l = parseFloat(r.milk_litres) || 0, amt = parseFloat(r.amount) || 0;
+  const km = parseFloat(r.total_km) || 0, cap = parseFloat(r.capacity_litres) || 0, trips = parseInt(r.trips) || 0;
+  const y = r.year, m = r.month, days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return {
+    year: y, month: m, month_name: MONTH_NAMES[m - 1], fy_start_year: r.fy_start_year, source: r.source,
+    capacity_litres: rN(cap), milk_litres: rN(l), milk_kgs: rN(kgs),
+    fat_pct: kgs > 0 ? rN(parseFloat(r.kg_fat) / kgs * 100, 3) : null,
+    snf_pct: kgs > 0 ? rN(parseFloat(r.kg_snf) / kgs * 100, 3) : null,
+    ts_pct:  kgs > 0 ? rN((parseFloat(r.kg_fat) + parseFloat(r.kg_snf)) / kgs * 100, 3) : null,
+    kg_fat: rN(r.kg_fat, 3), kg_snf: rN(r.kg_snf, 3),
+    total_km: rN(km), rate_per_km: km > 0 ? rN(amt / km) : null, amount: rN(amt),
+    cost_per_litre: l > 0 ? rN(amt / l, 4) : null,
+    utilisation_pct: cap > 0 && l > 0 ? rN(l / cap * 100) : null,
+    trips, avg_km: trips > 0 ? rN(km / trips) : null, milk_per_day: rN(l / days),
+    diesel_price: r.diesel_price == null ? null : rN(r.diesel_price),
+  };
+};
+async function cumulativeData(q) {
+  const fy = fyOf(q.from);
+  const params = [];
+  const cond = ['t.excluded = FALSE'];
+  if ((q.status || 'approved') !== 'all') { params.push('approved'); cond.push(`br.status = $${params.length}`); }
+  if (q.tanker) { params.push(q.tanker); cond.push(`t.tanker_number = $${params.length}`); }
+  if (q.vendor) { params.push(q.vendor); cond.push(`COALESCE(t.vendor_name,'— No vendor mapped —') = $${params.length}`); }
+  const portal = await query(`
+    SELECT EXTRACT(YEAR FROM t.plan_for_date)::int AS year, EXTRACT(MONTH FROM t.plan_for_date)::int AS month,
+           COUNT(*)::int AS trips, SUM(t.capacity_litres) AS capacity_litres, SUM(t.billed_km) AS total_km, SUM(t.amount) AS amount,
+           SUM(ack.litres) AS milk_litres, SUM(ack.kgs) AS milk_kgs, SUM(ack.kg_fat) AS kg_fat, SUM(ack.kg_snf) AS kg_snf
+    FROM billing_run_trips t JOIN billing_runs br ON br.id = t.run_id
+    LEFT JOIN LATERAL (
+      SELECT SUM(a.qty_litres) AS litres, SUM(a.qty_kgs) AS kgs, SUM(a.kg_fat) AS kg_fat, SUM(a.kg_snf) AS kg_snf
+      FROM trip_acknowledgements a WHERE a.execution_id = t.execution_id) ack ON TRUE
+    WHERE ${cond.join(' AND ')}
+    GROUP BY 1, 2 ORDER BY 1, 2`, params);
+  const diesel = await query(`
+    SELECT EXTRACT(YEAR FROM d)::int AS year, EXTRACT(MONTH FROM d)::int AS month, AVG(dr.price_per_litre) AS diesel_price
+    FROM diesel_rates dr
+    CROSS JOIN LATERAL generate_series(dr.effective_from, dr.effective_to, interval '1 day') AS d
+    GROUP BY 1, 2`);
+  const dieselMap = new Map(diesel.rows.map(x => [`${x.year}-${x.month}`, parseFloat(x.diesel_price)]));
+  const history = await query(`SELECT * FROM transport_monthly_history ORDER BY fy_start_year, month`);
+
+  const portalMap = new Map(portal.rows.map(x => [`${x.year}-${x.month}`, { ...x, fy_start_year: x.month >= 4 ? x.year : x.year - 1, source: 'portal',
+    diesel_price: dieselMap.get(`${x.year}-${x.month}`) ?? null }]));
+  const histMap = new Map(history.rows.map(h => {
+    const year = h.month >= 4 ? h.fy_start_year : h.fy_start_year + 1;
+    return [`${year}-${h.month}`, { ...h, year, source: h.source ? `history (${h.source})` : 'history', total_km: h.total_km }];
+  }));
+  const monthRow = (fyYear, m) => {
+    const year = m >= 4 ? fyYear : fyYear + 1;
+    const key = `${year}-${m}`;
+    const r = portalMap.get(key) || histMap.get(key);
+    return monthMetrics(r || { year, month: m, fy_start_year: fyYear, source: null, trips: 0 });
+  };
+  const months = FY_MONTHS.map(m => monthRow(fy, m));
+  const fys = [...new Set([fy, ...portal.rows.map(x => x.month >= 4 ? x.year : x.year - 1), ...history.rows.map(h => h.fy_start_year)])].sort();
+  const years = fys.map(y => {
+    const rows = FY_MONTHS.map(m => monthRow(y, m));
+    const sum = k => rows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
+    const ytd = monthMetrics({ year: y, month: 4, fy_start_year: y, source: 'ytd', trips: sum('trips'),
+      capacity_litres: sum('capacity_litres'), milk_litres: sum('milk_litres'), milk_kgs: sum('milk_kgs'), kg_fat: sum('kg_fat'), kg_snf: sum('kg_snf'),
+      total_km: sum('total_km'), amount: sum('amount'),
+      diesel_price: (() => { const d = rows.filter(r => r.diesel_price != null); return d.length ? d.reduce((s, r) => s + r.diesel_price, 0) / d.length : null; })() });
+    ytd.month_name = 'YTD';
+    ytd.milk_per_day = rN(sum('milk_litres') / rows.filter(r => r.trips > 0).reduce((s, r) => s + new Date(Date.UTC(r.year, r.month, 0)).getUTCDate(), 0) || 0);
+    return { fy_start_year: y, fy_label: fyLabel(y), months: rows, ytd };
+  });
+  const fyMonths = months; // alias
+  const total = years.find(x => x.fy_start_year === fy)?.ytd || null;
+  return { fy_start_year: fy, fy_label: fyLabel(fy), months: fyMonths, months_total: total, years };
+}
+
+// Keyed monthly history of earlier financial years (migration 059): template,
+// list, upload (replaces the same FY × month). Admin / masters.
+const HIST_COLS = [['fy_start_year', 'FY start year (2023 for 2023-24)'], ['month', 'Month (1-12)'],
+  ['tanker_capacity_litres', 'Tanker capacity (L)'], ['milk_litres', 'Milk received (L)'], ['milk_kgs', 'Milk received (kg)'],
+  ['kg_fat', 'Kg fat'], ['kg_snf', 'Kg SNF'], ['total_km', 'Total KM'], ['amount', 'Amount (₹)'], ['trips', 'Trips'],
+  ['diesel_price', 'Diesel ₹/L (avg)'], ['source', 'Source / note']];
+router.get('/history-template', authenticate, authorizeOrModule('billing', ...canBill), async (_req, res) => {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Monthly History');
+  ws.addRow(HIST_COLS.map(c => c[1])).font = { bold: true };
+  ws.addRow([2023, 4, 15580000, 14767718.04, 15147415.5, 611327.62, 1252492.6, 270623, 13611779.32, 789, 99.66, 'example — replace']);
+  ws.columns.forEach(c => { c.width = 22; });
+  const buf = Buffer.from(await wb.xlsx.writeBuffer());
+  res.setHeader('Content-Disposition', 'attachment; filename=transport_monthly_history_template.xlsx');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buf);
+});
+router.get('/history', authenticate, authorizeOrModule('billing', ...canBill), async (_req, res) => {
+  try { res.json((await query(`SELECT * FROM transport_monthly_history ORDER BY fy_start_year, month`)).rows); }
+  catch (err) { res.status(500).json({ error: 'Failed to load history' }); }
+});
+const histUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+router.post('/history-upload', authenticate, authorizeOrModule('masters', 'admin'), histUpload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const wb = new ExcelJS.Workbook();
+    try { await wb.xlsx.load(req.file.buffer); } catch { return res.status(400).json({ error: 'Invalid or corrupted Excel file' }); }
+    const ws = wb.worksheets[0];
+    const num = v => { if (v && typeof v === 'object') v = v.result ?? v.text ?? null; const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+    const txt = v => { if (v && typeof v === 'object') v = v.result ?? v.text ?? (v.richText ? v.richText.map(t => t.text).join('') : ''); return v == null ? null : String(v).trim() || null; };
+    let saved = 0; const errors = [];
+    for (let r = 2; r <= ws.rowCount; r++) {
+      const row = ws.getRow(r);
+      const vals = HIST_COLS.map((_, i) => row.getCell(i + 1).value);
+      if (vals.every(v => v == null || v === '')) continue;
+      const fyY = num(vals[0]), m = num(vals[1]);
+      if (!fyY || fyY < 2000 || fyY > 2100 || !m || m < 1 || m > 12) { errors.push(`Row ${r}: FY start year / month invalid`); continue; }
+      if (txt(vals[11]) === 'example — replace') continue;
+      await query(`
+        INSERT INTO transport_monthly_history (fy_start_year, month, tanker_capacity_litres, milk_litres, milk_kgs, kg_fat, kg_snf,
+          total_km, amount, trips, diesel_price, source, created_by, created_by_name)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        ON CONFLICT (fy_start_year, month) DO UPDATE SET tanker_capacity_litres=EXCLUDED.tanker_capacity_litres, milk_litres=EXCLUDED.milk_litres,
+          milk_kgs=EXCLUDED.milk_kgs, kg_fat=EXCLUDED.kg_fat, kg_snf=EXCLUDED.kg_snf, total_km=EXCLUDED.total_km, amount=EXCLUDED.amount,
+          trips=EXCLUDED.trips, diesel_price=EXCLUDED.diesel_price, source=EXCLUDED.source, updated_at=NOW()`,
+        [fyY, m, num(vals[2]), num(vals[3]), num(vals[4]), num(vals[5]), num(vals[6]), num(vals[7]), num(vals[8]),
+         num(vals[9]) == null ? null : Math.round(num(vals[9])), num(vals[10]), txt(vals[11]), req.user.id, req.user.user_id || req.user.full_name || null]);
+      saved++;
+    }
+    res.json({ saved, errors: errors.slice(0, 30) });
+  } catch (err) {
+    console.error('[billing] history upload error:', err);
+    res.status(500).json({ error: 'Failed to process the uploaded file' });
+  }
+});
 
 router.get('/report-data', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   const { from, to } = req.query;
@@ -1653,34 +1823,84 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     const ws1 = wb.addWorksheet('Trip Wise');
     ws1.addRow([`Tanker Payment Report ${fmtDateDisplay(from)} → ${fmtDateDisplay(to)} · ${statusLabel}`]).font = { bold: true, size: 13 };
     ws1.addRow([]);
-    head(ws1, ['Date', 'Run #', 'Run Status', 'Tanker', 'Capacity (KL)', 'Vendor', 'Route', 'Delivery Point',
-      'State', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Remarks']);
-    d.trips.forEach(t => ws1.addRow([fmtDateDisplay(t.plan_for_date), t.run_id, t.run_status, t.tanker_number,
-      t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.vendor_name, t.route_name, t.delivery_point,
-      t.state, t.transport_type, t.system_km, t.google_km, t.billed_km, t.rate_per_km, t.amount, t.remarks]));
-    ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '',
-      rN(d.trips.reduce((s, t) => s + (+t.system_km || 0), 0)),
-      rN(d.trips.reduce((s, t) => s + (+t.google_km || 0), 0)),
-      rN(d.trips.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
-      rN(d.trips.reduce((s, t) => s + (+t.amount || 0), 0)), '']).font = { bold: true };
+    const sum = (rows, k) => rN(rows.reduce((s, r) => s + (+r[k] || 0), 0));
+    const pct = (rows, k, base) => { const b = rows.reduce((s, r) => s + (+r[base] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[k] || 0), 0) / b * 100, 3) : null; };
+    const MILK_HEADS = ['Qty in Lts', 'Qty in Kgs', 'Fat %', 'SNF %', 'Fat Kgs', 'SNF Kgs'];
+    const milkCells = r => [rN(r.milk_litres), rN(r.milk_kgs), r.fat_pct, r.snf_pct, rN(r.kg_fat, 3), rN(r.kg_snf, 3)];
+    const milkTotals = rows => [sum(rows, 'milk_litres'), sum(rows, 'milk_kgs'), pct(rows, 'kg_fat', 'milk_kgs'), pct(rows, 'kg_snf', 'milk_kgs'), sum(rows, 'kg_fat'), sum(rows, 'kg_snf')];
+    const ratio = (rows, num, den, d = 2) => { const b = rows.reduce((s, r) => s + (+r[den] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[num] || 0), 0) / b, d) : null; };
+    const util = rows => { const c = rows.reduce((s, r) => s + (+r.capacity_litres || 0), 0); return c > 0 ? rN(rows.reduce((s, r) => s + (+r.milk_litres || 0), 0) / c * 100) : null; };
 
-    const sheet = (name, rows, firstHead, firstKey, secondKey, withToll = false) => {
+    head(ws1, ['S.No', 'Date', 'Run #', 'Run Status', 'Tanker', 'Capacity (KL)', 'SAP Vendor Code', 'Vendor', 'Route', 'Delivery Point',
+      'State', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %',
+      ...MILK_HEADS, 'BMCU Coverage', 'Remarks']);
+    d.trips.forEach((t, i) => ws1.addRow([i + 1, fmtDateDisplay(t.plan_for_date), t.run_id, t.run_status, t.tanker_number,
+      t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.vendor_sap_code, t.vendor_name, t.route_name, t.delivery_point,
+      t.state, t.transport_type, t.system_km, t.google_km, t.billed_km, t.rate_per_km, t.amount, t.cost_per_litre, t.utilisation_pct,
+      ...milkCells(t), t.bmcu_coverage, t.remarks]));
+    ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '',
+      sum(d.trips, 'system_km'), sum(d.trips, 'google_km'), sum(d.trips, 'billed_km'), ratio(d.trips, 'amount', 'billed_km'),
+      sum(d.trips, 'amount'), ratio(d.trips, 'amount', 'milk_litres', 4), util(d.trips), ...milkTotals(d.trips), '', '']).font = { bold: true };
+    ws1.views = [{ state: 'frozen', ySplit: 3 }];
+
+    const sheet = (name, rows, firstHead, firstKey, secondKey, withToll = false, withMilk = false, withCost = false) => {
       const ws = wb.addWorksheet(name);
       head(ws, [firstHead, secondKey === 'vendor_name' ? 'Vendor' : 'Tankers', 'Trips',
+        ...(withCost ? ['Tankers capacity (L)'] : []),
+        ...(withMilk ? MILK_HEADS : []),
         'Billed KM', 'System KM', 'Google KM', 'Amount (₹)',
+        ...(withCost ? ['Rate Per KM', 'Cost Per Ltr', 'Utilization %'] : []),
         ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : [])]);
       rows.forEach(r => ws.addRow([firstKey === 'date' ? fmtDateDisplay(r[firstKey]) : r[firstKey], r[secondKey], r.trips,
+        ...(withCost ? [rN(r.capacity_litres)] : []),
+        ...(withMilk ? milkCells(r) : []),
         rN(r.billed_km), rN(r.system_km), rN(r.google_km), rN(r.amount),
+        ...(withCost ? [r.rate_avg, r.cost_per_litre, r.utilisation_pct] : []),
         ...(withToll ? [rN(r.toll_amount), rN(r.total_payable)] : [])]));
       ws.addRow(['TOTAL', '', rows.reduce((s, r) => s + (+r.trips || 0), 0),
-        rN(rows.reduce((s, r) => s + (+r.billed_km || 0), 0)), '', '',
-        rN(rows.reduce((s, r) => s + (+r.amount || 0), 0)),
-        ...(withToll ? [rN(rows.reduce((s, r) => s + (+r.toll_amount || 0), 0)),
-                        rN(rows.reduce((s, r) => s + (+r.total_payable || 0), 0))] : [])]).font = { bold: true };
+        ...(withCost ? [sum(rows, 'capacity_litres')] : []),
+        ...(withMilk ? milkTotals(rows) : []),
+        sum(rows, 'billed_km'), sum(rows, 'system_km'), sum(rows, 'google_km'), sum(rows, 'amount'),
+        ...(withCost ? [ratio(rows, 'amount', 'billed_km'), ratio(rows, 'amount', 'milk_litres', 4), util(rows)] : []),
+        ...(withToll ? [sum(rows, 'toll_amount'), sum(rows, 'total_payable')] : [])]).font = { bold: true };
     };
-    sheet('Date Wise', d.dates, 'Date', 'date', 'tankers');
-    sheet('Tanker Wise', d.tankers, 'Tanker', 'tanker_number', 'vendor_name', true);
+    sheet('Date Wise', d.dates, 'Date', 'date', 'tankers', false, true, true);
+    sheet('Tanker Wise', d.tankers, 'Tanker', 'tanker_number', 'vendor_name', true, true);
     sheet('Vendor Wise', d.vendors, 'Vendor', 'vendor_name', 'tankers', true);
+
+    // Month Cumulative — the financial year of the From date
+    const MC_HEADS = ['S.NO', 'Month', 'Tankers Capacity in Lits', 'Milk Received From Tankers in Lits', 'Milk Received From Tankers in Kgs',
+      'Fat %', 'Snf %', 'TS %', 'Fat Kgs', 'Snf Kgs', 'Total KM', 'Rate Per KM', 'Amount in RS', 'Cost Per Liter Rs', 'Utilization %',
+      'Total Trips', 'AVG KM', 'Diesel Price (avg ₹/L)', 'Source'];
+    const mcRow = (i, m, label) => [i, label, m.capacity_litres, m.milk_litres, m.milk_kgs, m.fat_pct, m.snf_pct, m.ts_pct, m.kg_fat, m.kg_snf,
+      m.total_km, m.rate_per_km, m.amount, m.cost_per_litre, m.utilisation_pct, m.trips || null, m.avg_km, m.diesel_price, m.source || ''];
+    const ws5 = wb.addWorksheet('Month Cumulative');
+    ws5.addRow([`Month Cumulative — FY ${d.fy_label} · ${statusLabel}`]).font = { bold: true, size: 13 };
+    head(ws5, MC_HEADS);
+    d.months.forEach((m, i) => ws5.addRow(mcRow(i + 1, m, `${m.month_name}'${m.year}`)));
+    if (d.months_total) ws5.addRow(mcRow('', d.months_total, 'TOTAL / YTD')).font = { bold: true };
+
+    // Year Cumulative — metric rows × (month × FY) columns, YTD at the end
+    const ws6 = wb.addWorksheet('Year Cumulative');
+    const fyLabels = d.years.map(y => y.fy_label);
+    const groups = [...FY_MONTHS.map((m, i) => ({ label: d.years[0] ? `${MONTH_NAMES[m - 1]}'${m >= 4 ? '' : ''}` : MONTH_NAMES[m - 1], idx: i })), { label: 'YTD', idx: 'ytd' }];
+    const r2 = ['MONTH'], r3 = ['YEAR'];
+    groups.forEach(g => { fyLabels.forEach(fl => { r2.push(g.label); r3.push(fl); }); });
+    ws6.addRow([`Year Cumulative · ${statusLabel} · months in the portal come from billing runs, earlier years from the keyed monthly history`]).font = { bold: true, size: 12 };
+    ws6.addRow(r2).font = { bold: true };
+    ws6.addRow(r3).font = { bold: true };
+    groups.forEach((g, gi) => { const c1 = 2 + gi * fyLabels.length; if (fyLabels.length > 1) ws6.mergeCells(2, c1, 2, c1 + fyLabels.length - 1); ws6.getCell(2, c1).alignment = { horizontal: 'center' }; });
+    const METRICS = [['Tanker Capacities in Ltrs', 'capacity_litres'], ['Milk Received In Litres', 'milk_litres'], ["Milk Received In KG's", 'milk_kgs'],
+      ['FAT%', 'fat_pct'], ['SNF%', 'snf_pct'], ['TS%', 'ts_pct'], ['KG FAT', 'kg_fat'], ['KG SNF', 'kg_snf'], ['Milk Received per day in litres', 'milk_per_day'],
+      ['Total KM', 'total_km'], ['Rate Per KM', 'rate_per_km'], ['Amount in RS', 'amount'], ['Cost Per Liter Rs', 'cost_per_litre'],
+      ['Utilization %', 'utilisation_pct'], ['Diesel Prices (avg ₹/L)', 'diesel_price'], ['Number Of Trips', 'trips'], ['Average KMs', 'avg_km']];
+    METRICS.forEach(([label, k]) => {
+      const row = [label];
+      groups.forEach(g => d.years.forEach(y => { const m = g.idx === 'ytd' ? y.ytd : y.months[g.idx]; row.push(m.trips || m.source ? m[k] : null); }));
+      ws6.addRow(row);
+    });
+    ws6.getColumn(1).width = 30;
+    ws6.views = [{ state: 'frozen', xSplit: 1, ySplit: 3 }];
 
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=tanker_payment_report_${from}_${to}.xlsx`);

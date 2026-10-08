@@ -178,8 +178,10 @@ docker cp shreeja-qa-backend:/tmp/history_result.csv .                          
 
 ## Routine tasks
 
+- Payment Report (Billing → Payment Report): Month Cumulative follows the financial year of the From date; Year Cumulative compares financial years. Load the months before the portal once: Year Cumulative tab → History template → fill one row per FY start year × month (capacity, milk L / kg, kg fat / SNF, km, amount, trips, diesel) → Upload earlier years (admin). Re-uploading a month replaces it; portal months are never overwritten by history.
+
 - New user / role: Masters → Users / Roles (admin). Custom roles get module permissions; tick **Read-only** for a role that may look but never change (e.g. finance with Billing + Reports). A user may hold several roles; permissions add up, and only a user whose roles are all read-only is restricted.
 - Rotate the Assure key: set `ASSURE_API_KEY_NEXT`, `up -d`, hand over, then move it into `ASSURE_API_KEY`, clear `_NEXT`, `up -d`.
 - Tanker document expiry mails: `jobs/docAlerts.js` sends at 30/15/7/1 days and on expiry to recipients configured in Masters → Documents.
-- Each fortnight when purchase's rate mail arrives: Masters → Diesel Rates → pick the fortnight, enter each state's ₹/litre, **Generate rates from diesel** → check the preview against the annexure → Confirm (or key / upload the rates in Tanker Rates as before). Reports → Transport Cost Drivers explains the ₹/litre movement once the period's trips are acknowledged.
+- Each fortnight when purchase's rate mail arrives: Masters → Tanker Rates → either upload the template with the Diesel Price row filled (rates and diesel land together), or enter the fortnight's diesel per state in the diesel strip and **Generate rates from diesel** → check the preview against the annexure → Confirm. Reports → Transport Cost Drivers explains the ₹/litre movement once the period's trips are acknowledged.
 - Before a fortnight billing run: all trips acknowledged before the cutoff (`BILLING_ACK_CUTOFF_TIME`, default 06:00 on the 16th / 1st); tolls (FASTag PDF) uploaded; vendors mapped to every tanker; coordinates complete.

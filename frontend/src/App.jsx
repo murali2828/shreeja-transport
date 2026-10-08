@@ -50,7 +50,6 @@ import DailyTSReport   from './pages/reports/DailyTSReport';
 import Analytics       from './pages/reports/Analytics';
 import CostDrivers     from './pages/reports/CostDrivers';
 import TankerRates     from './pages/masters/TankerRates';
-import DieselRates     from './pages/masters/DieselRates';
 import TankerBilling   from './pages/billing/TankerBilling';
 import BillingDecision from './pages/billing/BillingDecision';
 import ChangeRequestDecision from './pages/changeRequests/ChangeRequestDecision';
@@ -125,9 +124,6 @@ function AppRoutes() {
         }/>
         <Route path="masters/tanker-rates" element={
           <ProtectedRoute roles={['admin']} module="masters"><TankerRates/></ProtectedRoute>
-        }/>
-        <Route path="masters/diesel-rates" element={
-          <ProtectedRoute roles={['admin']} module="masters"><DieselRates/></ProtectedRoute>
         }/>
         <Route path="masters/distances" element={
           <ProtectedRoute roles={['admin']} module="masters"><DistanceMaster/></ProtectedRoute>
