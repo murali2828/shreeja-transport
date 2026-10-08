@@ -1066,10 +1066,10 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
   }
 
   const wsD = wb.addWorksheet('Date Wise');
-  head(wsD, ['Date', 'Trips', 'Tankers', 'Billed KM', 'System KM', 'Google KM', 'Amount (₹)']);
-  dates.forEach(d => wsD.addRow([fmtDateDisplay(d.date), d.trips, d.tankers, rN(d.billed_km), rN(d.system_km), rN(d.google_km), rN(d.amount)]));
+  head(wsD, ['Date', 'Trips', 'Tankers', 'Billed KM', 'Amount (₹)']);
+  dates.forEach(d => wsD.addRow([fmtDateDisplay(d.date), d.trips, d.tankers, rN(d.billed_km), rN(d.amount)]));
   wsD.addRow(['TOTAL', dates.reduce((s, d) => s + d.trips, 0), '',
-    rN(dates.reduce((s, d) => s + (+d.billed_km || 0), 0)), '', '',
+    rN(dates.reduce((s, d) => s + (+d.billed_km || 0), 0)),
     rN(dates.reduce((s, d) => s + (+d.amount || 0), 0))]).font = { bold: true };
 
   const ws4 = wb.addWorksheet('Approvals');
