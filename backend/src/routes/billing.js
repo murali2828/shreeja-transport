@@ -898,12 +898,19 @@ async function runSummaries(runId, { vendorIds } = {}) {
   const scoped = Array.isArray(vendorIds) && vendorIds.length > 0;
   const vScope = scoped ? 'AND vendor_id = ANY($2)' : '';
   const params = scoped ? [runId, vendorIds] : [runId];
+  // Milk received (plant acknowledgement) per tanker / date for the finance
+  // layout of the run Excel (Date Wise and Tanker Wise milk columns).
+  const ackJoin = `LEFT JOIN LATERAL (
+      SELECT SUM(a.qty_litres) AS litres, SUM(a.qty_kgs) AS kgs, SUM(a.kg_fat) AS kg_fat, SUM(a.kg_snf) AS kg_snf
+      FROM trip_acknowledgements a WHERE a.execution_id = t.execution_id) ack ON TRUE`;
+  const milkCols = `SUM(t.capacity_litres) AS capacity_litres, SUM(ack.litres) AS milk_litres, SUM(ack.kgs) AS milk_kgs,
+           SUM(ack.kg_fat) AS kg_fat, SUM(ack.kg_snf) AS kg_snf`;
   const tankers = await query(`
-    SELECT tanker_number, MAX(vendor_name) AS vendor_name, COUNT(*)::int AS trips,
-           SUM(billed_km) AS billed_km, SUM(system_km) AS system_km,
-           SUM(google_km) AS google_km, SUM(amount) AS amount
-    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE ${vScope}
-    GROUP BY tanker_number ORDER BY tanker_number`, params);
+    SELECT t.tanker_number, MAX(t.vendor_name) AS vendor_name, COUNT(*)::int AS trips,
+           SUM(t.billed_km) AS billed_km, SUM(t.system_km) AS system_km,
+           SUM(t.google_km) AS google_km, SUM(t.amount) AS amount, ${milkCols}
+    FROM billing_run_trips t ${ackJoin} WHERE t.run_id=$1 AND t.excluded=FALSE ${vScope.replace('vendor_id', 't.vendor_id')}
+    GROUP BY t.tanker_number ORDER BY t.tanker_number`, params);
   const vendors = await query(`
     SELECT COALESCE(vendor_name,'— No vendor mapped —') AS vendor_name,
            COUNT(DISTINCT tanker_number)::int AS tankers, COUNT(*)::int AS trips,
@@ -912,12 +919,12 @@ async function runSummaries(runId, { vendorIds } = {}) {
     FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE ${vScope}
     GROUP BY COALESCE(vendor_name,'— No vendor mapped —') ORDER BY 1`, params);
   const dates = await query(`
-    SELECT plan_for_date::text AS date, COUNT(*)::int AS trips,
-           COUNT(DISTINCT tanker_number)::int AS tankers,
-           SUM(billed_km) AS billed_km, SUM(system_km) AS system_km,
-           SUM(google_km) AS google_km, SUM(amount) AS amount
-    FROM billing_run_trips WHERE run_id=$1 AND excluded=FALSE ${vScope}
-    GROUP BY plan_for_date ORDER BY plan_for_date`, params);
+    SELECT t.plan_for_date::text AS date, COUNT(*)::int AS trips,
+           COUNT(DISTINCT t.tanker_number)::int AS tankers,
+           SUM(t.billed_km) AS billed_km, SUM(t.system_km) AS system_km,
+           SUM(t.google_km) AS google_km, SUM(t.amount) AS amount, ${milkCols}
+    FROM billing_run_trips t ${ackJoin} WHERE t.run_id=$1 AND t.excluded=FALSE ${vScope.replace('vendor_id', 't.vendor_id')}
+    GROUP BY t.plan_for_date ORDER BY t.plan_for_date`, params);
 
   // Merge toll challans: per tanker directly; per vendor via the tanker's
   // vendor. total_payable = km-based amount + toll reimbursement.
@@ -1041,14 +1048,35 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
   if (materialTrips.length) tripCols(materialTrips, 'Material Trips');
   if (saleTrips.length) tripCols(saleTrips, 'Sale Tankers');
 
+  // Milk helpers for the aggregate sheets (finance wording).
+  const MILK_HEADS_AGG = ['Milk Received in Ltrs', "Milk Received in KG's", 'FAT %', "FAT KG's", 'SNF%', "SNF KG's"];
+  const sumOf = (rows, k) => rows.reduce((s, r) => s + (+r[k] || 0), 0);
+  const milkCells = r => { const kg = +r.milk_kgs || 0; return [rN(r.milk_litres), rN(kg),
+    kg > 0 ? rN((+r.kg_fat || 0) / kg * 100) : null, rN(r.kg_fat), kg > 0 ? rN((+r.kg_snf || 0) / kg * 100) : null, rN(r.kg_snf)]; };
+  const milkTotals = rows => { const kg = sumOf(rows, 'milk_kgs'); return [rN(sumOf(rows, 'milk_litres')), rN(kg),
+    kg > 0 ? rN(sumOf(rows, 'kg_fat') / kg * 100) : null, rN(sumOf(rows, 'kg_fat')), kg > 0 ? rN(sumOf(rows, 'kg_snf') / kg * 100) : null, rN(sumOf(rows, 'kg_snf'))]; };
+  const costCells = (amt, km, l, cap) => [km > 0 ? rN(amt / km) : null, l > 0 ? rN(amt / l) : null, cap > 0 && l > 0 ? rN(l / cap * 100) : null];
+
+  // Date Wise — second sheet, finance layout (marked workbook, 2026-10-08).
+  const wsD = wb.addWorksheet('Date Wise');
+  wsD.addRow([`Tanker Payment Billing — Run #${runId} · ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} · Status: ${run.status}`]).font = { bold: true, size: 13 };
+  wsD.addRow([]);
+  head(wsD, ['Date', 'Tankers', 'Trips', 'Tankers capacity', ...MILK_HEADS_AGG, 'Billed KM', 'Amount (₹)', 'Rate Per KM', 'Cost Per Ltr', 'Utilization %']);
+  dates.forEach(d => wsD.addRow([fmtDateDisplay(d.date), d.tankers, d.trips, rN(d.capacity_litres), ...milkCells(d),
+    rN(d.billed_km), rN(d.amount), ...costCells(+d.amount || 0, +d.billed_km || 0, +d.milk_litres || 0, +d.capacity_litres || 0)]));
+  wsD.addRow(['TOTAL', '', dates.reduce((s, d) => s + d.trips, 0), rN(sumOf(dates, 'capacity_litres')), ...milkTotals(dates),
+    rN(sumOf(dates, 'billed_km')), rN(sumOf(dates, 'amount')),
+    ...costCells(sumOf(dates, 'amount'), sumOf(dates, 'billed_km'), sumOf(dates, 'milk_litres'), sumOf(dates, 'capacity_litres'))]).font = { bold: true };
+  for (let c = 4; c <= 15; c++) wsD.getColumn(c).numFmt = '0.00';
+
   const ws2 = wb.addWorksheet('Tanker Wise');
-  head(ws2, ['Tanker', 'Vendor', 'Trips', 'Billed KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)']);
-  tankers.forEach(t => ws2.addRow([t.tanker_number, t.vendor_name, t.trips, rN(t.billed_km), rN(t.amount), rN(t.toll_amount), rN(t.total_payable)]));
+  head(ws2, ['Tanker', 'Vendor', 'Trips', 'Billed KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)', ...MILK_HEADS_AGG]);
+  tankers.forEach(t => ws2.addRow([t.tanker_number, t.vendor_name, t.trips, rN(t.billed_km), rN(t.amount), rN(t.toll_amount), rN(t.total_payable), ...milkCells(t)]));
   ws2.addRow(['TOTAL', '', tankers.reduce((s, t) => s + t.trips, 0),
     rN(tankers.reduce((s, t) => s + (+t.billed_km || 0), 0)),
     rN(tankers.reduce((s, t) => s + (+t.amount || 0), 0)),
     rN(tankers.reduce((s, t) => s + (+t.toll_amount || 0), 0)),
-    rN(tankers.reduce((s, t) => s + (+t.total_payable || 0), 0))]).font = { bold: true };
+    rN(tankers.reduce((s, t) => s + (+t.total_payable || 0), 0)), ...milkTotals(tankers)]).font = { bold: true };
 
   const ws3 = wb.addWorksheet('Vendor Wise');
   head(ws3, ['Vendor', 'Tankers', 'Trips', 'Billed KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)']);
@@ -1069,13 +1097,6 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     wsT.addRow([]);
     wsT.addRow([`Toll challans pending for ${pendingTolls.length} tanker(s) — to be uploaded and paid in the next cycle: ${pendingTolls.join(', ')}`]).font = { italic: true };
   }
-
-  const wsD = wb.addWorksheet('Date Wise');
-  head(wsD, ['Date', 'Trips', 'Tankers', 'Billed KM', 'Amount (₹)']);
-  dates.forEach(d => wsD.addRow([fmtDateDisplay(d.date), d.trips, d.tankers, rN(d.billed_km), rN(d.amount)]));
-  wsD.addRow(['TOTAL', dates.reduce((s, d) => s + d.trips, 0), '',
-    rN(dates.reduce((s, d) => s + (+d.billed_km || 0), 0)),
-    rN(dates.reduce((s, d) => s + (+d.amount || 0), 0))]).font = { bold: true };
 
   const ws4 = wb.addWorksheet('Approvals');
   head(ws4, ['Level', 'Approver', 'Status', 'Remarks', 'Decided At']);
