@@ -1832,14 +1832,14 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     const util = rows => { const c = rows.reduce((s, r) => s + (+r.capacity_litres || 0), 0); return c > 0 ? rN(rows.reduce((s, r) => s + (+r.milk_litres || 0), 0) / c * 100) : null; };
 
     head(ws1, ['S.No', 'Date', 'Run #', 'Run Status', 'Tanker', 'Capacity (KL)', 'SAP Vendor Code', 'Vendor', 'Route', 'Delivery Point',
-      'State', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %',
+      'State', 'Transport Type', 'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %',
       ...MILK_HEADS, 'BMCU Coverage', 'Remarks']);
     d.trips.forEach((t, i) => ws1.addRow([i + 1, fmtDateDisplay(t.plan_for_date), t.run_id, t.run_status, t.tanker_number,
       t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, t.vendor_sap_code, t.vendor_name, t.route_name, t.delivery_point,
-      t.state, t.transport_type, t.system_km, t.google_km, t.billed_km, t.rate_per_km, t.amount, t.cost_per_litre, t.utilisation_pct,
+      t.state, t.transport_type, t.billed_km, t.rate_per_km, t.amount, t.cost_per_litre, t.utilisation_pct,
       ...milkCells(t), t.bmcu_coverage, t.remarks]));
     ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '',
-      sum(d.trips, 'system_km'), sum(d.trips, 'google_km'), sum(d.trips, 'billed_km'), ratio(d.trips, 'amount', 'billed_km'),
+      sum(d.trips, 'billed_km'), ratio(d.trips, 'amount', 'billed_km'),
       sum(d.trips, 'amount'), ratio(d.trips, 'amount', 'milk_litres', 4), util(d.trips), ...milkTotals(d.trips), '', '']).font = { bold: true };
     ws1.views = [{ state: 'frozen', ySplit: 3 }];
 
@@ -1848,19 +1848,19 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
       head(ws, [firstHead, secondKey === 'vendor_name' ? 'Vendor' : 'Tankers', 'Trips',
         ...(withCost ? ['Tankers capacity (L)'] : []),
         ...(withMilk ? MILK_HEADS : []),
-        'Billed KM', 'System KM', 'Google KM', 'Amount (₹)',
+        'Billed KM', 'Amount (₹)',
         ...(withCost ? ['Rate Per KM', 'Cost Per Ltr', 'Utilization %'] : []),
         ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : [])]);
       rows.forEach(r => ws.addRow([firstKey === 'date' ? fmtDateDisplay(r[firstKey]) : r[firstKey], r[secondKey], r.trips,
         ...(withCost ? [rN(r.capacity_litres)] : []),
         ...(withMilk ? milkCells(r) : []),
-        rN(r.billed_km), rN(r.system_km), rN(r.google_km), rN(r.amount),
+        rN(r.billed_km), rN(r.amount),
         ...(withCost ? [r.rate_avg, r.cost_per_litre, r.utilisation_pct] : []),
         ...(withToll ? [rN(r.toll_amount), rN(r.total_payable)] : [])]));
       ws.addRow(['TOTAL', '', rows.reduce((s, r) => s + (+r.trips || 0), 0),
         ...(withCost ? [sum(rows, 'capacity_litres')] : []),
         ...(withMilk ? milkTotals(rows) : []),
-        sum(rows, 'billed_km'), sum(rows, 'system_km'), sum(rows, 'google_km'), sum(rows, 'amount'),
+        sum(rows, 'billed_km'), sum(rows, 'amount'),
         ...(withCost ? [ratio(rows, 'amount', 'billed_km'), ratio(rows, 'amount', 'milk_litres', 4), util(rows)] : []),
         ...(withToll ? [sum(rows, 'toll_amount'), sum(rows, 'total_payable')] : [])]).font = { bold: true };
     };

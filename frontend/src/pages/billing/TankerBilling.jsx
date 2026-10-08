@@ -1424,7 +1424,7 @@ function PaymentReport() {
                 <thead className="bg-blue-50 text-left text-gray-600">
                   <tr>{[tab === 'dates' ? 'Date' : tab === 'tankers' ? 'Tanker' : 'Vendor',
                         tab === 'tankers' ? 'Vendor' : 'Tankers', 'Trips',
-                        'Billed KM', 'System KM', 'Google KM', 'Amount (₹)',
+                        'Billed KM', 'Amount (₹)',
                         ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : [])]
                         .map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
                 </thead>
@@ -1435,8 +1435,6 @@ function PaymentReport() {
                       <td className="px-3 py-1.5">{tab === 'tankers' ? r.vendor_name : r.tankers}</td>
                       <td className="px-3 py-1.5 text-right">{r.trips}</td>
                       <td className="px-3 py-1.5 text-right">{nf(r.billed_km)}</td>
-                      <td className="px-3 py-1.5 text-right">{nf(r.system_km)}</td>
-                      <td className="px-3 py-1.5 text-right">{nf(r.google_km)}</td>
                       <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.amount)}</td>
                       {withToll && <td className="px-3 py-1.5 text-right">{nf(r.toll_amount)}</td>}
                       {withToll && <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.total_payable)}</td>}
@@ -1446,8 +1444,6 @@ function PaymentReport() {
                     <td className="px-3 py-2">TOTAL</td><td/>
                     <td className="px-3 py-2 text-right">{(rows || []).reduce((s, r) => s + (+r.trips || 0), 0)}</td>
                     <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.billed_km || 0), 0))}</td>
-                    <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.system_km || 0), 0))}</td>
-                    <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.google_km || 0), 0))}</td>
                     <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.amount || 0), 0))}</td>
                     {withToll && <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.toll_amount || 0), 0))}</td>}
                     {withToll && <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.total_payable || 0), 0))}</td>}
@@ -1464,7 +1460,7 @@ function PaymentReport() {
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
                     <tr>{['Date', 'Run #', 'Status', 'Tanker', 'SAP Code', 'Vendor', 'Route', 'Delivery Point', 'State',
-                          'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Qty Lts', 'Qty Kgs', 'Fat %', 'SNF %', 'Cost/Ltr', 'Util %', 'BMCUs', 'Remarks']
+                          'Transport Type', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Qty Lts', 'Qty Kgs', 'Fat %', 'SNF %', 'Cost/Ltr', 'Util %', 'BMCUs', 'Remarks']
                           .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
                   </thead>
                   <tbody>
@@ -1480,8 +1476,6 @@ function PaymentReport() {
                         <td className="px-2 py-1.5">{t.delivery_point || '—'}</td>
                         <td className="px-2 py-1.5">{t.state || '—'}</td>
                         <td className="px-2 py-1.5 whitespace-nowrap">{t.transport_type}</td>
-                        <td className="px-2 py-1.5 text-right">{nf(t.system_km)}</td>
-                        <td className="px-2 py-1.5 text-right">{nf(t.google_km)}</td>
                         <td className="px-2 py-1.5 text-right">{nf(t.billed_km)}</td>
                         <td className="px-2 py-1.5 text-right">{nf(t.rate_per_km)}</td>
                         <td className="px-2 py-1.5 text-right font-bold">{nf(t.amount)}</td>
