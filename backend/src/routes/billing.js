@@ -1690,6 +1690,7 @@ const monthMetrics = r => {
     utilisation_pct: cap > 0 && l > 0 ? rN(l / cap * 100) : null,
     trips, avg_km: trips > 0 ? rN(km / trips) : null, milk_per_day: rN(l / days),
     diesel_price: r.diesel_price == null ? null : rN(r.diesel_price),
+    diesel_sum: r.diesel_sum == null ? null : rN(r.diesel_sum),
   };
 };
 async function cumulativeData(q) {
@@ -1709,19 +1710,24 @@ async function cumulativeData(q) {
       FROM trip_acknowledgements a WHERE a.execution_id = t.execution_id) ack ON TRUE
     WHERE ${cond.join(' AND ')}
     GROUP BY 1, 2 ORDER BY 1, 2`, params);
+  // Diesel per month as finance shows it: "Disel Price" = sum of the
+  // fortnightly prices (each fortnight = average across states), "Diesl
+  // Rate" = their average.
   const diesel = await query(`
-    SELECT EXTRACT(YEAR FROM d)::int AS year, EXTRACT(MONTH FROM d)::int AS month, AVG(dr.price_per_litre) AS diesel_price
-    FROM diesel_rates dr
-    CROSS JOIN LATERAL generate_series(dr.effective_from, dr.effective_to, interval '1 day') AS d
+    SELECT EXTRACT(YEAR FROM effective_from)::int AS year, EXTRACT(MONTH FROM effective_from)::int AS month,
+           SUM(p) AS diesel_sum, AVG(p) AS diesel_price
+    FROM (SELECT effective_from, AVG(price_per_litre) AS p FROM diesel_rates GROUP BY effective_from) f
     GROUP BY 1, 2`);
   const dieselMap = new Map(diesel.rows.map(x => [`${x.year}-${x.month}`, parseFloat(x.diesel_price)]));
+  const dieselSumMap = new Map(diesel.rows.map(x => [`${x.year}-${x.month}`, parseFloat(x.diesel_sum)]));
   const history = await query(`SELECT * FROM transport_monthly_history ORDER BY fy_start_year, month`);
 
   const portalMap = new Map(portal.rows.map(x => [`${x.year}-${x.month}`, { ...x, fy_start_year: x.month >= 4 ? x.year : x.year - 1, source: 'portal',
-    diesel_price: dieselMap.get(`${x.year}-${x.month}`) ?? null }]));
+    diesel_price: dieselMap.get(`${x.year}-${x.month}`) ?? null, diesel_sum: dieselSumMap.get(`${x.year}-${x.month}`) ?? null }]));
   const histMap = new Map(history.rows.map(h => {
     const year = h.month >= 4 ? h.fy_start_year : h.fy_start_year + 1;
-    return [`${year}-${h.month}`, { ...h, year, source: h.source ? `history (${h.source})` : 'history', total_km: h.total_km }];
+    return [`${year}-${h.month}`, { ...h, year, source: h.source ? `history (${h.source})` : 'history', total_km: h.total_km,
+      diesel_sum: h.diesel_price == null ? null : parseFloat(h.diesel_price) * 2 }];
   }));
   const monthRow = (fyYear, m) => {
     const year = m >= 4 ? fyYear : fyYear + 1;
@@ -1737,7 +1743,8 @@ async function cumulativeData(q) {
     const ytd = monthMetrics({ year: y, month: 4, fy_start_year: y, source: 'ytd', trips: sum('trips'),
       capacity_litres: sum('capacity_litres'), milk_litres: sum('milk_litres'), milk_kgs: sum('milk_kgs'), kg_fat: sum('kg_fat'), kg_snf: sum('kg_snf'),
       total_km: sum('total_km'), amount: sum('amount'),
-      diesel_price: (() => { const d = rows.filter(r => r.diesel_price != null); return d.length ? d.reduce((s, r) => s + r.diesel_price, 0) / d.length : null; })() });
+      diesel_price: (() => { const d = rows.filter(r => r.diesel_price != null); return d.length ? d.reduce((s, r) => s + r.diesel_price, 0) / d.length : null; })(),
+      diesel_sum: (() => { const d = rows.filter(r => r.diesel_sum != null); return d.length ? d.reduce((s, r) => s + r.diesel_sum, 0) : null; })() });
     ytd.month_name = 'YTD';
     ytd.milk_per_day = rN(sum('milk_litres') / rows.filter(r => r.trips > 0).reduce((s, r) => s + new Date(Date.UTC(r.year, r.month, 0)).getUTCDate(), 0) || 0);
     return { fy_start_year: y, fy_label: fyLabel(y), months: rows, ytd };
@@ -1876,16 +1883,25 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     sheet('Vendor Wise', d.vendors, 'Vendor', 'vendor_name', 'tankers', true);
 
     // Month Cumulative — the financial year of the From date
-    const MC_HEADS = ['S.NO', 'Month', 'Tankers Capacity in Lits', 'Milk Received From Tankers in Lits', 'Milk Received From Tankers in Kgs',
-      'Fat %', 'Snf %', 'TS %', 'Fat Kgs', 'Snf Kgs', 'Total KM', 'Rate Per KM', 'Amount in RS', 'Cost Per Liter Rs', 'Utilization %',
-      'Total Trips', 'AVG KM', 'Diesel Price (avg ₹/L)', 'Source'];
+    const MC_HEADS = ['S.NO', 'Month Wise', 'Tankers Capacity in Lits', 'Milk Received From Tankers in Lits', 'Milk Received From Tankers in Kgs',
+      'Fat %', 'Snf%', 'TS %', 'Fat Kgs', 'Snf Kgs', 'Total KM', 'Rate Per KM', 'Amount in RS', 'Cost Per Liter Rs', 'Utilization %',
+      'Total Trips', 'AVG KM', 'Disel Price', 'Diesl Rate'];
+    const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const mcRow = (i, m, label) => [i, label, m.capacity_litres, m.milk_litres, m.milk_kgs, m.fat_pct, m.snf_pct, m.ts_pct, m.kg_fat, m.kg_snf,
-      m.total_km, m.rate_per_km, m.amount, m.cost_per_litre, m.utilisation_pct, m.trips || null, m.avg_km, m.diesel_price, m.source || ''];
+      m.total_km, m.rate_per_km, m.amount, m.cost_per_litre, m.utilisation_pct, m.trips || null, m.avg_km, m.diesel_sum, m.diesel_price];
     const ws5 = wb.addWorksheet('Month Cumulative');
-    ws5.addRow([`Month Cumulative — FY ${d.fy_label} · ${statusLabel}`]).font = { bold: true, size: 13 };
-    head(ws5, MC_HEADS);
-    d.months.forEach((m, i) => ws5.addRow(mcRow(i + 1, m, `${m.month_name}'${m.year}`)));
-    if (d.months_total) ws5.addRow(mcRow('', d.months_total, 'TOTAL / YTD')).font = { bold: true };
+    const hr = ws5.addRow(MC_HEADS);
+    hr.font = { bold: true }; hr.height = 60;
+    hr.eachCell(c => { c.alignment = { wrapText: true, horizontal: 'center', vertical: 'middle' }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8CBAD' } }; });
+    ws5.columns.forEach((c, i) => { c.width = i === 0 ? 6 : i === 1 ? 10 : 12; });
+    d.months.forEach((m, i) => ws5.addRow(mcRow(i + 1, m, `${MON3[m.month - 1]}-${String(m.year).slice(2)}`)));
+    if (d.months_total) {
+      const tr = ws5.addRow(mcRow('', d.months_total, ''));
+      tr.font = { bold: true };
+      tr.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFA9D18E' } }; });
+    }
+    ws5.getColumn(2).alignment = { horizontal: 'center' };
+    ws5.views = [{ state: 'frozen', ySplit: 1 }];
 
     // Year Cumulative — metric rows × (month × FY) columns, YTD at the end
     const ws6 = wb.addWorksheet('Year Cumulative');
@@ -1900,7 +1916,7 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     const METRICS = [['Tanker Capacities in Ltrs', 'capacity_litres'], ['Milk Received In Litres', 'milk_litres'], ["Milk Received In KG's", 'milk_kgs'],
       ['FAT%', 'fat_pct'], ['SNF%', 'snf_pct'], ['TS%', 'ts_pct'], ['KG FAT', 'kg_fat'], ['KG SNF', 'kg_snf'], ['Milk Received per day in litres', 'milk_per_day'],
       ['Total KM', 'total_km'], ['Rate Per KM', 'rate_per_km'], ['Amount in RS', 'amount'], ['Cost Per Liter Rs', 'cost_per_litre'],
-      ['Utilization %', 'utilisation_pct'], ['Diesel Prices (avg ₹/L)', 'diesel_price'], ['Number Of Trips', 'trips'], ['Average KMs', 'avg_km']];
+      ['Utilization %', 'utilisation_pct'], ['Diesel Prices', 'diesel_price'], ['Number Of Trips', 'trips'], ['Average KMs', 'avg_km']];
     METRICS.forEach(([label, k]) => {
       const row = [label];
       groups.forEach(g => d.years.forEach(y => { const m = g.idx === 'ytd' ? y.ytd : y.months[g.idx]; row.push(m.trips || m.source ? m[k] : null); }));

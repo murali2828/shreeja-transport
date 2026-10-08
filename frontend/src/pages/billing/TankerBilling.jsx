@@ -1507,7 +1507,7 @@ const MC_COLS = [
   ['Tankers capacity (L)', 'capacity_litres', 0], ['Milk received (L)', 'milk_litres', 0], ['Milk received (kg)', 'milk_kgs', 0],
   ['Fat %', 'fat_pct', 3], ['SNF %', 'snf_pct', 3], ['TS %', 'ts_pct', 3], ['Fat kgs', 'kg_fat', 0], ['SNF kgs', 'kg_snf', 0],
   ['Total KM', 'total_km', 0], ['Rate/KM', 'rate_per_km', 2], ['Amount (₹)', 'amount', 0], ['Cost/Ltr', 'cost_per_litre', 4],
-  ['Util %', 'utilisation_pct', 2], ['Trips', 'trips', 0], ['Avg KM', 'avg_km', 2], ['Diesel ₹/L', 'diesel_price', 2],
+  ['Util %', 'utilisation_pct', 2], ['Trips', 'trips', 0], ['Avg KM', 'avg_km', 2], ['Diesel Price', 'diesel_sum', 2], ['Diesel Rate', 'diesel_price', 2],
 ];
 function CumulativeMonths({ months, total }) {
   const cell = (m, k, d) => m[k] == null ? '—' : nf(m[k], d);
