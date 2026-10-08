@@ -409,6 +409,84 @@ router.get('/summary', authenticate, authorizeOrModule('reports', 'admin', 'plan
   }
 });
 
+// ─── Transport cost drivers: fortnight vs previous fortnight ─────────────────
+// Splits Δcost and Δ₹/L into diesel / km / new BMCUs / closed BMCUs / mix
+// (services/costDrivers.js, Diesel Rates master migration 058). Any period;
+// prev_from / prev_to override the default comparison period.
+const { costDrivers } = require('../services/costDrivers');
+const { fmtDateDisplay } = require('../utils/date');
+const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+const periodError = q => {
+  if (!isDate(q.from) || !isDate(q.to)) return 'from and to are required (YYYY-MM-DD)';
+  if (q.to < q.from) return 'to is before from';
+  if ((q.prev_from || q.prev_to) && !(isDate(q.prev_from) && isDate(q.prev_to) && q.prev_to >= q.prev_from)) return 'prev_from / prev_to must both be valid dates';
+  return null;
+};
+router.get('/cost-drivers', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
+  const { from, to, prev_from, prev_to } = req.query;
+  const fe = periodError(req.query);
+  if (fe) return res.status(400).json({ error: fe });
+  try {
+    res.json(await costDrivers(from, to, prev_from, prev_to));
+  } catch (err) {
+    console.error('[analytics] cost-drivers error:', err);
+    res.status(500).json({ error: 'Failed to build the cost driver analysis' });
+  }
+});
+
+router.get('/cost-drivers/excel', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
+  const { from, to, prev_from, prev_to } = req.query;
+  const fe = periodError(req.query);
+  if (fe) return res.status(400).json({ error: fe });
+  try {
+    const ExcelJS = require('exceljs');
+    const d = await costDrivers(from, to, prev_from, prev_to);
+    const wb = new ExcelJS.Workbook();
+    const head = (ws, cols) => { ws.addRow(cols).font = { bold: true }; ws.columns.forEach(c => { c.width = 16; }); };
+    const blockRows = b => [b.state, b.diesel_prev, b.diesel_curr,
+      b.prev.trips, b.prev.km, b.prev.litres, b.prev.cost, b.prev.per_km, b.prev.per_litre,
+      b.curr.trips, b.curr.km, b.curr.litres, b.curr.cost, b.curr.per_km, b.curr.per_litre,
+      b.delta_cost, b.effects.diesel, b.effects.km, b.effects.new_bmcu, b.effects.closed_bmcu, b.effects.mix,
+      b.delta_per_litre, b.effects_per_litre.diesel, b.effects_per_litre.km, b.effects_per_litre.new_bmcu, b.effects_per_litre.closed_bmcu, b.effects_per_litre.mix, b.effects_per_litre.volume];
+    const HEADS = ['State', 'Diesel prev ₹/L', 'Diesel now ₹/L',
+      'Prev trips', 'Prev km', 'Prev litres', 'Prev cost ₹', 'Prev ₹/km', 'Prev ₹/L',
+      'Trips', 'Km', 'Litres', 'Cost ₹', '₹/km', '₹/L',
+      'Δ cost ₹', 'Diesel ₹', 'Km ₹', 'New BMCUs ₹', 'Closed BMCUs ₹', 'Mix / other ₹',
+      'Δ ₹/L', 'Diesel ₹/L', 'Km ₹/L', 'New BMCUs ₹/L', 'Closed BMCUs ₹/L', 'Mix ₹/L', 'Volume ₹/L'];
+
+    const ws1 = wb.addWorksheet('Summary');
+    ws1.addRow([`Transport cost drivers ${fmtDateDisplay(from)} → ${fmtDateDisplay(to)} vs ${fmtDateDisplay(d.previous.from)} → ${fmtDateDisplay(d.previous.to)}`]).font = { bold: true, size: 13 };
+    ws1.addRow([]);
+    head(ws1, HEADS);
+    ws1.addRow(blockRows(d.overall)).font = { bold: true };
+    for (const b of d.by_state) ws1.addRow(blockRows(b));
+    ws1.addRow([]);
+    for (const n of d.notes) ws1.addRow([n]);
+
+    const ws2 = wb.addWorksheet('BMCU changes');
+    head(ws2, ['Change', 'BMCU code', 'BMCU name', 'First trip ever', 'Last trip', 'Trips (in its period)', 'Km', 'Litres', 'Cost ₹']);
+    for (const b of [...d.new_bmcus, ...d.closed_bmcus]) ws2.addRow([b.kind === 'new' ? 'New' : 'Closed / not served', b.bmcu_code, b.bmcu_name, fmtDateDisplay(b.first_date), fmtDateDisplay(b.last_date), b.trips, b.km, b.litres, b.cost]);
+
+    const tripSheet = (name, rows) => {
+      const ws = wb.addWorksheet(name);
+      head(ws, ['Lifting date', 'Tanker', 'Route', 'Delivery point', 'Capacity L', 'State', 'Transport type', 'BMCUs',
+        'Km', 'Litres', 'Rate ₹/km', 'Cost ₹', 'Cost source', 'Run #', 'Diesel ₹/L', 'Mileage km/L', 'New BMCU', 'Closed BMCU']);
+      for (const t of rows) ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number, t.route_name, t.delivery_point, t.capacity_litres,
+        t.state, t.transport_type, t.n_bmcus, t.km, t.litres, t.rate, t.cost, t.cost_source, t.run_id, t.diesel, t.mileage, t.visits_new_bmcu ? 'Yes' : '', t.visits_closed_bmcu ? 'Yes' : '']);
+    };
+    tripSheet('Trips', d.trips);
+    tripSheet('Previous trips', d.previous_trips);
+
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Disposition', `attachment; filename=cost_drivers_${from}_${to}.xlsx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(Buffer.from(buf));
+  } catch (err) {
+    console.error('[analytics] cost-drivers excel error:', err);
+    res.status(500).json({ error: 'Failed to build the cost driver Excel' });
+  }
+});
+
 // ─── Excel export of the current dashboard view ──────────────────────────────
 router.get('/export', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from, to } = req.query;

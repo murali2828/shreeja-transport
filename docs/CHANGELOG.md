@@ -8,6 +8,8 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
 ### Added
+- Masters → **Diesel Rates** (migration 058, `diesel_rates`): diesel ₹/litre per state per fortnight with history, backfilled from the prices keyed on Tanker Rate Master rows. **Generate rates from diesel** previews the fortnight's Tanker Rate Master rows carried forward from the previous fortnight by purchase's formula (previous rate + Δdiesel ÷ mileage) and writes them only on Confirm (existing rows kept unless Replace is ticked); **Annexure** Excel shows previous vs new rates per state. New tanker rate rows default their diesel price from the master (owner, 2026-10-08).
+- Reports → **Transport Cost Drivers**: pick a fortnight, month, FY quarter, financial year or custom range and compare with the previous period, the same period last year or a custom one; the change in ₹/litre (or amount) is split into diesel price, kilometres, new BMCUs, closed BMCUs, mix / other and volume, per state and overall, with the BMCUs added / no longer served listed; Excel with trip-level detail (`GET /api/analytics/cost-drivers`, `services/costDrivers.js`) (owner, 2026-10-08).
 - Roles: **Read-only** switch (migration 057, `roles.read_only`; the built-in viewer is read-only and stays so). A user whose roles are all read-only can view the modules those roles tick but every create / change is refused by the auth gates; the login response carries `read_only` so the menu hides create actions and billing opens without edit controls. Lets finance / MIS get a role with billing + reports that only looks (owner, 2026-10-07).
 
 ### Security

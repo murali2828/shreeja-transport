@@ -48,6 +48,7 @@ import LiveTracking         from './pages/execution/LiveTracking';
 // Reports
 import DailyTSReport   from './pages/reports/DailyTSReport';
 import Analytics       from './pages/reports/Analytics';
+import CostDrivers     from './pages/reports/CostDrivers';
 import TankerRates     from './pages/masters/TankerRates';
 import DieselRates     from './pages/masters/DieselRates';
 import TankerBilling   from './pages/billing/TankerBilling';
@@ -192,6 +193,7 @@ function AppRoutes() {
         }/>
         <Route path="reports" element={<ProtectedRoute module="reports"><DailyTSReport/></ProtectedRoute>}/>
         <Route path="reports/analytics" element={<ProtectedRoute module="reports"><Analytics/></ProtectedRoute>}/>
+        <Route path="reports/cost-drivers" element={<ProtectedRoute module="reports"><CostDrivers/></ProtectedRoute>}/>
         <Route path="reports/bmcu-breakup" element={<ProtectedRoute module="reports"><BmcuBreakup/></ProtectedRoute>}/>
         <Route path="reports/trip-durations" element={<ProtectedRoute module="reports"><TripDurations/></ProtectedRoute>}/>
         <Route path="reports/day-utilisation" element={<ProtectedRoute module="reports"><DayUtilisation/></ProtectedRoute>}/>
