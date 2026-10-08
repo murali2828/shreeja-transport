@@ -1021,18 +1021,19 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
       const l = +t.milk_litres || 0, cap = +t.capacity_litres || 0;
       ws.addRow([fmtDateDisplay(t.plan_for_date), t.tanker_number, rN(t.capacity_litres / 1000, 1),
         t.vendor_sap_code, t.vendor_name, t.route_name, t.start_point, t.delivery_point,
-        rN(t.milk_litres), rN(t.milk_kgs), rN(t.fat_pct, 3), rN(t.kg_fat, 3), rN(t.snf_pct, 3), rN(t.kg_snf, 3),
+        rN(t.milk_litres), rN(t.milk_kgs), rN(t.fat_pct), rN(t.kg_fat), rN(t.snf_pct), rN(t.kg_snf),
         t.state, t.transport_type,
-        t.billed_km, t.rate_per_km, amt(t), l > 0 ? rN(amt(t) / l, 4) : null, cap > 0 && l > 0 ? rN(l / cap * 100) : null,
+        rN(t.billed_km), rN(t.rate_per_km), rN(amt(t)), l > 0 ? rN(amt(t) / l) : null, cap > 0 && l > 0 ? rN(l / cap * 100) : null,
         bmcuDetails(t.execution_id)]);
     });
     const sumL = rows.reduce((s, t) => s + (+t.milk_litres || 0), 0), sumKg = rows.reduce((s, t) => s + (+t.milk_kgs || 0), 0);
     const sumCap = rows.reduce((s, t) => s + (+t.capacity_litres || 0), 0), sumAmt = rows.reduce((s, t) => s + amt(t), 0);
     const sumKf = rows.reduce((s, t) => s + (+t.kg_fat || 0), 0), sumKs = rows.reduce((s, t) => s + (+t.kg_snf || 0), 0);
     const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '',
-      rN(sumL), rN(sumKg), sumKg > 0 ? rN(sumKf / sumKg * 100, 3) : '', rN(sumKf, 3), sumKg > 0 ? rN(sumKs / sumKg * 100, 3) : '', rN(sumKs, 3), '', '',
+      rN(sumL), rN(sumKg), sumKg > 0 ? rN(sumKf / sumKg * 100) : '', rN(sumKf), sumKg > 0 ? rN(sumKs / sumKg * 100) : '', rN(sumKs), '', '',
       rN(rows.reduce((s, t) => s + (+t.billed_km || 0), 0)), '',
-      rN(sumAmt), sumL > 0 ? rN(sumAmt / sumL, 4) : null, sumCap > 0 && sumL > 0 ? rN(sumL / sumCap * 100) : null, '']);
+      rN(sumAmt), sumL > 0 ? rN(sumAmt / sumL) : null, sumCap > 0 && sumL > 0 ? rN(sumL / sumCap * 100) : null, '']);
+    for (let c = 3; c <= 21; c++) if (c !== 4 && c !== 5 && c !== 6 && c !== 7 && c !== 8 && c !== 15 && c !== 16) ws.getColumn(c).numFmt = '0.00';
     totRow.font = { bold: true };
     return ws;
   };
@@ -1676,10 +1677,10 @@ async function reportData(q) {
     const kgs = parseFloat(r.milk_kgs) || 0, l = parseFloat(r.milk_litres) || 0;
     const amt = parseFloat(r.amount) || 0, km = parseFloat(r.billed_km) || 0;
     const cap = parseFloat(r.capacity_litres) || 0;
-    r.fat_pct = kgs > 0 ? rN(parseFloat(r.kg_fat) / kgs * 100, 3) : null;
-    r.snf_pct = kgs > 0 ? rN(parseFloat(r.kg_snf) / kgs * 100, 3) : null;
+    r.fat_pct = kgs > 0 ? rN(parseFloat(r.kg_fat) / kgs * 100) : null;
+    r.snf_pct = kgs > 0 ? rN(parseFloat(r.kg_snf) / kgs * 100) : null;
     r.rate_avg = km > 0 ? rN(amt / km) : null;
-    r.cost_per_litre = l > 0 ? rN(amt / l, 4) : null;
+    r.cost_per_litre = l > 0 ? rN(amt / l) : null;
     r.utilisation_pct = cap > 0 && l > 0 ? rN(l / cap * 100) : null;
     return r;
   };
@@ -1856,12 +1857,12 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     ws1.addRow([`Tanker Payment Report ${fmtDateDisplay(from)} → ${fmtDateDisplay(to)} · ${statusLabel}`]).font = { bold: true, size: 13 };
     ws1.addRow([]);
     const sum = (rows, k) => rN(rows.reduce((s, r) => s + (+r[k] || 0), 0));
-    const pct = (rows, k, base) => { const b = rows.reduce((s, r) => s + (+r[base] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[k] || 0), 0) / b * 100, 3) : null; };
+    const pct = (rows, k, base) => { const b = rows.reduce((s, r) => s + (+r[base] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[k] || 0), 0) / b * 100) : null; };
     const MILK_HEADS = ['Qty in Lts', 'Qty in Kgs', 'Fat %', 'Fat Kgs', 'SNF %', 'SNF Kgs'];                      // Trip Wise wording
     const MILK_HEADS_AGG = ['Milk Received in Ltrs', "Milk Received in KG's", 'FAT %', "FAT KG's", 'SNF%', "SNF KG's"]; // Date / Tanker Wise wording
-    const milkCells = r => [rN(r.milk_litres), rN(r.milk_kgs), r.fat_pct, rN(r.kg_fat, 3), r.snf_pct, rN(r.kg_snf, 3)];
+    const milkCells = r => [rN(r.milk_litres), rN(r.milk_kgs), r.fat_pct, rN(r.kg_fat), r.snf_pct, rN(r.kg_snf)];
     const milkTotals = rows => [sum(rows, 'milk_litres'), sum(rows, 'milk_kgs'), pct(rows, 'kg_fat', 'milk_kgs'), sum(rows, 'kg_fat'), pct(rows, 'kg_snf', 'milk_kgs'), sum(rows, 'kg_snf')];
-    const ratio = (rows, num, den, d = 2) => { const b = rows.reduce((s, r) => s + (+r[den] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[num] || 0), 0) / b, d) : null; };
+    const ratio = (rows, num, den) => { const b = rows.reduce((s, r) => s + (+r[den] || 0), 0); return b > 0 ? rN(rows.reduce((s, r) => s + (+r[num] || 0), 0) / b) : null; };
     const util = rows => { const c = rows.reduce((s, r) => s + (+r.capacity_litres || 0), 0); return c > 0 ? rN(rows.reduce((s, r) => s + (+r.milk_litres || 0), 0) / c * 100) : null; };
 
     head(ws1, ['S.No', 'Date', 'Run #', 'Run Status', 'Tanker', 'Capacity (KL)', 'SAP Vendor Code', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
@@ -1874,7 +1875,7 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
       ...milkCells(t), t.remarks, t.bmcu_coverage]));
     ws1.addRow(['TOTAL', '', '', '', '', '', '', '', '', '', '', '', '',
       sum(d.trips, 'billed_km'), ratio(d.trips, 'amount', 'billed_km'),
-      sum(d.trips, 'amount'), ratio(d.trips, 'amount', 'milk_litres', 4), util(d.trips), ...milkTotals(d.trips), '', '']).font = { bold: true };
+      sum(d.trips, 'amount'), ratio(d.trips, 'amount', 'milk_litres'), util(d.trips), ...milkTotals(d.trips), '', '']).font = { bold: true };
     ws1.views = [{ state: 'frozen', ySplit: 3 }];
 
     // Milk columns sit after Trips on Date Wise (withCost) and after Total
@@ -1900,7 +1901,7 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
         ...(withCost ? [sum(rows, 'capacity_litres')] : []),
         ...(milkFirst ? milkTotals(rows) : []),
         sum(rows, 'billed_km'), sum(rows, 'amount'),
-        ...(withCost ? [ratio(rows, 'amount', 'billed_km'), ratio(rows, 'amount', 'milk_litres', 4), util(rows)] : []),
+        ...(withCost ? [ratio(rows, 'amount', 'billed_km'), ratio(rows, 'amount', 'milk_litres'), util(rows)] : []),
         ...(withToll ? [sum(rows, 'toll_amount'), sum(rows, 'total_payable')] : []),
         ...(milkLast ? milkTotals(rows) : [])]).font = { bold: true };
     };
