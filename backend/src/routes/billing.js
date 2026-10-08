@@ -1844,26 +1844,32 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
       sum(d.trips, 'amount'), ratio(d.trips, 'amount', 'milk_litres', 4), util(d.trips), ...milkTotals(d.trips), '', '']).font = { bold: true };
     ws1.views = [{ state: 'frozen', ySplit: 3 }];
 
+    // Milk columns sit after Trips on Date Wise (withCost) and after Total
+    // Payable on Tanker Wise (finance's marked workbook, 2026-10-08).
     const sheet = (name, rows, firstHead, firstKey, secondKey, withToll = false, withMilk = false, withCost = false) => {
       const ws = wb.addWorksheet(name);
+      const milkFirst = withMilk && withCost, milkLast = withMilk && !withCost;
       head(ws, [firstHead, secondKey === 'vendor_name' ? 'Vendor' : 'Tankers', 'Trips',
         ...(withCost ? ['Tankers capacity'] : []),
-        ...(withMilk ? MILK_HEADS_AGG : []),
+        ...(milkFirst ? MILK_HEADS_AGG : []),
         'Billed KM', 'Amount (₹)',
         ...(withCost ? ['Rate Per KM', 'Cost Per Ltr', 'Utilization %'] : []),
-        ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : [])]);
+        ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : []),
+        ...(milkLast ? MILK_HEADS_AGG : [])]);
       rows.forEach(r => ws.addRow([firstKey === 'date' ? fmtDateDisplay(r[firstKey]) : r[firstKey], r[secondKey], r.trips,
         ...(withCost ? [rN(r.capacity_litres)] : []),
-        ...(withMilk ? milkCells(r) : []),
+        ...(milkFirst ? milkCells(r) : []),
         rN(r.billed_km), rN(r.amount),
         ...(withCost ? [r.rate_avg, r.cost_per_litre, r.utilisation_pct] : []),
-        ...(withToll ? [rN(r.toll_amount), rN(r.total_payable)] : [])]));
+        ...(withToll ? [rN(r.toll_amount), rN(r.total_payable)] : []),
+        ...(milkLast ? milkCells(r) : [])]));
       ws.addRow(['TOTAL', '', rows.reduce((s, r) => s + (+r.trips || 0), 0),
         ...(withCost ? [sum(rows, 'capacity_litres')] : []),
-        ...(withMilk ? milkTotals(rows) : []),
+        ...(milkFirst ? milkTotals(rows) : []),
         sum(rows, 'billed_km'), sum(rows, 'amount'),
         ...(withCost ? [ratio(rows, 'amount', 'billed_km'), ratio(rows, 'amount', 'milk_litres', 4), util(rows)] : []),
-        ...(withToll ? [sum(rows, 'toll_amount'), sum(rows, 'total_payable')] : [])]).font = { bold: true };
+        ...(withToll ? [sum(rows, 'toll_amount'), sum(rows, 'total_payable')] : []),
+        ...(milkLast ? milkTotals(rows) : [])]).font = { bold: true };
     };
     sheet('Date Wise', d.dates, 'Date', 'date', 'tankers', false, true, true);
     sheet('Tanker Wise', d.tankers, 'Tanker', 'tanker_number', 'vendor_name', true, true);
