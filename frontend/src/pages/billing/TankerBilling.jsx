@@ -1352,21 +1352,20 @@ function PaymentReport() {
     return { from: `${month}-01`, to: `${month}-${end}` };
   };
   const [status, setStatus] = useState('approved');
-  const [tanker, setTanker] = useState('');
-  const [vendor, setVendor] = useState('');
   const [tab, setTab] = useState('vendors');
   const [params, setParams] = useState(null); // executed filters
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError, error } = useQuery({
     queryKey: ['billing-report', params],
     queryFn: () => api.get('/billing/report-data', { params }).then(r => r.data),
     enabled: !!params,
+    retry: false,
   });
 
   const run = () => {
     const pd = periodDates();
     if (!pd) return toast.error('Select the month');
-    setParams({ from: pd.from, to: pd.to, status, tanker: tanker || undefined, vendor: vendor || undefined });
+    setParams({ from: pd.from, to: pd.to, status });
   };
   const excel = () => {
     if (!params) return toast.error('Run the report first');
@@ -1375,11 +1374,12 @@ function PaymentReport() {
       const a = document.createElement('a');
       a.href = url; a.download = `tanker_payment_report_${params.from}_${params.to}.xlsx`; a.click();
       URL.revokeObjectURL(url);
+    }).catch(async e => {
+      let msg = e.message;
+      try { msg = JSON.parse(await e.response?.data?.text?.())?.error || msg; } catch { /* not JSON */ }
+      toast.error(msg);
     });
   };
-
-  const tankerOpts = [...new Set((data?.tankers || []).map(t => t.tanker_number))];
-  const vendorOpts = [...new Set((data?.vendors || []).map(v => v.vendor_name))];
   const rows = tab === 'dates' ? data?.dates : tab === 'tankers' ? data?.tankers : tab === 'vendors' ? data?.vendors : null;
 
   return (
@@ -1397,18 +1397,6 @@ function PaymentReport() {
           <select className="input mt-1" value={status} onChange={e => setStatus(e.target.value)}>
             <option value="approved">Approved only (payable)</option>
             <option value="all">All runs (any status)</option>
-          </select>
-        </label>
-        <label>Tanker
-          <select className="input mt-1" value={tanker} onChange={e => setTanker(e.target.value)}>
-            <option value="">All</option>
-            {tankerOpts.map(t => <option key={t}>{t}</option>)}
-          </select>
-        </label>
-        <label>Vendor
-          <select className="input mt-1" value={vendor} onChange={e => setVendor(e.target.value)}>
-            <option value="">All</option>
-            {vendorOpts.map(v => <option key={v}>{v}</option>)}
           </select>
         </label>
         <button className="btn-primary text-xs" onClick={run}>{isFetching ? 'Loading…' : 'Run Report'}</button>
@@ -1529,6 +1517,7 @@ function PaymentReport() {
         </>
       )}
       {!data && params && isFetching && <div className="text-white/90 text-sm">Loading…</div>}
+      {isError && <div className="card p-3 text-sm text-red-600">{error?.response?.data?.error || error?.message}</div>}
     </div>
   );
 }

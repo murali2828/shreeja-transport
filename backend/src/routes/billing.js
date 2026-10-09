@@ -1674,10 +1674,9 @@ router.post('/decide', async (req, res) => {
 // the amounts finance can actually pay.
 async function reportData(q) {
   const params = [q.from, q.to];
+  // Tanker / vendor filters were dropped from this report (owner, 2026-10-09).
   const cond = ['t.plan_for_date BETWEEN $1 AND $2', 't.excluded = FALSE'];
   if ((q.status || 'approved') !== 'all') { params.push('approved'); cond.push(`br.status = $${params.length}`); }
-  if (q.tanker) { params.push(q.tanker); cond.push(`t.tanker_number = $${params.length}`); }
-  if (q.vendor) { params.push(q.vendor); cond.push(`COALESCE(t.vendor_name,'— No vendor mapped —') = $${params.length}`); }
   const where = 'WHERE ' + cond.join(' AND ');
   const base = `FROM billing_run_trips t JOIN billing_runs br ON br.id = t.run_id ${where}`;
 
@@ -1703,7 +1702,8 @@ async function reportData(q) {
            (SELECT string_agg(b.bmcu_code || ' - ' || b.bmcu_name, ' → ' ORDER BY teb.seq_no)
               FROM trip_execution_bmcus teb JOIN bmcus b ON b.id = teb.bmcu_id
              WHERE teb.execution_id = t.execution_id AND teb.is_deleted = FALSE) AS bmcu_coverage
-    ${baseAck} LEFT JOIN vendors v ON v.id = t.vendor_id
+    FROM billing_run_trips t JOIN billing_runs br ON br.id = t.run_id
+    LEFT JOIN vendors v ON v.id = t.vendor_id ${ackJoin} ${where}
     ORDER BY t.plan_for_date, t.tanker_number`, params);
   const dates = await query(`
     SELECT t.plan_for_date::text AS date, COUNT(*)::int AS trips,
@@ -1732,10 +1732,8 @@ async function reportData(q) {
     const tankerVendor = new Map(trips.rows.map(t => [t.tanker_number, t.vendor_name]));
     const tollByTanker = new Map(), tollByVendor = new Map();
     for (const tl of tollQ.rows) {
-      if (q.tanker && tl.tanker_number !== q.tanker) continue;
       const vn = tankerVendor.get(tl.tanker_number);
-      if (vn === undefined) continue;             // tanker filtered out of this report
-      if (q.vendor && vn !== q.vendor) continue;
+      if (vn === undefined) continue;             // tanker has no trips in this report
       const amt = parseFloat(tl.amount) || 0;
       tollByTanker.set(tl.tanker_number, (tollByTanker.get(tl.tanker_number) || 0) + amt);
       tollByVendor.set(vn, (tollByVendor.get(vn) || 0) + amt);
@@ -1758,9 +1756,7 @@ async function reportData(q) {
       r.trips++; r.tankers.add(t.tanker_number); r.billed_km += parseFloat(t.billed_km) || 0; r.amount += parseFloat(t.amount) || 0;
     }
     for (const tl of tollQ.rows) {
-      if (q.tanker && tl.tanker_number !== q.tanker) continue;
-      const vn = tankerVendor.get(tl.tanker_number);
-      if (vn === undefined || (q.vendor && vn !== q.vendor)) continue;
+      if (tankerVendor.get(tl.tanker_number) === undefined) continue;
       const r = byRun.get(tl.run_id); if (r) r.toll_amount += parseFloat(tl.amount) || 0;
     }
     fortnights = [...byRun.values()].sort((a, b) => a.from_date.localeCompare(b.from_date) || a.run_id - b.run_id)
@@ -1818,8 +1814,6 @@ async function cumulativeData(q) {
   const params = [];
   const cond = ['t.excluded = FALSE'];
   if ((q.status || 'approved') !== 'all') { params.push('approved'); cond.push(`br.status = $${params.length}`); }
-  if (q.tanker) { params.push(q.tanker); cond.push(`t.tanker_number = $${params.length}`); }
-  if (q.vendor) { params.push(q.vendor); cond.push(`COALESCE(t.vendor_name,'— No vendor mapped —') = $${params.length}`); }
   const portal = await query(`
     SELECT EXTRACT(YEAR FROM t.plan_for_date)::int AS year, EXTRACT(MONTH FROM t.plan_for_date)::int AS month,
            COUNT(*)::int AS trips, SUM(t.capacity_litres) AS capacity_litres, SUM(t.billed_km) AS total_km, SUM(t.amount) AS amount,
