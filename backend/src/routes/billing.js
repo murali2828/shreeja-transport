@@ -911,6 +911,47 @@ router.get('/runs/:id/tolls/:tollId/file', authenticate, authorizeOrModule('bill
   } catch (err) { res.status(500).json({ error: 'Failed to download challan' }); }
 });
 
+// Portal look for every sheet of a workbook (same palette as the Tanker Rates
+// template): blue title band (rows starting with titlePrefix), light-blue bold
+// header with borders, zebra rows, yellow bold TOTAL, header frozen, columns
+// fitted. Sheets named in `skip` keep their own formatting.
+function stylePortalWorkbook(wb, titlePrefix, skip = []) {
+  const FILL = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
+  const thin = { style: 'thin', color: { argb: 'FFBFC7D1' } };
+  const BOX = { top: thin, bottom: thin, left: thin, right: thin };
+  wb.eachSheet(ws => {
+    if (skip.includes(ws.name)) return;
+    const titleRow = String(ws.getRow(1).getCell(1).value || '').startsWith(titlePrefix) ? 1 : 0;
+    const headerRow = titleRow ? 3 : 1;
+    const cols = ws.getRow(headerRow).cellCount;
+    if (titleRow) {
+      ws.mergeCells(1, 1, 1, Math.max(cols, 2));
+      const t = ws.getCell(1, 1);
+      t.fill = FILL('FF005BA3'); t.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+      t.alignment = { vertical: 'middle' }; ws.getRow(1).height = 22;
+    }
+    const h = ws.getRow(headerRow);
+    h.height = 30;
+    for (let c = 1; c <= cols; c++) {
+      const cell = h.getCell(c);
+      cell.fill = FILL('FFDCE9F7'); cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } };
+      cell.border = BOX; cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    }
+    for (let r = headerRow + 1; r <= ws.rowCount; r++) {
+      const row = ws.getRow(r);
+      const isTotal = String(row.getCell(1).value || '').toUpperCase() === 'TOTAL';
+      for (let c = 1; c <= cols; c++) {
+        const cell = row.getCell(c);
+        cell.border = BOX;
+        if (isTotal) { cell.fill = FILL('FFFFF9C4'); cell.font = { bold: true }; }
+        else if ((r - headerRow) % 2 === 0) cell.fill = FILL('FFF5F8FC');
+      }
+    }
+    ws.views = [{ state: 'frozen', ySplit: headerRow }];
+    autoWidth(ws, { skipRows: titleRow ? 2 : 0 });
+  });
+}
+
 // ── Summaries (tanker-wise / vendor-wise) ────────────────────────────────────
 async function runSummaries(runId, { vendorIds } = {}) {
   const scoped = Array.isArray(vendorIds) && vendorIds.length > 0;
@@ -992,7 +1033,6 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     WHERE t.run_id=$1 ${scoped ? 'AND t.vendor_id = ANY($2)' : ''}
     ORDER BY t.plan_for_date, t.tanker_number`, scoped ? [runId, vendorIds] : [runId])).rows;
   const { tankers, vendors, dates } = await runSummaries(runId, { vendorIds });
-  const approvals = (await query('SELECT level, approver_email, status, remarks, decided_at FROM billing_run_approvals WHERE run_id=$1 ORDER BY level', [runId])).rows;
 
   // BMCU details per trip (code + name, in pickup order) for the Trip Wise
   // sheet's "BMCU Details" column — bmcu_count alone doesn't name the plants.
@@ -1076,18 +1116,6 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     kg > 0 ? rN(sumOf(rows, 'kg_fat') / kg * 100) : null, rN(sumOf(rows, 'kg_fat')), kg > 0 ? rN(sumOf(rows, 'kg_snf') / kg * 100) : null, rN(sumOf(rows, 'kg_snf'))]; };
   const costCells = (amt, km, l, cap) => [km > 0 ? rN(amt / km) : null, l > 0 ? rN(amt / l) : null, cap > 0 && l > 0 ? rN(l / cap * 100) : null];
 
-  // Date Wise — second sheet, finance layout (marked workbook, 2026-10-08).
-  const wsD = wb.addWorksheet('Date Wise');
-  wsD.addRow([`Tanker Payment Billing — Run #${runId} · ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} · Status: ${run.status}`]).font = { bold: true, size: 13 };
-  wsD.addRow([]);
-  head(wsD, ['Date', 'Tankers', 'Trips', 'Tankers capacity', ...MILK_HEADS_AGG, 'Billed KM', 'Amount (₹)', 'Rate Per KM', 'Cost Per Ltr', 'Utilization %']);
-  dates.forEach(d => wsD.addRow([fmtDateDisplay(d.date), d.tankers, d.trips, rN(d.capacity_litres), ...milkCells(d),
-    rN(d.billed_km), rN(d.amount), ...costCells(+d.amount || 0, +d.billed_km || 0, +d.milk_litres || 0, +d.capacity_litres || 0)]));
-  wsD.addRow(['TOTAL', '', dates.reduce((s, d) => s + d.trips, 0), rN(sumOf(dates, 'capacity_litres')), ...milkTotals(dates),
-    rN(sumOf(dates, 'billed_km')), rN(sumOf(dates, 'amount')),
-    ...costCells(sumOf(dates, 'amount'), sumOf(dates, 'billed_km'), sumOf(dates, 'milk_litres'), sumOf(dates, 'capacity_litres'))]).font = { bold: true };
-  for (let c = 4; c <= 15; c++) wsD.getColumn(c).numFmt = '0.00';
-
   const ws2 = wb.addWorksheet('Tanker Wise');
   head(ws2, ['Tanker', 'Vendor', 'Trips', 'Billed KM', 'Amount (₹)', 'Toll (₹)', 'Total Payable (₹)', ...MILK_HEADS_AGG]);
   tankers.forEach(t => ws2.addRow([t.tanker_number, t.vendor_name, t.trips, rN(t.billed_km), rN(t.amount), rN(t.toll_amount), rN(t.total_payable), ...milkCells(t)]));
@@ -1117,46 +1145,20 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     wsT.addRow([`Toll challans pending for ${pendingTolls.length} tanker(s) — to be uploaded and paid in the next cycle: ${pendingTolls.join(', ')}`]).font = { italic: true };
   }
 
-  const ws4 = wb.addWorksheet('Approvals');
-  head(ws4, ['Level', 'Approver', 'Status', 'Remarks', 'Decided At']);
-  approvals.forEach(a => ws4.addRow([a.level, a.approver_email, a.status, a.remarks, a.decided_at ? new Date(a.decided_at).toLocaleString('en-IN') : '']));
+  // Date Wise — after Toll Challans (owner, 2026-10-09), finance layout.
+  const wsD = wb.addWorksheet('Date Wise');
+  wsD.addRow([`Tanker Payment Billing — Run #${runId} · ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} · Status: ${run.status}`]).font = { bold: true, size: 13 };
+  wsD.addRow([]);
+  head(wsD, ['Date', 'Tankers', 'Trips', 'Tankers capacity', ...MILK_HEADS_AGG, 'Billed KM', 'Amount (₹)', 'Rate Per KM', 'Cost Per Ltr', 'Utilization %']);
+  dates.forEach(d => wsD.addRow([fmtDateDisplay(d.date), d.tankers, d.trips, rN(d.capacity_litres), ...milkCells(d),
+    rN(d.billed_km), rN(d.amount), ...costCells(+d.amount || 0, +d.billed_km || 0, +d.milk_litres || 0, +d.capacity_litres || 0)]));
+  wsD.addRow(['TOTAL', '', dates.reduce((s, d) => s + d.trips, 0), rN(sumOf(dates, 'capacity_litres')), ...milkTotals(dates),
+    rN(sumOf(dates, 'billed_km')), rN(sumOf(dates, 'amount')),
+    ...costCells(sumOf(dates, 'amount'), sumOf(dates, 'billed_km'), sumOf(dates, 'milk_litres'), sumOf(dates, 'capacity_litres'))]).font = { bold: true };
+  for (let c = 4; c <= 15; c++) wsD.getColumn(c).numFmt = '0.00';
 
-  // Portal look for every sheet (same palette as the Tanker Rates template):
-  // blue title band, light-blue bold header with borders, zebra rows, yellow
-  // bold TOTAL, header frozen.
-  const FILL = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
-  const thin = { style: 'thin', color: { argb: 'FFBFC7D1' } };
-  const BOX = { top: thin, bottom: thin, left: thin, right: thin };
-  wb.eachSheet(ws => {
-    const titleRow = String(ws.getRow(1).getCell(1).value || '').startsWith('Tanker Payment Billing') ? 1 : 0;
-    const headerRow = titleRow ? 3 : 1;
-    const cols = ws.getRow(headerRow).cellCount;
-    if (titleRow) {
-      ws.mergeCells(1, 1, 1, Math.max(cols, 2));
-      const t = ws.getCell(1, 1);
-      t.fill = FILL('FF005BA3'); t.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
-      t.alignment = { vertical: 'middle' }; ws.getRow(1).height = 22;
-    }
-    const h = ws.getRow(headerRow);
-    h.height = 30;
-    for (let c = 1; c <= cols; c++) {
-      const cell = h.getCell(c);
-      cell.fill = FILL('FFDCE9F7'); cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } };
-      cell.border = BOX; cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    }
-    for (let r = headerRow + 1; r <= ws.rowCount; r++) {
-      const row = ws.getRow(r);
-      const isTotal = String(row.getCell(1).value || '').toUpperCase() === 'TOTAL';
-      for (let c = 1; c <= cols; c++) {
-        const cell = row.getCell(c);
-        cell.border = BOX;
-        if (isTotal) { cell.fill = FILL('FFFFF9C4'); cell.font = { bold: true }; }
-        else if ((r - headerRow) % 2 === 0) cell.fill = FILL('FFF5F8FC');
-      }
-    }
-    ws.views = [{ state: 'frozen', ySplit: headerRow }];
-    autoWidth(ws, { skipRows: titleRow ? 2 : 0 });
-  });
+
+  stylePortalWorkbook(wb, 'Tanker Payment Billing');
   return { wb, run, trips, tankers, vendors };
 }
 
@@ -2080,8 +2082,17 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     }
     ws6.getColumn(1).width = 30;
     ws6.views = [{ state: 'frozen', xSplit: 1, ySplit: 3 }];
-    wb.eachSheet(ws => autoWidth(ws, { skipRows: ws === ws1 ? 2 : ws === ws6 ? 1 : 0 }));
+    stylePortalWorkbook(wb, 'Tanker Payment Report', ['Month Cumulative', 'Year Cumulative']);
+    autoWidth(ws5); autoWidth(ws6, { skipRows: 1 });
     ws6.getColumn(1).width = 30;
+    // Date Wise: the fortnight (run) subtotal rows and their toll columns in the TOTAL style.
+    {
+      const wsDW = wb.getWorksheet('Date Wise');
+      for (let r = 4; r <= wsDW.rowCount; r++) {
+        const v = String(wsDW.getRow(r).getCell(1).value || '');
+        if (v.startsWith('Run #')) wsDW.getRow(r).eachCell({ includeEmpty: true }, c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3E0' } }; c.font = { bold: true }; });
+      }
+    }
 
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=tanker_payment_report_${from}_${to}.xlsx`);
