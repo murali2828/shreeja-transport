@@ -56,5 +56,6 @@
 - @docs/DECISIONS.md
 
 ## Current state
+- 2026-10-09: `main` fast-forwarded to 6498824 (migrations 052–059): Quality module + PWA, multiple roles per user, viewer / executor / read-only role alignment, Diesel Rates master (maintained from Tanker Rates), Transport Cost Drivers, Payment Report in the finance format (period picker, cumulative sheets, keyed monthly history), run Excel in the finance layout. Optional env `TANKER_POSITION_USERS`. Post-release: QA01 → role `quality`; FICO01 / FICO03 / MIS01 → a read-only finance role; upload earlier-years history and diesel prices on PROD.
 - 2026-09-20: `qa` at aec6f90 — billing missing-coordinates check, recalc-distances, migration 043 (one live execution per plan), audit log login id. Billing module live on QA (`BILLING_ENABLED=true`), PROD flag pending sign-off. Backups: interim `deploy/backup.sh` set (see docs/BACKUP_RESTORE_STRATEGY.md).
 - Ops docs: @docs/RUNBOOK.md · changes: @docs/CHANGELOG.md · env matrix: @docs/ENVIRONMENTS.md

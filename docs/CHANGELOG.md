@@ -7,6 +7,10 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+_Nothing yet._
+
+## 2026-09-16 → 2026-10-09 — promoted to `main` 2026-10-09 (migrations 045–059)
+
 ### Added
 - Billing → Payment Report in the finance team's format: Trip Wise gains S.No, SAP vendor code (the Vendor master's vendor code), cost per litre, utilisation %, milk received (plant acknowledgement: litres, kgs, fat %, SNF %, kg fat, kg SNF) and BMCU coverage; Date Wise and Tanker Wise carry the milk columns, Date Wise also tanker capacity, rate per km, cost per litre and utilisation; System KM and Google KM dropped from all four sheets (finance marked workbook); the per-run Excel follows the same layout (Trip Wise with SAP code, milk, cost per litre, utilisation, BMCU Details last; Date Wise as the second sheet with capacity, milk and cost columns; Tanker Wise milk columns; portal styling on every sheet); new **Month Cumulative** sheet / tab (every month of the From date's financial year: capacity, milk, fat / SNF / TS %, km, rate per km, amount, cost per litre, utilisation, trips, average km, average diesel ₹/L) and **Year Cumulative** (month × financial year matrix with YTD). Earlier financial years are keyed once through "Upload earlier years" (admin, `transport_monthly_history`, template from the tab); a month present in the portal always wins (owner, 2026-10-08).
 - Diesel ₹/litre per state per fortnight (migration 058, `diesel_rates`) is maintained from **Masters → Tanker Rates**: the template's "Diesel Price" row and the rate form's diesel field fill it on upload / save, and a diesel strip on the page shows and edits the fortnight's prices. The rate list shows the master price where a row has none (owner, 2026-10-08; the separate Diesel Rates page and the generate-from-diesel option were dropped the same day at the owner's request — rates are uploaded from purchase's annexure as before).
