@@ -46,7 +46,8 @@ function autoWidth(ws, { min = 8, max = 60, skipRows = 0 } = {}) {
       widths[c] = Math.max(widths[c] || 0, s.length);
     });
   });
-  widths.forEach((w, c) => { if (w) ws.getColumn(c).width = Math.min(max, Math.max(min, w + 2)); });
+  // +3 and a bold allowance so TOTAL rows never show ########.
+  widths.forEach((w, c) => { if (w) ws.getColumn(c).width = Math.min(max, Math.max(min, Math.ceil(w * 1.1) + 3)); });
 }
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
