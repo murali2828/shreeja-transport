@@ -1433,13 +1433,13 @@ function PaymentReport() {
                         tab === 'tankers' ? 'Vendor' : 'Tankers', 'Trips',
                         'Billed KM', 'Amount (₹)',
                         ...(withToll || tab === 'dates' ? ['Toll (₹)', 'Total Payable (₹)'] : [])]
-                        .map(h => <th key={h} className="px-3 py-2">{h}</th>)}</tr>
+                        .map((h, i) => <th key={h} className={`px-3 py-2 ${i >= 2 ? 'text-right' : ''}`}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {(rows || []).map((r, i) => (
                     <tr key={i} className="border-t border-gray-100">
                       <td className="px-3 py-1.5 font-semibold">{tab === 'dates' ? fmtDateDot(r.date) : (r.tanker_number || r.vendor_name)}</td>
-                      <td className="px-3 py-1.5">{tab === 'tankers' ? r.vendor_name : r.tankers}</td>
+                      <td className={`px-3 py-1.5 ${tab === 'tankers' ? '' : 'text-right'}`}>{tab === 'tankers' ? r.vendor_name : r.tankers}</td>
                       <td className="px-3 py-1.5 text-right">{r.trips}</td>
                       <td className="px-3 py-1.5 text-right">{nf(r.billed_km)}</td>
                       <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.amount)}</td>
@@ -1452,7 +1452,7 @@ function PaymentReport() {
                   {fortnights.map(f => (
                     <tr key={f.run_id} className="bg-amber-50 font-semibold border-t border-amber-200">
                       <td className="px-3 py-1.5 whitespace-nowrap">Run #{f.run_id} · {fmtDateDot(f.from_date)} → {fmtDateDot(f.to_date)}</td>
-                      <td className="px-3 py-1.5">{f.tankers}</td>
+                      <td className="px-3 py-1.5 text-right">{f.tankers}</td>
                       <td className="px-3 py-1.5 text-right">{f.trips}</td>
                       <td className="px-3 py-1.5 text-right">{nf(f.billed_km)}</td>
                       <td className="px-3 py-1.5 text-right text-[#005ba3]">{nf(f.amount)}</td>
@@ -1461,7 +1461,8 @@ function PaymentReport() {
                     </tr>
                   ))}
                   <tr className="bg-blue-100 font-bold">
-                    <td className="px-3 py-2">TOTAL</td><td/>
+                    <td className="px-3 py-2">TOTAL</td>
+                    <td className="px-3 py-2 text-right">{tab === 'tankers' ? '' : (rows || []).reduce((s, r) => s + (+r.tankers || 0), 0)}</td>
                     <td className="px-3 py-2 text-right">{(rows || []).reduce((s, r) => s + (+r.trips || 0), 0)}</td>
                     <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.billed_km || 0), 0))}</td>
                     <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.amount || 0), 0))}</td>
@@ -1481,7 +1482,7 @@ function PaymentReport() {
                   <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
                     <tr>{['Date', 'Run #', 'Status', 'Tanker', 'SAP Code', 'Vendor', 'Route', 'Delivery Point', 'State',
                           'Transport Type', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Qty Lts', 'Qty Kgs', 'Fat %', 'SNF %', 'Cost/Ltr', 'Util %', 'BMCUs', 'Remarks']
-                          .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
+                          .map(h => <th key={h} className={`px-2 py-2 whitespace-nowrap ${['Billed KM', 'Rate/KM', 'Amount (₹)', 'Qty Lts', 'Qty Kgs', 'Fat %', 'SNF %', 'Cost/Ltr', 'Util %'].includes(h) ? 'text-right' : ''}`}>{h}</th>)}</tr>
                   </thead>
                   <tbody>
                     {data.trips.map((t, i) => (
