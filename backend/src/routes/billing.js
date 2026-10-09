@@ -2041,18 +2041,13 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     const mcRow = (i, m, label) => [i, label, m.capacity_litres, m.milk_litres, m.milk_kgs, m.fat_pct, m.snf_pct, m.ts_pct, m.kg_fat, m.kg_snf,
       m.total_km, m.rate_per_km, m.amount, m.cost_per_litre, m.utilisation_pct, m.trips || null, m.avg_km, m.diesel_sum, m.diesel_price];
     const ws5 = wb.addWorksheet('Month Cumulative');
-    const hr = ws5.addRow(MC_HEADS);
-    hr.font = { bold: true }; hr.height = 60;
-    hr.eachCell(c => { c.alignment = { wrapText: true, horizontal: 'center', vertical: 'middle' }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8CBAD' } }; });
-    ws5.columns.forEach((c, i) => { c.width = i === 0 ? 6 : i === 1 ? 10 : 12; });
+    ws5.addRow([`Tanker Payment Report · Month Cumulative FY ${d.fy_label} · ${statusLabel}`]).font = { bold: true, size: 13 };
+    ws5.addRow([]);
+    ws5.addRow(MC_HEADS);
     d.months.forEach((m, i) => ws5.addRow(mcRow(i + 1, m, `${MON3[m.month - 1]}-${String(m.year).slice(2)}`)));
-    if (d.months_total) {
-      const tr = ws5.addRow(mcRow('', d.months_total, ''));
-      tr.font = { bold: true };
-      tr.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFA9D18E' } }; });
-    }
+    if (d.months_total) ws5.addRow(mcRow('TOTAL', d.months_total, '')).font = { bold: true };
+    for (let c = 3; c <= MC_HEADS.length; c++) ws5.getColumn(c).numFmt = [6, 7, 8, 12, 14, 15, 17, 18, 19].includes(c) ? '0.00' : '#,##0.00';
     ws5.getColumn(2).alignment = { horizontal: 'center' };
-    ws5.views = [{ state: 'frozen', ySplit: 1 }];
 
     // Year Cumulative — metric rows × (month × FY) columns, YTD at the end
     const ws6 = wb.addWorksheet('Year Cumulative');
@@ -2060,7 +2055,7 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     const groups = [...FY_MONTHS.map((m, i) => ({ label: d.years[0] ? `${MONTH_NAMES[m - 1]}'${m >= 4 ? '' : ''}` : MONTH_NAMES[m - 1], idx: i })), { label: 'YTD', idx: 'ytd' }];
     const r2 = ['MONTH'], r3 = ['YEAR'];
     groups.forEach(g => { fyLabels.forEach(fl => { r2.push(g.label); r3.push(fl); }); });
-    ws6.addRow([`Year Cumulative · ${statusLabel} · months in the portal come from billing runs, earlier years from the keyed monthly history`]).font = { bold: true, size: 12 };
+    ws6.addRow([`Tanker Payment Report · Year Cumulative · ${statusLabel} · portal months from billing runs, earlier years from the keyed monthly history`]).font = { bold: true, size: 12 };
     ws6.addRow(r2).font = { bold: true };
     ws6.addRow(r3).font = { bold: true };
     groups.forEach((g, gi) => { const c1 = 2 + gi * fyLabels.length; if (fyLabels.length > 1) ws6.mergeCells(2, c1, 2, c1 + fyLabels.length - 1); ws6.getCell(2, c1).alignment = { horizontal: 'center' }; });
@@ -2073,24 +2068,26 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
       groups.forEach(g => d.years.forEach(y => { const m = g.idx === 'ytd' ? y.ytd : y.months[g.idx]; row.push(m.trips || m.source ? m[k] : null); }));
       ws6.addRow(row).getCell(1).font = { bold: true };
     });
-    // Finance's colouring: a fill per month group, YTD green, borders throughout.
-    const GROUP_FILLS = ['FFF8CBAD', 'FFDDEBF7', 'FFE2EFDA', 'FFFFF2CC', 'FFD9D2E9', 'FFFCE4D6', 'FFDEEAF6', 'FFEDEDED', 'FFF4B183', 'FFBDD7EE', 'FFC6E0B4', 'FFFFE699'];
-    const lastRow = 3 + METRICS.length, thin = { style: 'thin', color: { argb: 'FF808080' } };
-    for (let r = 2; r <= lastRow; r++) for (let c = 1; c <= 1 + groups.length * fyLabels.length; c++) {
+    // Portal palette: blue title band, light-blue two-row header, borders,
+    // zebra rows, YTD columns in the TOTAL yellow (same look as the other sheets).
+    const FILL6 = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
+    const thin6 = { style: 'thin', color: { argb: 'FFBFC7D1' } }, BOX6 = { top: thin6, bottom: thin6, left: thin6, right: thin6 };
+    const lastRow = 3 + METRICS.length, lastCol = 1 + groups.length * fyLabels.length;
+    ws6.mergeCells(1, 1, 1, lastCol);
+    ws6.getCell(1, 1).fill = FILL6('FF005BA3'); ws6.getCell(1, 1).font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 }; ws6.getRow(1).height = 22;
+    for (let r = 2; r <= lastRow; r++) for (let c = 1; c <= lastCol; c++) {
       const cell = ws6.getCell(r, c);
-      cell.border = { top: thin, bottom: thin, left: thin, right: thin };
-      if (c > 1) {
-        const gi = Math.floor((c - 2) / fyLabels.length);
-        const argb = groups[gi].idx === 'ytd' ? 'FF00B050' : GROUP_FILLS[gi % GROUP_FILLS.length];
-        if (r <= 3 || groups[gi].idx === 'ytd') cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } };
-        if (r <= 3) cell.alignment = { horizontal: 'center' };
-        else cell.numFmt = ['fat_pct', 'snf_pct', 'ts_pct', 'rate_per_km', 'cost_per_litre', 'utilisation_pct', 'diesel_price', 'avg_km'].includes(METRICS[r - 4][1]) ? '0.00' : '#,##0';
-      }
+      cell.border = BOX6;
+      const isYtd = c > 1 && groups[Math.floor((c - 2) / fyLabels.length)].idx === 'ytd';
+      if (r <= 3) { cell.fill = FILL6('FFDCE9F7'); cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } }; cell.alignment = { horizontal: 'center', vertical: 'middle' }; }
+      else if (isYtd) { cell.fill = FILL6('FFFFF9C4'); cell.font = { bold: true }; }
+      else if ((r - 3) % 2 === 0) cell.fill = FILL6('FFF5F8FC');
+      if (c > 1 && r > 3) cell.numFmt = ['fat_pct', 'snf_pct', 'ts_pct', 'rate_per_km', 'cost_per_litre', 'utilisation_pct', 'diesel_price', 'avg_km'].includes(METRICS[r - 4][1]) ? '0.00' : '#,##0';
     }
     ws6.getColumn(1).width = 30;
     ws6.views = [{ state: 'frozen', xSplit: 1, ySplit: 3 }];
-    stylePortalWorkbook(wb, 'Tanker Payment Report', ['Month Cumulative', 'Year Cumulative']);
-    autoWidth(ws5); autoWidth(ws6, { skipRows: 1 });
+    stylePortalWorkbook(wb, 'Tanker Payment Report', ['Year Cumulative']);
+    autoWidth(ws6, { skipRows: 1 });
     ws6.getColumn(1).width = 30;
     // Date Wise: the fortnight (run) subtotal rows and their toll columns in the TOTAL style.
     {
