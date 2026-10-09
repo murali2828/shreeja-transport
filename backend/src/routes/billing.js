@@ -939,7 +939,8 @@ function stylePortalWorkbook(wb, titlePrefix, skip = []) {
     }
     for (let r = headerRow + 1; r <= ws.rowCount; r++) {
       const row = ws.getRow(r);
-      const isTotal = String(row.getCell(1).value || '').toUpperCase() === 'TOTAL';
+      const first = String(row.getCell(1).value || '').toUpperCase();
+      const isTotal = first === 'TOTAL' || first.startsWith('GRAND TOTAL') || first.startsWith('TOLL CHALLANS');
       for (let c = 1; c <= cols; c++) {
         const cell = row.getCell(c);
         cell.border = BOX;
@@ -1155,6 +1156,11 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
   wsD.addRow(['TOTAL', '', dates.reduce((s, d) => s + d.trips, 0), rN(sumOf(dates, 'capacity_litres')), ...milkTotals(dates),
     rN(sumOf(dates, 'billed_km')), rN(sumOf(dates, 'amount')),
     ...costCells(sumOf(dates, 'amount'), sumOf(dates, 'billed_km'), sumOf(dates, 'milk_litres'), sumOf(dates, 'capacity_litres'))]).font = { bold: true };
+  // Toll challans of the run (per tanker, never per day) and the grand total
+  // the vendor is paid: trips amount + tolls (owner, 2026-10-09).
+  const runToll = sumOf(tankers, 'toll_amount'), runAmount = sumOf(dates, 'amount');
+  wsD.addRow(['Toll Challans (₹)', '', '', '', '', '', '', '', '', '', '', rN(runToll), '', '', '']).font = { bold: true };
+  wsD.addRow(['GRAND TOTAL (Amount + Toll)', '', '', '', '', '', '', '', '', '', '', rN(runAmount + runToll), '', '', '']).font = { bold: true };
   for (let c = 4; c <= 15; c++) wsD.getColumn(c).numFmt = '0.00';
 
 
