@@ -17,11 +17,11 @@ const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')
 // Column sections (owner, 2026-10-10): colour band per section, light tint on the body cells.
 const SEC = { e: 'bg-slate-100', d: 'bg-sky-100', t: 'bg-green-100', v: 'bg-amber-100', a: 'bg-violet-100', r: 'bg-pink-100', x: 'bg-gray-50' };
 const SEC_BODY = { d: 'bg-sky-50/60', t: 'bg-green-50/60', v: 'bg-amber-50/60', a: 'bg-violet-50/60', r: 'bg-pink-50/60' };
-const SECTIONS = [['Entry', 8, SEC.e], ['Dispatch', 7, SEC.d], ['Truck Sheet (RMRD)', 6, SEC.t], ['Variation', 3, SEC.v],
+const SECTIONS = [['Entry', 8, SEC.e], ['Dispatch', 7, SEC.d], ['Truck Sheet (RMRD)', 7, SEC.t], ['Variation', 3, SEC.v],
   ['Plant Acknowledgement (Logistics)', 6, SEC.a], ['Ack vs RMRD (Truck Sheet)', 5, SEC.r], ['', 2, SEC.x]];
 const HEADS = [['Submitted', 'e'], ['Route', 'e'], ['Lifting', 'e'], ['Tanker', 'e'], ['BMCU', 'e'], ['Comp', 'e'], ['Scale', 'e'], ['Shift', 'e'],
   ['D Lts', 'd'], ['D Fat%', 'd'], ['CLR', 'd'], ['D SNF', 'd'], ['D Kgs', 'd'], ['D KgFat', 'd'], ['D KgSNF', 'd'],
-  ['TS Lts', 't'], ['TS Fat%', 't'], ['TS SNF', 't'], ['TS Kgs', 't'], ['TS KgFat', 't'], ['TS KgSNF', 't'],
+  ['TS Lts', 't'], ['TS Fat%', 't'], ['TS SNF', 't'], ['TS Kgs', 't'], ['TS KgFat', 't'], ['TS KgSNF', 't'], ['MBRT', 't'],
   ['Var Lts', 'v'], ['Var Fat', 'v'], ['Var SNF', 'v'],
   ['Ack Lts', 'a'], ['Ack Kgs', 'a'], ['Ack Fat%', 'a'], ['Ack SNF%', 'a'], ['Ack KgFat', 'a'], ['Ack KgSNF', 'a'],
   ['Ack−RMRD Lts', 'r'], ['Ack−RMRD Kgs', 'r'], ['Ack−RMRD Fat', 'r'], ['Ack−RMRD SNF', 'r'], ['Ack−Disp Lts', 'r'],
@@ -48,7 +48,7 @@ export default function QaDispatchList() {
     <tr key={label} className={`border-t border-gray-300 font-semibold ${cls}`}>
       <td className="px-2 py-1.5 whitespace-nowrap" colSpan={8}>{label}</td>
       {col(t.d_qty_litres, 0)}{col(t.d_fat_pct)}<td/>{col(t.d_snf_pct)}{col(t.d_qty_kgs)}{col(t.d_kg_fat)}{col(t.d_kg_snf)}
-      {col(t.ts_qty_litres, 0)}{col(t.ts_fat_pct)}{col(t.ts_snf_pct)}{col(t.ts_qty_kgs)}{col(t.ts_kg_fat)}{col(t.ts_kg_snf)}
+      {col(t.ts_qty_litres, 0)}{col(t.ts_fat_pct)}{col(t.ts_snf_pct)}{col(t.ts_qty_kgs)}{col(t.ts_kg_fat)}{col(t.ts_kg_snf)}<td className="px-2 py-1 text-right whitespace-nowrap" title="Lowest MBRT in the group">{t.ts_mbrt_min == null ? '—' : `min ${fx(t.ts_mbrt_min)}`}</td>
       {vcol(t.qty_var_litres)}<td/><td/>
       {t.ack ? <>{col(t.ack.litres, 0)}{col(t.ack.kgs)}{col(t.ack.fat_pct)}{col(t.ack.snf_pct)}{col(t.ack.kg_fat)}{col(t.ack.kg_snf)}
                  {vcol(t.ack_vs_ts_litres)}{vcol(t.ack_vs_ts_kgs)}{vcol(t.ack_vs_ts_fat)}{vcol(t.ack_vs_ts_snf)}{vcol(t.ack_vs_d_litres)}</>
@@ -98,7 +98,7 @@ export default function QaDispatchList() {
                           <td className="px-2 py-1">{r.compartment}</td>
                           {col(r.scale_reading)}<td className="px-2 py-1">{r.shifts || '—'}</td>
                           {col(r.d_qty_litres, 0, 'd')}{col(r.d_fat_pct, 2, 'd')}{col(r.d_clr, 2, 'd')}{col(r.d_snf_pct, 2, 'd')}{col(r.d_qty_kgs, 2, 'd')}{col(r.d_kg_fat, 2, 'd')}{col(r.d_kg_snf, 2, 'd')}
-                          {col(r.ts_qty_litres, 0, 't')}{col(r.ts_fat_pct, 2, 't')}{col(r.ts_snf_pct, 2, 't')}{col(r.ts_qty_kgs, 2, 't')}{col(r.ts_kg_fat, 2, 't')}{col(r.ts_kg_snf, 2, 't')}
+                          {col(r.ts_qty_litres, 0, 't')}{col(r.ts_fat_pct, 2, 't')}{col(r.ts_snf_pct, 2, 't')}{col(r.ts_qty_kgs, 2, 't')}{col(r.ts_kg_fat, 2, 't')}{col(r.ts_kg_snf, 2, 't')}{col(r.ts_mbrt_hours, 2, 't')}
                           {vcol(r.qty_var_litres, 'v')}{vcol(r.fat_var, 'v')}{vcol(r.snf_var, 'v')}
                           {Array.from({ length: 11 }).map((_, k) => <td key={k} className={k < 6 ? SEC_BODY.a : SEC_BODY.r}/>)}
                           <td className="px-2 py-1 whitespace-nowrap">{r.entered_by_name}</td>
@@ -107,7 +107,6 @@ export default function QaDispatchList() {
                             {user?.role === 'admin' && <button className="text-gray-400 hover:text-red-600" onClick={() => window.confirm('Delete this QA entry?') && delMut.mutate(r.id)}><Trash2 size={12}/></button>}
                           </td>
                         </tr>))}
-                      {totRow(`Tanker total · ${tg.tanker_number} · ${fmtDate(tg.lifting_date)}`, tg.totals, 'bg-violet-50')}
                     </Fragment>
                   ))}
                   {totRow(`Route total · ${rg.route}`, rg.totals, 'bg-blue-100')}
