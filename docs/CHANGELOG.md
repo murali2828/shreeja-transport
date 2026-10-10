@@ -7,6 +7,8 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+## 2026-10-10 — promoted to `main` 2026-10-10 (migrations 060–064)
+
 ### Added
 - Quality → **Dispatch & COA**: pick lifting date and tanker; the Milk Dispatch Voucher (delivery challan) and Certificate of Analysis are pre-filled from the QA dispatch entries (litres and milk type per compartment, kg-weighted fat / SNF, lowest MBRT), the plan (route, starting point, delivering plant) and the masters (transporter, driver, Bill-to / Ship-to per delivering plant, seeded for Balaji Dairy); every field editable, dropdowns for milk type, states, tax rates, HSN, COA observations; Save assigns a running challan number `DC/26-27/0001` (editable); Print Dispatch / Print COA reproduce the paper templates (Book Antiqua header, Calibri body, black, A4), reprints marked DUPLICATE (migration 064, `qa_trip_documents`, `delivery_points.bill_to / ship_to`; owner 2026-10-10).
 - QA Dispatch Entry: **Milk type** chips (Cow / Buffalo / Mixed) under the compartment chips, required on new and edited entries (migration 063, `milk_type`); shown as a column in the QA report and Excel (owner, 2026-10-10).
