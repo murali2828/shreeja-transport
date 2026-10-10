@@ -241,3 +241,123 @@ export function printCoa(r) {
     <p style="text-align:right; margin-top:20px;" class="bold">Signature of Despatcher<br/>(In-charge MCC/ QA)</p>
     <div class="small" style="color:#444;">Trip #${esc(d.trip_no)} · Printed ${fmtTs(r.printed_at)} (print #${r.print_no})</div>`);
 }
+
+// ─── QA DISPATCH VOUCHER + COA (migration 064) ───────────────────────────────
+// Reproduce QA's Word templates: A4, black only, Book Antiqua company header,
+// Calibri 9 pt body, Times New Roman for the licence lines.
+const QA_CSS = `
+  * { box-sizing: border-box; }
+  body { margin: 0; color: #000; font-family: Calibri, 'Carlito', Arial, sans-serif; font-size: 9pt; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 1px solid #000; padding: 2px 5px; vertical-align: middle; font-weight: bold; }
+  .ba { font-family: 'Book Antiqua', 'Palatino Linotype', Palatino, serif; }
+  .tnr { font-family: 'Times New Roman', serif; }
+  .c { text-align: center; } .r { text-align: right; } .n { font-weight: normal; }
+  .nb td { border: none; padding: 1px 0; }
+  .dup { border: 2px solid #000; padding: 4px; text-align: center; font-weight: bold; margin-bottom: 6px; font-size: 11pt; }
+  @page { size: A4; margin: 16mm 18mm; }
+`;
+function qaWindow(title, body) {
+  const w = window.open('', '_blank', 'width=900,height=1000');
+  if (!w) return;
+  w.document.write(`<!doctype html><html><head><title>${esc(title)}</title><style>${QA_CSS}</style></head><body>${body}
+    <script>window.onload = function(){ window.print(); };</scr` + `ipt></body></html>`);
+  w.document.close();
+}
+const qaDup = n => (n > 1 ? `<div class="dup">DUPLICATE (print ${n})</div>` : '');
+
+export function printQaDispatch(doc, printNo = 1) {
+  const d = doc.data || {}, bt = d.bill_to || {}, st = d.ship_to || {}, c = d.compartments || {}, it = d.item || {};
+  const cell = (k, f) => esc(c[k]?.[f] ?? '');
+  const L = (label, val) => `<td style="width:17%">${label}</td><td class="n" style="width:16%">${esc(val)}</td>`;
+  const P = (label, val) => `<td style="width:17%">${label}</td><td class="c" style="width:17%">${esc(val)}</td>`;
+  qaWindow(`Dispatch ${doc.challan_no}`, `${qaDup(printNo)}
+    <div class="ba c" style="font-weight:bold;font-size:12pt">SHREEJA MAHILA MILK PRODUCER COMPANY LIMITED<br>
+      Address: 3rd &amp; 4th Floors, Plot No 29 &amp; 30, Bachala Towers, SGS Arts College Road, Tirupati<br>
+      Tel: 0877-2242173, E-Mail: info@shreejamilk.com, Website: shreejamilk.com</div>
+    <div class="tnr" style="font-weight:bold;font-size:12pt;margin-top:4px">FSSAI Lic No.: 10014044000870<br>GST No. AAUCS7586A1ZQ<br>STATE CODE:&nbsp;&nbsp; 37</div>
+    <table class="nb" style="margin:8px 0 4px;font-size:11pt"><tr>
+      <td style="font-weight:bold">Milk Dispatch Voucher: ${esc(doc.challan_no)}</td>
+      <td style="font-weight:bold">Name of the Route: ${esc(d.route_name)}</td></tr>
+      <tr><td style="font-weight:bold" colspan="2">Tanker Number&nbsp;&nbsp;&nbsp;: ${esc(doc.tanker_number || d.vehicle_no)}</td></tr></table>
+    <table style="font-size:11pt;margin-bottom:10px">
+      <tr><th style="width:25%">Description</th><th>Front cell</th><th>Middle cell</th><th>Back cell</th></tr>
+      <tr><td class="n">Milk Type</td><td class="c n">${cell('FC', 'milk_type')}</td><td class="c n">${cell('MC', 'milk_type')}</td><td class="c n">${cell('BC', 'milk_type')}</td></tr>
+      <tr><td class="n">Milk Quantity In Ltrs</td><td class="c n">${cell('FC', 'litres')}</td><td class="c n">${cell('MC', 'litres')}</td><td class="c n">${cell('BC', 'litres')}</td></tr>
+      <tr><td class="n">Seal Number</td><td class="c n">${cell('FC', 'seal_no')}</td><td class="c n">${cell('MC', 'seal_no')}</td><td class="c n">${cell('BC', 'seal_no')}</td></tr>
+    </table>
+    <table>
+      <tr>${L('Delivery Challan Date:', fmtD(d.challan_date))}<td colspan="2" class="c">Details of (Bill to Party)</td><td colspan="2" class="c">Details of (Ship to Party)</td></tr>
+      <tr>${L('Delivery Challan No.:', doc.challan_no)}${P('Name of Bill to Party:', bt.name)}${P('SAP Vendor Code (MD) :', st.sap_vendor_code)}</tr>
+      <tr>${L('Name of Route:', d.route_name)}${P('Customer Code:', bt.customer_code)}${P('Name of Ship to Party :', st.name)}</tr>
+      <tr>${L('Dispatch Center Code:', d.dispatch_center_code)}${P('Address:', bt.address)}${P('Customer Code :', st.customer_code)}</tr>
+      <tr>${L('Address:', d.address)}${P('GSTIN/Unique ID:', bt.gstin)}${P('Address of Delivery:', st.address)}</tr>
+      <tr>${L('Name of Transporter:', d.transporter)}${P('State:', bt.state)}${P('Place of Supply:', st.place_of_supply)}</tr>
+      <tr>${L('Name of Driver:', d.driver)}${P('State Code:', bt.state_code)}${P('GSTIN/Unique ID :', st.gstin)}</tr>
+      <tr>${L('Vehicle No.:', d.vehicle_no)}${P('Address:', '')}${P('State:', st.state)}</tr>
+      <tr>${L('LR No./LR Date:', [d.lr_no, fmtD(d.lr_date)].filter(Boolean).join(' / '))}${P('Date of PO :', fmtD(d.po_date))}${P('State Code:', st.state_code)}</tr>
+    </table>
+    <table style="margin-top:10px">
+      <tr><th rowspan="2" class="c">Sr. No.</th><th rowspan="2">HSN/SAC Code</th><th rowspan="2" class="c">Batch</th><th rowspan="2" class="c">Quantity</th><th rowspan="2" class="c">Value</th>
+        <th colspan="2" class="c">Central Tax</th><th colspan="2" class="c">State Tax/Union Territory Tax</th><th colspan="2" class="c">Integrated Tax</th><th rowspan="2" class="c">Total</th></tr>
+      <tr><th class="c">Rate</th><th class="c">Amt.</th><th class="c">Rate</th><th class="c">Amt.</th><th class="c">Rate</th><th class="c">Amt.</th></tr>
+      <tr><td class="c">1</td><td>${esc(it.hsn)}</td><td class="c">${esc(it.batch)}</td><td class="c">${esc(it.quantity)} ${esc(it.quantity ? it.uom : '')}</td><td class="c">${esc(it.value)}</td>
+        <td class="c">${esc(it.cgst_rate)}</td><td class="c">${esc(it.cgst_amt)}</td><td class="c">${esc(it.sgst_rate)}</td><td class="c">${esc(it.sgst_amt)}</td>
+        <td class="c">${esc(it.igst_rate)}</td><td class="c">${esc(it.igst_amt)}</td><td class="c">${esc(it.total)}</td></tr>
+      <tr><td></td><td class="c" colspan="11">${esc(it.description)}</td></tr>
+    </table>
+    <table class="nb ba" style="margin-top:40px;font-weight:bold;font-size:12pt"><tr><td style="font-weight:bold">Signature:</td><td class="r" style="font-weight:bold">Shreeja Representative</td></tr></table>`);
+}
+
+export const QA_COA_TESTS = [
+  ['seal', 'Seal of Integrity', 'OK/Not'],
+  ['appearance', 'Appearance', '<u>If MM</u> – White to cream color, odour typical of fresh milk. If CM – Cream to slight yellowish color, odour typical of fresh cow milk'],
+  ['cleanliness', 'Cleanliness of Tanker (checked by despatcher)', 'Satisfactory'],
+  ['temperature', 'Temperature', '&lt; = 4 °C'],
+  ['foreign_matter', 'Foreign Matter', 'Absent'],
+  ['fat', 'Fat', 'If CM – 3.20 to 5.50'],
+  ['snf', 'SNF', 'Min 8.00'],
+  ['taste', 'Taste &amp; Flavor (Organoleptic Evaluation)', 'Clean Flavor'],
+  ['acidity', 'Titratable Acidity (as Lactic Acid)', '0.100 - 0.153 %'],
+  ['mbrt', 'Methylene Blue Reduction Time (MBRT)', '&gt; 30 Minutes'],
+  ['cob', 'Clot-On-Boiling (COB) Test', 'Negative'],
+  ['alcohol', 'Alcohol (60 %)', 'Negative'],
+  ['neutralizer', 'Neutralizer (Carbonate, Bicarbonate, Per carbonate, Hydroxides)', 'Negative'],
+  ['urea', 'Urea', 'Negative'],
+  ['ammonium', 'Ammonium Compounds', 'Negative'],
+  ['starch', 'Starch and Cereal Flours', 'Negative'],
+  ['salts', 'Salts (NaCl, KCL)', 'Negative'],
+  ['sucrose', 'Sucrose (Cane Sugar)', 'Negative'],
+  ['glucose', 'Glucose', 'Negative'],
+  ['formalin', 'Formalin', 'Negative'],
+  ['h2o2', 'Hydrogen Peroxide', 'Negative'],
+  ['detergent', 'Anionic Detergent / Detergents', 'Negative'],
+  ['maltodextrin', 'Maltodextrin (By Enzymatic Method)', 'Negative'],
+  ['qac', 'Quaternary Ammonium Compound', 'Negative'],
+  ['br_reading', 'Butyro-Refractrometer (BR) Reading of extracted Fat at 40°C-Top Layer (for Vegetable Oil/Fat)', '40-43'],
+  ['nitrates', 'Nitrates', 'Negative'],
+  ['boric_acid', 'Boric Acid', 'Negative'],
+];
+
+export function printQaCoa(doc, printNo = 1) {
+  const d = doc.data || {}, o = d.coa || {};
+  const rows = QA_COA_TESTS.map(([k, name, limit], i) =>
+    `<tr><td class="c n">${i + 1}</td><td>${name}</td><td${limit.length < 30 ? ' class="c"' : ''}>${limit}</td><td class="c">${esc(o[k])}</td></tr>`).join('');
+  qaWindow(`COA ${doc.challan_no}`, `${qaDup(printNo)}
+    <div class="c" style="font-weight:bold;margin-bottom:8px"><span style="font-size:13.5pt">Certificate of Analysis</span> <span style="font-size:9.5pt">(Annexure to Tanker Challan)</span></div>
+    <table style="font-size:11pt;margin-bottom:8px">
+      <tr><td style="width:45%">Milk Tanker being sent from:</td><td class="n">${esc(d.dispatch_from)}</td></tr>
+      <tr><td>Type of Milk:</td><td class="n">${esc(d.milk_type)}</td></tr>
+      <tr><td>Milk Tanker Regn Number:</td><td class="n">${esc(doc.tanker_number || d.vehicle_no)}</td></tr>
+      <tr><td>Milk Tanker Challan Number:</td><td class="n">${esc(doc.challan_no)}</td></tr>
+      <tr><td style="font-size:10.5pt">Date of dispatch</td><td class="n">${esc(fmtD(d.challan_date))}</td></tr>
+    </table>
+    <table style="font-size:9.5pt">
+      <tr><th class="c" style="width:7%">Sr. No.</th><th style="width:38%"></th><th style="width:30%;font-size:11pt">Acceptance Limit</th><th class="c" style="font-size:12pt">Actual Observation/ Value</th></tr>
+      ${rows}
+    </table>
+    <div style="font-size:11pt;margin-top:8px"><b>Note:1</b>. Rest Values of Tests (like Fat &amp; SNF) are mentioned in the main Tanker Challan<br>
+      <b>2.</b> This milk is being sent for further processing and is not for direct sales<br>
+      <b>3.</b> This document is to be prepared in duplicate; one to be sent as annexure to main copy of challan, and second to be preserved by the dispatch location.</div>
+    <div style="font-size:11pt;font-weight:bold;margin-top:40px">Signature of Despatcher<br>(In-charge MCC/ QA)</div>`);
+}

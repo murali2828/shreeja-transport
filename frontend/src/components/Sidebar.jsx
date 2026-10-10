@@ -7,7 +7,8 @@ import { hasRole, isOnlyRole, rolesLabel, isReadOnly, canEdit } from '../utils/r
 import {
   Truck, LayoutDashboard, MapPin, Route, Users, Settings,
   ClipboardList, Package, Play, CheckSquare, BarChart2, Mail, IndianRupee,
-  ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText, ShieldCheck, Fuel
+  ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText, ShieldCheck, Fuel,
+  Printer,
 } from 'lucide-react';
 
 function NavItem({ to, icon, label, end = false, collapsed = false }) {
@@ -144,6 +145,7 @@ export default function Sidebar({ collapsed = false }) {
         <NavSection label={collapsed ? '' : 'Quality'}>
           {ni('/quality/entry', <ClipboardList size={15}/>, 'QA Dispatch Entry')}
           {ni('/quality/entries', <BarChart2 size={15}/>, 'QA Dispatch Report')}
+          {ni('/quality/documents', <Printer size={15}/>, 'Dispatch & COA')}
         </NavSection>
       )}
 

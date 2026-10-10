@@ -39,6 +39,7 @@ import AcknowledgementForm  from './pages/execution/AcknowledgementForm';
 import MaterialTripForm     from './pages/execution/MaterialTripForm';
 import QaDispatchEntry      from './pages/quality/QaDispatchEntry';
 import QaDispatchList       from './pages/quality/QaDispatchList';
+import QaDocuments          from './pages/quality/QaDocuments';
 import ClosedTrips          from './pages/execution/ClosedTrips';
 import Approvals            from './pages/execution/Approvals';
 import NonTripGatePass      from './pages/execution/NonTripGatePass';
@@ -108,6 +109,7 @@ function AppRoutes() {
         {/* Quality team — module permission 'quality' (migration 052) */}
         <Route path="quality/entry"   element={<ProtectedRoute module="quality"><QaDispatchEntry/></ProtectedRoute>}/>
         <Route path="quality/entries" element={<ProtectedRoute module="quality"><QaDispatchList/></ProtectedRoute>}/>
+        <Route path="quality/documents" element={<ProtectedRoute module="quality"><QaDocuments/></ProtectedRoute>}/>
 
         {/* Masters — admin + planner */}
         <Route path="masters/tankers" element={
