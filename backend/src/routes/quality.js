@@ -325,13 +325,13 @@ router.get('/docs/tankers', ...gate, async (req, res) => {
 });
 
 async function docPrefill(date, tankerId) {
-  const tk = (await query(`SELECT t.id, t.tanker_number, t.driver_name, t.compartments,
+  const tk = (await query(`SELECT t.id, t.tanker_number, t.compartments,
       COALESCE(v.vendor_name, t.vendor_name) AS vendor_name
     FROM tankers t LEFT JOIN vendors v ON v.id = t.vendor_id WHERE t.id = $1`, [tankerId])).rows[0];
   if (!tk) return null;
   const entries = (await query(`SELECT * FROM qa_dispatch_entries WHERE lifting_date = $1 AND tanker_id = $2 ORDER BY id`, [date, tankerId])).rows;
   const plan = (await query(`
-    SELECT rm.route_name, sp.name AS start_point, tp.delivery_point_id
+    SELECT rm.route_name, sp.name AS start_point, tp.delivery_point_id, tp.driver_name
     FROM trip_plans tp
     LEFT JOIN route_masters rm ON rm.id = tp.route_id
     LEFT JOIN starting_points sp ON sp.id = tp.start_point_id
@@ -363,7 +363,7 @@ async function docPrefill(date, tankerId) {
     challan_no: '',
     data: {
       challan_date: date, route_name: routeName, dispatch_center_code: '', dispatch_from: plan.start_point || routeName,
-      transporter: tk.vendor_name || '', driver: tk.driver_name || '', vehicle_no: tk.tanker_number,
+      transporter: tk.vendor_name || '', driver: plan.driver_name || '', vehicle_no: tk.tanker_number,
       lr_no: '', lr_date: '', po_date: '', address: '',
       bill_to: Object.fromEntries(PARTY_KEYS.map(k => [k, dp?.bill_to?.[k] || ''])),
       ship_to: Object.fromEntries(PARTY_KEYS.map(k => [k, dp?.ship_to?.[k] || ''])),

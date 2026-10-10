@@ -60,7 +60,7 @@ export default function QaDocuments() {
   const [busy, setBusy] = useState(false);
 
   const { data: tankers = [] } = useQuery({ queryKey: ['qa-doc-tankers', date], queryFn: () => getQaDocTankers(date).then(r => r.data) });
-  const { data: loaded, isFetching } = useQuery({
+  const { data: loaded, isFetching, isError, error } = useQuery({
     queryKey: ['qa-docs', date, tankerId], enabled: !!tankerId,
     queryFn: () => getQaDocs({ date, tanker_id: tankerId }).then(r => r.data),
   });
@@ -130,6 +130,7 @@ export default function QaDocuments() {
       </div>
 
       {tankerId && isFetching && <div className="text-gray-500">Loading…</div>}
+      {tankerId && isError && <div className="card p-3 text-red-700">Could not load the documents: {error.response?.data?.error || error.message}</div>}
       {doc && !isFetching && (<>
         <div className="flex flex-wrap gap-2 items-center">
           <span className={`text-xs px-2 py-1 rounded ${doc.saved ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
