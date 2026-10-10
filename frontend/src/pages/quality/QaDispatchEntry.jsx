@@ -21,7 +21,7 @@ const pad = v => String(v).padStart(2, '0');
 const addDays = (iso, k) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + k); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 
 const EMPTY = { lifting_date: today(), route_id: '', tanker_id: '', bmcu_id: '', compartment: ['FC'], scale_reading: '', shifts: [],
-  d_qty_litres: '', d_fat_pct: '', d_clr: '', ts_date: '', ts_shift: '', ts_qty_litres: '', ts_fat_pct: '', ts_snf_pct: '', ts_mbrt_hours: '', remarks: '' };
+  d_qty_litres: '', d_fat_pct: '', d_clr: '', ts_date: '', ts_shift: '', ts_qty_litres: '', ts_fat_pct: '', ts_snf_pct: '', ts_mbrt_mins: '', remarks: '' };
 
 export default function QaDispatchEntry() {
   const qc = useQueryClient(); const navigate = useNavigate();
@@ -42,7 +42,7 @@ export default function QaDispatchEntry() {
     setF({ lifting_date: editing.lifting_date, route_id: String(editing.route_id || ''), tanker_id: String(editing.tanker_id), bmcu_id: String(editing.bmcu_id),
       compartment: editing.compartment ? editing.compartment.split(',') : [], scale_reading: editing.scale_reading ?? '', shifts: editing.shifts ? editing.shifts.split(',') : [],
       d_qty_litres: editing.d_qty_litres ?? '', d_fat_pct: editing.d_fat_pct ?? '', d_clr: editing.d_clr ?? '',
-      ts_date: editing.ts_date || '', ts_shift: editing.ts_shift || '', ts_qty_litres: editing.ts_qty_litres ?? '', ts_fat_pct: editing.ts_fat_pct ?? '', ts_snf_pct: editing.ts_snf_pct ?? '', ts_mbrt_hours: editing.ts_mbrt_hours ?? '',
+      ts_date: editing.ts_date || '', ts_shift: editing.ts_shift || '', ts_qty_litres: editing.ts_qty_litres ?? '', ts_fat_pct: editing.ts_fat_pct ?? '', ts_snf_pct: editing.ts_snf_pct ?? '', ts_mbrt_mins: editing.ts_mbrt_mins ?? '',
       remarks: editing.remarks || '' });
   }, [editing]);
 
@@ -153,7 +153,7 @@ export default function QaDispatchEntry() {
             <input className="input w-full py-2" placeholder="e.g. 24M" value={f.ts_shift} onChange={e => set('ts_shift', e.target.value.toUpperCase())}/></label>
         </div>
         {num('ts_qty_litres', 'Qty (Lts)', '0.01', true)}
-        <div className="grid grid-cols-3 gap-3">{num('ts_fat_pct', 'Fat %')}{num('ts_snf_pct', 'SNF %')}{num('ts_mbrt_hours', 'MBRT (hrs)')}</div>
+        <div className="grid grid-cols-3 gap-3">{num('ts_fat_pct', 'Fat %')}{num('ts_snf_pct', 'SNF %')}{num('ts_mbrt_mins', 'MBRT (mins)')}</div>
         <div className="grid grid-cols-3 gap-3">{ro('Qty (Kgs)', tKgs)}{ro('KG Fat', tKgFat)}{ro('KG SNF', tKgSnf)}</div>
       </div>
 

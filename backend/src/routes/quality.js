@@ -55,7 +55,7 @@ async function validate(b) {
     const v = n(b[k]); if (Number.isNaN(v) || (v != null && v < 0)) errs.push(label + ' must be a number');
   }
   if (n(b.d_qty_litres) == null) errs.push('dispatch litres');
-  { const m = n(b.ts_mbrt_hours); if (Number.isNaN(m) || (m != null && (m < 0 || m > 24))) errs.push('MBRT (hours, 0–24)'); }
+  { const m = n(b.ts_mbrt_mins); if (Number.isNaN(m) || (m != null && (m < 0 || m > 1440))) errs.push('MBRT (minutes, 0–1440)'); }
   if (errs.length) return { error: 'Check: ' + errs.join(', ') };
   const tanker = (await query('SELECT id, tanker_number FROM tankers WHERE id=$1', [b.tanker_id])).rows[0];
   const bmcu   = (await query('SELECT id, bmcu_code, bmcu_name FROM bmcus WHERE id=$1', [b.bmcu_id])).rows[0];
@@ -72,12 +72,12 @@ function rowValues(b, { tanker, bmcu, route }, user) {
     normalizeCompartments(b.compartment), n(b.scale_reading), b.shifts ? String(b.shifts).replace(/\s/g, '').toUpperCase() : null,
     d.d_qty_litres, d.d_fat_pct, d.d_clr, d.d_snf_pct, d.d_qty_kgs, d.d_kg_fat, d.d_kg_snf,
     b.ts_date || b.lifting_date, b.ts_shift ? String(b.ts_shift).replace(/\s/g, '').toUpperCase() : null,
-    t.ts_qty_litres, t.ts_fat_pct, t.ts_snf_pct, t.ts_qty_kgs, t.ts_kg_fat, t.ts_kg_snf, n(b.ts_mbrt_hours),
+    t.ts_qty_litres, t.ts_fat_pct, t.ts_snf_pct, t.ts_qty_kgs, t.ts_kg_fat, t.ts_kg_snf, n(b.ts_mbrt_mins),
     String(b.remarks || '').trim() || null, user.id, user.full_name || user.user_id];
 }
 const COLS = `lifting_date, route_id, route_name, tanker_id, tanker_number, bmcu_id, bmcu_code, bmcu_name, compartment, scale_reading, shifts,
   d_qty_litres, d_fat_pct, d_clr, d_snf_pct, d_qty_kgs, d_kg_fat, d_kg_snf,
-  ts_date, ts_shift, ts_qty_litres, ts_fat_pct, ts_snf_pct, ts_qty_kgs, ts_kg_fat, ts_kg_snf, ts_mbrt_hours, remarks, entered_by, entered_by_name`;
+  ts_date, ts_shift, ts_qty_litres, ts_fat_pct, ts_snf_pct, ts_qty_kgs, ts_kg_fat, ts_kg_snf, ts_mbrt_mins, remarks, entered_by, entered_by_name`;
 const withVar = r => ({ ...r, ...variations(r) });
 
 router.post('/entries', ...gate, async (req, res) => {
@@ -173,7 +173,7 @@ function totalsOf(rows) {
   t.ts_fat_pct = t.ts_qty_kgs > 0 ? r2(t.ts_kg_fat / t.ts_qty_kgs * 100) : null;
   t.ts_snf_pct = t.ts_qty_kgs > 0 ? r2(t.ts_kg_snf / t.ts_qty_kgs * 100) : null;
   t.qty_var_litres = r2(t.d_qty_litres - t.ts_qty_litres);
-  const mb = rows.map(r => parseFloat(r.ts_mbrt_hours)).filter(Number.isFinite);
+  const mb = rows.map(r => parseFloat(r.ts_mbrt_mins)).filter(Number.isFinite);
   t.ts_mbrt_min = mb.length ? r2(Math.min(...mb)) : null;      // lowest MBRT = weakest milk in the group
   return t;
 }
@@ -248,7 +248,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
     const thin = { style: 'thin', color: { argb: 'FFBFC7D1' } }, BOX = { top: thin, bottom: thin, left: thin, right: thin };
     const HEADS = ['Submission Date', 'Route Name', 'Milk Lifting Date', 'Tanker No', 'BMCU Code', 'BMCU Name', 'Compartment', 'Scale Reading', 'Shift',
       'Qty Lts (Dispatch)', 'Fat % (Dispatch)', 'CLR (Dispatch)', 'SNF (Dispatch)', 'Qty Kgs (Dispatch)', 'KG Fat (Dispatch)', 'KG SNF (Dispatch)',
-      'Qty Lts (Truck Sheet)', 'Fat % (Truck Sheet)', 'SNF (Truck Sheet)', 'Qty Kgs (Truck Sheet)', 'KG Fat (Truck Sheet)', 'KG SNF (Truck Sheet)', 'MBRT (hrs)',
+      'Qty Lts (Truck Sheet)', 'Fat % (Truck Sheet)', 'SNF (Truck Sheet)', 'Qty Kgs (Truck Sheet)', 'KG Fat (Truck Sheet)', 'KG SNF (Truck Sheet)', 'MBRT (mins)',
       'Qty Variation (Lts)', 'Fat Variation', 'SNF Variation',
       'Ack Qty Lts', 'Ack Qty Kgs', 'Ack Fat %', 'Ack SNF %', 'Ack KG Fat', 'Ack KG SNF',
       'Ack − RMRD Lts', 'Ack − RMRD Kgs', 'Ack − RMRD Fat %', 'Ack − RMRD SNF %', 'Ack − Dispatch Lts',
@@ -284,7 +284,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
         for (const r of tg.rows) {
           const row = ws.addRow([fmtDateDisplay(r.submission_date), r.route_name, fmtDateDisplay(r.lifting_date), r.tanker_number, r.bmcu_code, r.bmcu_name, r.compartment,
             f(r.scale_reading), r.shifts, f(r.d_qty_litres), f(r.d_fat_pct), f(r.d_clr), f(r.d_snf_pct), f(r.d_qty_kgs), f(r.d_kg_fat), f(r.d_kg_snf),
-            f(r.ts_qty_litres), f(r.ts_fat_pct), f(r.ts_snf_pct), f(r.ts_qty_kgs), f(r.ts_kg_fat), f(r.ts_kg_snf), f(r.ts_mbrt_hours),
+            f(r.ts_qty_litres), f(r.ts_fat_pct), f(r.ts_snf_pct), f(r.ts_qty_kgs), f(r.ts_kg_fat), f(r.ts_kg_snf), f(r.ts_mbrt_mins),
             r.qty_var_litres, r.fat_var, r.snf_var, '', '', '', '', '', '', '', '', '', '', '', r.remarks, r.entered_by_name]);
           styleRow(row, (zebra++ % 2) ? 'FFF5F8FC' : null);
           if (zebra % 2 === 0) row.font = { bold: false };

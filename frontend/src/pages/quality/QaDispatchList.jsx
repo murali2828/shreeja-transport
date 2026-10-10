@@ -48,7 +48,7 @@ export default function QaDispatchList() {
     <tr key={label} className={`border-t border-gray-300 font-semibold ${cls}`}>
       <td className="px-2 py-1.5 whitespace-nowrap" colSpan={8}>{label}</td>
       {col(t.d_qty_litres, 0)}{col(t.d_fat_pct)}<td/>{col(t.d_snf_pct)}{col(t.d_qty_kgs)}{col(t.d_kg_fat)}{col(t.d_kg_snf)}
-      {col(t.ts_qty_litres, 0)}{col(t.ts_fat_pct)}{col(t.ts_snf_pct)}{col(t.ts_qty_kgs)}{col(t.ts_kg_fat)}{col(t.ts_kg_snf)}<td className="px-2 py-1 text-right whitespace-nowrap" title="Lowest MBRT in the group">{t.ts_mbrt_min == null ? '—' : `min ${fx(t.ts_mbrt_min)}`}</td>
+      {col(t.ts_qty_litres, 0)}{col(t.ts_fat_pct)}{col(t.ts_snf_pct)}{col(t.ts_qty_kgs)}{col(t.ts_kg_fat)}{col(t.ts_kg_snf)}<td className="px-2 py-1 text-right whitespace-nowrap" title="Lowest MBRT in the group">{t.ts_mbrt_min == null ? '—' : `min ${fx(t.ts_mbrt_min, 0)}`}</td>
       {vcol(t.qty_var_litres)}<td/><td/>
       {t.ack ? <>{col(t.ack.litres, 0)}{col(t.ack.kgs)}{col(t.ack.fat_pct)}{col(t.ack.snf_pct)}{col(t.ack.kg_fat)}{col(t.ack.kg_snf)}
                  {vcol(t.ack_vs_ts_litres)}{vcol(t.ack_vs_ts_kgs)}{vcol(t.ack_vs_ts_fat)}{vcol(t.ack_vs_ts_snf)}{vcol(t.ack_vs_d_litres)}</>
@@ -98,7 +98,7 @@ export default function QaDispatchList() {
                           <td className="px-2 py-1">{r.compartment}</td>
                           {col(r.scale_reading)}<td className="px-2 py-1">{r.shifts || '—'}</td>
                           {col(r.d_qty_litres, 0, 'd')}{col(r.d_fat_pct, 2, 'd')}{col(r.d_clr, 2, 'd')}{col(r.d_snf_pct, 2, 'd')}{col(r.d_qty_kgs, 2, 'd')}{col(r.d_kg_fat, 2, 'd')}{col(r.d_kg_snf, 2, 'd')}
-                          {col(r.ts_qty_litres, 0, 't')}{col(r.ts_fat_pct, 2, 't')}{col(r.ts_snf_pct, 2, 't')}{col(r.ts_qty_kgs, 2, 't')}{col(r.ts_kg_fat, 2, 't')}{col(r.ts_kg_snf, 2, 't')}{col(r.ts_mbrt_hours, 2, 't')}
+                          {col(r.ts_qty_litres, 0, 't')}{col(r.ts_fat_pct, 2, 't')}{col(r.ts_snf_pct, 2, 't')}{col(r.ts_qty_kgs, 2, 't')}{col(r.ts_kg_fat, 2, 't')}{col(r.ts_kg_snf, 2, 't')}{col(r.ts_mbrt_mins, 0, 't')}
                           {vcol(r.qty_var_litres, 'v')}{vcol(r.fat_var, 'v')}{vcol(r.snf_var, 'v')}
                           {Array.from({ length: 11 }).map((_, k) => <td key={k} className={k < 6 ? SEC_BODY.a : SEC_BODY.r}/>)}
                           <td className="px-2 py-1 whitespace-nowrap">{r.entered_by_name}</td>
