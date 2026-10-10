@@ -49,6 +49,7 @@ async function validate(b) {
   if (!ISO.test(b.lifting_date || '')) errs.push('lifting date');
   if (b.ts_date && !ISO.test(b.ts_date)) errs.push('truck sheet date');
   if (!normalizeCompartments(b.compartment)) errs.push('compartment (one or more of FC / MC / BC)');
+  if (!['Cow', 'Buffalo', 'Mixed'].includes(b.milk_type)) errs.push('milk type (Cow / Buffalo / Mixed)');
   if (b.shifts && !SHIFTS.test(String(b.shifts).replace(/\s/g, ''))) errs.push('shifts (e.g. 23E,24M,24E)');
   for (const [k, label] of [['scale_reading', 'scale reading'], ['d_qty_litres', 'dispatch litres'], ['d_fat_pct', 'dispatch fat %'], ['d_clr', 'CLR'],
                             ['ts_qty_litres', 'truck sheet litres'], ['ts_fat_pct', 'truck sheet fat %'], ['ts_snf_pct', 'truck sheet SNF %']]) {
@@ -69,13 +70,13 @@ function rowValues(b, { tanker, bmcu, route }, user) {
   const d = computeDispatch({ qty_litres: b.d_qty_litres, fat_pct: b.d_fat_pct, clr: b.d_clr });
   const t = computeTruckSheet({ qty_litres: b.ts_qty_litres, fat_pct: b.ts_fat_pct, snf_pct: b.ts_snf_pct });
   return [b.lifting_date, route?.id || null, route?.route_name || null, tanker.id, tanker.tanker_number, bmcu.id, bmcu.bmcu_code, bmcu.bmcu_name,
-    normalizeCompartments(b.compartment), n(b.scale_reading), b.shifts ? String(b.shifts).replace(/\s/g, '').toUpperCase() : null,
+    normalizeCompartments(b.compartment), b.milk_type, n(b.scale_reading), b.shifts ? String(b.shifts).replace(/\s/g, '').toUpperCase() : null,
     d.d_qty_litres, d.d_fat_pct, d.d_clr, d.d_snf_pct, d.d_qty_kgs, d.d_kg_fat, d.d_kg_snf,
     b.ts_date || b.lifting_date, b.ts_shift ? String(b.ts_shift).replace(/\s/g, '').toUpperCase() : null,
     t.ts_qty_litres, t.ts_fat_pct, t.ts_snf_pct, t.ts_qty_kgs, t.ts_kg_fat, t.ts_kg_snf, n(b.ts_mbrt_mins),
     String(b.remarks || '').trim() || null, user.id, user.full_name || user.user_id];
 }
-const COLS = `lifting_date, route_id, route_name, tanker_id, tanker_number, bmcu_id, bmcu_code, bmcu_name, compartment, scale_reading, shifts,
+const COLS = `lifting_date, route_id, route_name, tanker_id, tanker_number, bmcu_id, bmcu_code, bmcu_name, compartment, milk_type, scale_reading, shifts,
   d_qty_litres, d_fat_pct, d_clr, d_snf_pct, d_qty_kgs, d_kg_fat, d_kg_snf,
   ts_date, ts_shift, ts_qty_litres, ts_fat_pct, ts_snf_pct, ts_qty_kgs, ts_kg_fat, ts_kg_snf, ts_mbrt_mins, remarks, entered_by, entered_by_name`;
 const withVar = r => ({ ...r, ...variations(r) });
@@ -234,7 +235,7 @@ router.get('/entries', ...gate, async (req, res) => {
 // by route and tanker × lifting date with the plant acknowledgement on each
 // tanker subtotal (owner, 2026-10-10); section-coloured headers.
 const SECTIONS = [
-  ['Entry', 9, 'FFE2E8F0'], ['Dispatch', 7, 'FFDBEAFE'], ['Truck Sheet (RMRD)', 7, 'FFDCFCE7'],
+  ['Entry', 10, 'FFE2E8F0'], ['Dispatch', 7, 'FFDBEAFE'], ['Truck Sheet (RMRD)', 7, 'FFDCFCE7'],
   ['Variation (Dispatch − Truck Sheet)', 3, 'FFFEF3C7'], ['Plant Acknowledgement (Logistics)', 6, 'FFEDE9FE'], ['Ack vs RMRD (Truck Sheet)', 5, 'FFFCE7F3'], ['', 2, 'FFF1F5F9'],
 ];
 router.get('/entries/excel', ...gate, async (req, res) => {
@@ -246,7 +247,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
     const ws = wb.addWorksheet('Tanker Dispatch');
     const FILL = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
     const thin = { style: 'thin', color: { argb: 'FFBFC7D1' } }, BOX = { top: thin, bottom: thin, left: thin, right: thin };
-    const HEADS = ['Submission Date', 'Route Name', 'Milk Lifting Date', 'Tanker No', 'BMCU Code', 'BMCU Name', 'Compartment', 'Scale Reading', 'Shift',
+    const HEADS = ['Submission Date', 'Route Name', 'Milk Lifting Date', 'Tanker No', 'BMCU Code', 'BMCU Name', 'Compartment', 'Milk Type', 'Scale Reading', 'Shift',
       'Qty Lts (Dispatch)', 'Fat % (Dispatch)', 'CLR (Dispatch)', 'SNF (Dispatch)', 'Qty Kgs (Dispatch)', 'KG Fat (Dispatch)', 'KG SNF (Dispatch)',
       'Qty Lts (Truck Sheet)', 'Fat % (Truck Sheet)', 'SNF (Truck Sheet)', 'Qty Kgs (Truck Sheet)', 'KG Fat (Truck Sheet)', 'KG SNF (Truck Sheet)', 'MBRT (mins)',
       'Qty Variation (Lts)', 'Fat Variation', 'SNF Variation',
@@ -272,17 +273,17 @@ router.get('/entries/excel', ...gate, async (req, res) => {
     const ackCells = t => t.ack ? [t.ack.litres, t.ack.kgs, t.ack.fat_pct, t.ack.snf_pct, t.ack.kg_fat, t.ack.kg_snf,
                                    t.ack_vs_ts_litres ?? null, t.ack_vs_ts_kgs ?? null, t.ack_vs_ts_fat ?? null, t.ack_vs_ts_snf ?? null, t.ack_vs_d_litres ?? null]
                                 : ['no trip', '', '', '', '', '', '', '', '', '', ''];
-    const totCells = (label, route, t) => [label, route, '', '', '', '', '', '', '',
+    const totCells = (label, route, t) => [label, route, '', '', '', '', '', '', '', '',
       t.d_qty_litres, t.d_fat_pct, '', t.d_snf_pct, t.d_qty_kgs, t.d_kg_fat, t.d_kg_snf,
       t.ts_qty_litres, t.ts_fat_pct, t.ts_snf_pct, t.ts_qty_kgs, t.ts_kg_fat, t.ts_kg_snf, t.ts_mbrt_min,
       t.qty_var_litres, '', '', ...ackCells(t), '', ''];
     const styleRow = (row, fill) => { for (let k = 1; k <= NC; k++) { const cell = row.getCell(k); cell.border = BOX; if (fill) { cell.fill = FILL(fill); cell.font = { bold: true }; }
-      if (k >= 8 && k <= 37 && typeof cell.value === 'number') cell.numFmt = '#,##0.00'; } };
+      if (k >= 9 && k <= 38 && typeof cell.value === 'number') cell.numFmt = '#,##0.00'; } };
     let zebra = 0;
     for (const rg of rep.routes) {
       for (const tg of rg.tankers) {
         for (const r of tg.rows) {
-          const row = ws.addRow([fmtDateDisplay(r.submission_date), r.route_name, fmtDateDisplay(r.lifting_date), r.tanker_number, r.bmcu_code, r.bmcu_name, r.compartment,
+          const row = ws.addRow([fmtDateDisplay(r.submission_date), r.route_name, fmtDateDisplay(r.lifting_date), r.tanker_number, r.bmcu_code, r.bmcu_name, r.compartment, r.milk_type,
             f(r.scale_reading), r.shifts, f(r.d_qty_litres), f(r.d_fat_pct), f(r.d_clr), f(r.d_snf_pct), f(r.d_qty_kgs), f(r.d_kg_fat), f(r.d_kg_snf),
             f(r.ts_qty_litres), f(r.ts_fat_pct), f(r.ts_snf_pct), f(r.ts_qty_kgs), f(r.ts_kg_fat), f(r.ts_kg_snf), f(r.ts_mbrt_mins),
             r.qty_var_litres, r.fat_var, r.snf_var, '', '', '', '', '', '', '', '', '', '', '', r.remarks, r.entered_by_name]);
@@ -293,7 +294,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
       styleRow(ws.addRow(totCells(`Route total · ${rg.route}`, '', rg.totals)), 'FFDBEAFE');
     }
     styleRow(ws.addRow(totCells('GRAND TOTAL', '', rep.totals)), 'FFFFF9C4');
-    ws.columns.forEach((col, i) => { col.width = i === 0 ? 30 : [5, 37].includes(i) ? 22 : 13; });
+    ws.columns.forEach((col, i) => { col.width = i === 0 ? 30 : [5, 38].includes(i) ? 22 : 13; });
     ws.views = [{ state: 'frozen', ySplit: 3, xSplit: 4 }];
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

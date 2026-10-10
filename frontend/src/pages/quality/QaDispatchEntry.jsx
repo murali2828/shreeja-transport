@@ -20,7 +20,7 @@ const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(
 const pad = v => String(v).padStart(2, '0');
 const addDays = (iso, k) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + k); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 
-const EMPTY = { lifting_date: today(), route_id: '', tanker_id: '', bmcu_id: '', compartment: ['FC'], scale_reading: '', shifts: [],
+const EMPTY = { lifting_date: today(), route_id: '', tanker_id: '', bmcu_id: '', compartment: ['FC'], milk_type: '', scale_reading: '', shifts: [],
   d_qty_litres: '', d_fat_pct: '', d_clr: '', ts_date: '', ts_shift: '', ts_qty_litres: '', ts_fat_pct: '', ts_snf_pct: '', ts_mbrt_mins: '', remarks: '' };
 
 export default function QaDispatchEntry() {
@@ -40,7 +40,7 @@ export default function QaDispatchEntry() {
   useEffect(() => {
     if (!editing) return;
     setF({ lifting_date: editing.lifting_date, route_id: String(editing.route_id || ''), tanker_id: String(editing.tanker_id), bmcu_id: String(editing.bmcu_id),
-      compartment: editing.compartment ? editing.compartment.split(',') : [], scale_reading: editing.scale_reading ?? '', shifts: editing.shifts ? editing.shifts.split(',') : [],
+      compartment: editing.compartment ? editing.compartment.split(',') : [], milk_type: editing.milk_type || '', scale_reading: editing.scale_reading ?? '', shifts: editing.shifts ? editing.shifts.split(',') : [],
       d_qty_litres: editing.d_qty_litres ?? '', d_fat_pct: editing.d_fat_pct ?? '', d_clr: editing.d_clr ?? '',
       ts_date: editing.ts_date || '', ts_shift: editing.ts_shift || '', ts_qty_litres: editing.ts_qty_litres ?? '', ts_fat_pct: editing.ts_fat_pct ?? '', ts_snf_pct: editing.ts_snf_pct ?? '', ts_mbrt_mins: editing.ts_mbrt_mins ?? '',
       remarks: editing.remarks || '' });
@@ -88,6 +88,7 @@ export default function QaDispatchEntry() {
     const miss = [];
     if (!f.lifting_date) miss.push('lifting date'); if (!f.tanker_id) miss.push('tanker'); if (!f.bmcu_id) miss.push('BMCU');
     if (!f.compartment.length) miss.push('at least one compartment');
+    if (!f.milk_type) miss.push('milk type');
     if (f.d_qty_litres === '') miss.push('dispatch litres');
     if (miss.length) { toast.error('Enter: ' + miss.join(', ')); return false; }
     return true;
@@ -129,6 +130,7 @@ export default function QaDispatchEntry() {
         <div><span className="text-[11px] font-semibold text-gray-600">BMCU * {route?.bmcu_ids?.length ? <span className="text-gray-400 font-normal">(★ = on this route)</span> : null}</span>
           <SearchableSelect value={f.bmcu_id} onChange={v => set('bmcu_id', v)} placeholder="Select BMCU…" options={bmcuOptions}/></div>
         <div><span className="text-[11px] font-semibold text-gray-600">Compartment(s) * <span className="text-gray-400 font-normal">tick all the milk went into</span></span>{chips(compartments, f.compartment, toggleComp, true)}</div>
+        <div><span className="text-[11px] font-semibold text-gray-600">Milk type * <span className="text-gray-400 font-normal">milk in the ticked compartment(s)</span></span>{chips(['Cow', 'Buffalo', 'Mixed'], f.milk_type, v => set('milk_type', v))}</div>
         {num('scale_reading', 'Scale reading', '0.01')}
         <div><span className="text-[11px] font-semibold text-gray-600">Shifts</span>
           {chips(shiftChips, f.shifts, toggleShift, true)}
