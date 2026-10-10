@@ -185,8 +185,11 @@ function addAck(a, b) {
 }
 function withAckVar(t, ack) {
   if (!ack || ack.litres == null) return { ...t, ack: ack || null };
+  // Acknowledgement vs RMRD (truck sheet): qty, kgs, fat % and SNF % points.
   return { ...t, ack, ack_vs_ts_litres: r2(ack.litres - t.ts_qty_litres), ack_vs_d_litres: r2(ack.litres - t.d_qty_litres),
-    ack_vs_ts_kgs: r2(ack.kgs - t.ts_qty_kgs) };
+    ack_vs_ts_kgs: r2(ack.kgs - t.ts_qty_kgs),
+    ack_vs_ts_fat: ack.fat_pct != null && t.ts_fat_pct != null ? r2(ack.fat_pct - t.ts_fat_pct) : null,
+    ack_vs_ts_snf: ack.snf_pct != null && t.ts_snf_pct != null ? r2(ack.snf_pct - t.ts_snf_pct) : null };
 }
 function groupReport(rows, acks) {
   const routes = new Map();
@@ -229,7 +232,7 @@ router.get('/entries', ...gate, async (req, res) => {
 // tanker subtotal (owner, 2026-10-10); section-coloured headers.
 const SECTIONS = [
   ['Entry', 9, 'FFE2E8F0'], ['Dispatch', 7, 'FFDBEAFE'], ['Truck Sheet (RMRD)', 6, 'FFDCFCE7'],
-  ['Variation (Dispatch − Truck Sheet)', 3, 'FFFEF3C7'], ['Plant Acknowledgement (Logistics)', 8, 'FFEDE9FE'], ['', 2, 'FFF1F5F9'],
+  ['Variation (Dispatch − Truck Sheet)', 3, 'FFFEF3C7'], ['Plant Acknowledgement (Logistics)', 6, 'FFEDE9FE'], ['Ack vs RMRD (Truck Sheet)', 5, 'FFFCE7F3'], ['', 2, 'FFF1F5F9'],
 ];
 router.get('/entries/excel', ...gate, async (req, res) => {
   try {
@@ -244,7 +247,8 @@ router.get('/entries/excel', ...gate, async (req, res) => {
       'Qty Lts (Dispatch)', 'Fat % (Dispatch)', 'CLR (Dispatch)', 'SNF (Dispatch)', 'Qty Kgs (Dispatch)', 'KG Fat (Dispatch)', 'KG SNF (Dispatch)',
       'Qty Lts (Truck Sheet)', 'Fat % (Truck Sheet)', 'SNF (Truck Sheet)', 'Qty Kgs (Truck Sheet)', 'KG Fat (Truck Sheet)', 'KG SNF (Truck Sheet)',
       'Qty Variation (Lts)', 'Fat Variation', 'SNF Variation',
-      'Ack Qty Lts', 'Ack Qty Kgs', 'Ack Fat %', 'Ack SNF %', 'Ack KG Fat', 'Ack KG SNF', 'Ack − Truck Sheet (Lts)', 'Ack − Dispatch (Lts)',
+      'Ack Qty Lts', 'Ack Qty Kgs', 'Ack Fat %', 'Ack SNF %', 'Ack KG Fat', 'Ack KG SNF',
+      'Ack − RMRD Lts', 'Ack − RMRD Kgs', 'Ack − RMRD Fat %', 'Ack − RMRD SNF %', 'Ack − Dispatch Lts',
       'Remarks', 'Entered By'];
     const NC = HEADS.length;
     ws.mergeCells(1, 1, 1, NC);
@@ -262,14 +266,15 @@ router.get('/entries/excel', ...gate, async (req, res) => {
       cell.fill = FILL(colFill[i + 1]); cell.border = BOX; cell.alignment = { wrapText: true, horizontal: 'center', vertical: 'middle' }; });
     hr.height = 42;
     const f = v => (v == null ? null : parseFloat(v));
-    const ackCells = t => t.ack ? [t.ack.litres, t.ack.kgs, t.ack.fat_pct, t.ack.snf_pct, t.ack.kg_fat, t.ack.kg_snf, t.ack_vs_ts_litres ?? null, t.ack_vs_d_litres ?? null]
-                                : ['no trip', '', '', '', '', '', '', ''];
+    const ackCells = t => t.ack ? [t.ack.litres, t.ack.kgs, t.ack.fat_pct, t.ack.snf_pct, t.ack.kg_fat, t.ack.kg_snf,
+                                   t.ack_vs_ts_litres ?? null, t.ack_vs_ts_kgs ?? null, t.ack_vs_ts_fat ?? null, t.ack_vs_ts_snf ?? null, t.ack_vs_d_litres ?? null]
+                                : ['no trip', '', '', '', '', '', '', '', '', '', ''];
     const totCells = (label, route, t) => [label, route, '', '', '', '', '', '', '',
       t.d_qty_litres, t.d_fat_pct, '', t.d_snf_pct, t.d_qty_kgs, t.d_kg_fat, t.d_kg_snf,
       t.ts_qty_litres, t.ts_fat_pct, t.ts_snf_pct, t.ts_qty_kgs, t.ts_kg_fat, t.ts_kg_snf,
       t.qty_var_litres, '', '', ...ackCells(t), '', ''];
     const styleRow = (row, fill) => { for (let k = 1; k <= NC; k++) { const cell = row.getCell(k); cell.border = BOX; if (fill) { cell.fill = FILL(fill); cell.font = { bold: true }; }
-      if (k >= 8 && k <= 33 && typeof cell.value === 'number') cell.numFmt = '#,##0.00'; } };
+      if (k >= 8 && k <= 36 && typeof cell.value === 'number') cell.numFmt = '#,##0.00'; } };
     let zebra = 0;
     for (const rg of rep.routes) {
       for (const tg of rg.tankers) {
@@ -277,7 +282,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
           const row = ws.addRow([fmtDateDisplay(r.submission_date), r.route_name, fmtDateDisplay(r.lifting_date), r.tanker_number, r.bmcu_code, r.bmcu_name, r.compartment,
             f(r.scale_reading), r.shifts, f(r.d_qty_litres), f(r.d_fat_pct), f(r.d_clr), f(r.d_snf_pct), f(r.d_qty_kgs), f(r.d_kg_fat), f(r.d_kg_snf),
             f(r.ts_qty_litres), f(r.ts_fat_pct), f(r.ts_snf_pct), f(r.ts_qty_kgs), f(r.ts_kg_fat), f(r.ts_kg_snf),
-            r.qty_var_litres, r.fat_var, r.snf_var, '', '', '', '', '', '', '', '', r.remarks, r.entered_by_name]);
+            r.qty_var_litres, r.fat_var, r.snf_var, '', '', '', '', '', '', '', '', '', '', '', r.remarks, r.entered_by_name]);
           styleRow(row, (zebra++ % 2) ? 'FFF5F8FC' : null);
           if (zebra % 2 === 0) row.font = { bold: false };
         }
@@ -286,7 +291,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
       styleRow(ws.addRow(totCells(`Route total · ${rg.route}`, '', rg.totals)), 'FFDBEAFE');
     }
     styleRow(ws.addRow(totCells('GRAND TOTAL', '', rep.totals)), 'FFFFF9C4');
-    ws.columns.forEach((col, i) => { col.width = i === 0 ? 30 : [5, 33].includes(i) ? 22 : 13; });
+    ws.columns.forEach((col, i) => { col.width = i === 0 ? 30 : [5, 36].includes(i) ? 22 : 13; });
     ws.views = [{ state: 'frozen', ySplit: 3, xSplit: 4 }];
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
