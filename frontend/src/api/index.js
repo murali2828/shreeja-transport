@@ -205,6 +205,7 @@ export const removeRunTrip = (runId, tripId) => api.delete(`/billing/runs/${runI
 // Quality team — QA tanker dispatch entries (migration 052)
 export const getQaLookups          = ()        => api.get('/quality/lookups');
 export const getQaEntries          = (params)  => api.get('/quality/entries', { params });
+export const getQaReport           = (params)  => api.get('/quality/entries/report', { params });
 export const createQaEntry         = (d)       => api.post('/quality/entries', d);
 export const updateQaEntry         = (id, d)   => api.put(`/quality/entries/${id}`, d);
 export const deleteQaEntry         = (id)      => api.delete(`/quality/entries/${id}`);

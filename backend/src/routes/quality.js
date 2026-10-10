@@ -1,8 +1,9 @@
 // backend/src/routes/quality.js
 // Quality team: tanker dispatch vs truck-sheet (RMRD) entries — migration 052.
 // Independent of the tanker team's executions: own table, own module
-// permission ('quality'), no reference data from executions is exposed here.
-// Mounted at /api/quality.
+// permission ('quality'). The one exception (owner, 2026-10-10): the report
+// shows, per tanker × lifting date, the plant acknowledgement totals keyed by
+// the logistics team, read-only, so QA can compare. Mounted at /api/quality.
 const express = require('express');
 const router  = express.Router();
 const ExcelJS = require('exceljs');
@@ -134,33 +135,159 @@ function listSql(q) {
                  ORDER BY e.lifting_date DESC, e.tanker_number, e.bmcu_code, e.compartment LIMIT 2000`, params };
 }
 
+const r2 = v => (v == null || !Number.isFinite(parseFloat(v)) ? null : Math.round(parseFloat(v) * 100) / 100);
+// Plant acknowledgement per tanker × lifting date for the QA rows in the
+// filter: live (non-cancelled) executions of milk plans of that tanker on that
+// plan date, all chambers. Keyed "tanker_id|YYYY-MM-DD".
+async function ackFor(rows) {
+  const keys = [...new Set(rows.map(r => `${r.tanker_id}|${r.lifting_date}`))];
+  if (!keys.length) return {};
+  const tankerIds = keys.map(k => parseInt(k.split('|')[0], 10));
+  const dates = keys.map(k => k.split('|')[1]);
+  const r = await query(`
+    SELECT tp.tanker_id, tp.plan_for_date::text AS d, COUNT(DISTINCT te.id)::int AS trips,
+           SUM(a.qty_litres) AS litres, SUM(a.qty_kgs) AS kgs, SUM(a.kg_fat) AS kg_fat, SUM(a.kg_snf) AS kg_snf
+    FROM unnest($1::int[], $2::date[]) AS k(tanker_id, d)
+    JOIN trip_plans tp ON tp.tanker_id = k.tanker_id AND tp.plan_for_date = k.d AND tp.status NOT IN ('cancelled','deleted')
+    JOIN trip_executions te ON te.trip_plan_id = tp.id AND te.status <> 'cancelled'
+    LEFT JOIN trip_acknowledgements a ON a.execution_id = te.id
+    GROUP BY tp.tanker_id, tp.plan_for_date`, [tankerIds, dates]);
+  const out = {};
+  for (const x of r.rows) {
+    const kgs = parseFloat(x.kgs) || 0;
+    out[`${x.tanker_id}|${x.d}`] = { trips: x.trips, litres: x.litres == null ? null : r2(x.litres), kgs: x.kgs == null ? null : r2(x.kgs),
+      kg_fat: x.kg_fat == null ? null : r2(x.kg_fat), kg_snf: x.kg_snf == null ? null : r2(x.kg_snf),
+      fat_pct: kgs > 0 ? r2(parseFloat(x.kg_fat) / kgs * 100) : null, snf_pct: kgs > 0 ? r2(parseFloat(x.kg_snf) / kgs * 100) : null };
+  }
+  return out;
+}
+
+// Route → tanker × lifting date groups with QA totals and the acknowledgement.
+const SUMS = ['d_qty_litres', 'd_qty_kgs', 'd_kg_fat', 'd_kg_snf', 'ts_qty_litres', 'ts_qty_kgs', 'ts_kg_fat', 'ts_kg_snf'];
+function totalsOf(rows) {
+  const t = {};
+  for (const k of SUMS) t[k] = r2(rows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0));
+  t.d_fat_pct = t.d_qty_kgs > 0 ? r2(t.d_kg_fat / t.d_qty_kgs * 100) : null;
+  t.d_snf_pct = t.d_qty_kgs > 0 ? r2(t.d_kg_snf / t.d_qty_kgs * 100) : null;
+  t.ts_fat_pct = t.ts_qty_kgs > 0 ? r2(t.ts_kg_fat / t.ts_qty_kgs * 100) : null;
+  t.ts_snf_pct = t.ts_qty_kgs > 0 ? r2(t.ts_kg_snf / t.ts_qty_kgs * 100) : null;
+  t.qty_var_litres = r2(t.d_qty_litres - t.ts_qty_litres);
+  return t;
+}
+function addAck(a, b) {
+  if (!b) return a;
+  const out = { ...a };
+  for (const k of ['litres', 'kgs', 'kg_fat', 'kg_snf']) out[k] = r2((a[k] || 0) + (b[k] || 0));
+  out.trips = (a.trips || 0) + (b.trips || 0);
+  out.fat_pct = out.kgs > 0 ? r2(out.kg_fat / out.kgs * 100) : null;
+  out.snf_pct = out.kgs > 0 ? r2(out.kg_snf / out.kgs * 100) : null;
+  return out;
+}
+function withAckVar(t, ack) {
+  if (!ack || ack.litres == null) return { ...t, ack: ack || null };
+  return { ...t, ack, ack_vs_ts_litres: r2(ack.litres - t.ts_qty_litres), ack_vs_d_litres: r2(ack.litres - t.d_qty_litres),
+    ack_vs_ts_kgs: r2(ack.kgs - t.ts_qty_kgs) };
+}
+function groupReport(rows, acks) {
+  const routes = new Map();
+  for (const r of rows) {
+    const rk = r.route_name || '— No route —';
+    if (!routes.has(rk)) routes.set(rk, new Map());
+    const tk = `${r.tanker_id}|${r.lifting_date}`;
+    const g = routes.get(rk);
+    if (!g.has(tk)) g.set(tk, { key: tk, tanker_number: r.tanker_number, lifting_date: r.lifting_date, rows: [] });
+    g.get(tk).rows.push(r);
+  }
+  let grandAck = {};
+  const out = [...routes.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([route, g]) => {
+    let routeAck = {};
+    const tankers = [...g.values()].sort((a, b) => b.lifting_date.localeCompare(a.lifting_date) || a.tanker_number.localeCompare(b.tanker_number))
+      .map(t => { const ack = acks[t.key] || null; routeAck = addAck(routeAck, ack); return { ...t, totals: withAckVar(totalsOf(t.rows), ack) }; });
+    grandAck = addAck(grandAck, routeAck);
+    const routeRows = tankers.flatMap(t => t.rows);
+    return { route, tankers, totals: withAckVar(totalsOf(routeRows), routeAck.trips ? routeAck : null) };
+  });
+  return { routes: out, totals: withAckVar(totalsOf(rows), grandAck.trips ? grandAck : null) };
+}
+
+// GET /api/quality/entries/report — same filter, grouped with acknowledgement.
+router.get('/entries/report', ...gate, async (req, res) => {
+  try {
+    const { sql, params } = listSql(req.query);
+    const rows = (await query(sql, params)).rows.map(withVar);
+    res.json(groupReport(rows, await ackFor(rows)));
+  } catch (err) { console.error('[quality] report error:', err); res.status(500).json({ error: `Failed to build the report: ${err.message}` }); }
+});
+
 router.get('/entries', ...gate, async (req, res) => {
   try { const { sql, params } = listSql(req.query); res.json((await query(sql, params)).rows.map(withVar)); }
   catch (err) { console.error('[quality] list error:', err); res.status(500).json({ error: `Failed to load entries: ${err.message}` }); }
 });
 
-// Excel in the quality team's format (column order fixed, 2026-10-07).
+// Excel in the quality team's format (column order fixed, 2026-10-07), grouped
+// by route and tanker × lifting date with the plant acknowledgement on each
+// tanker subtotal (owner, 2026-10-10); section-coloured headers.
+const SECTIONS = [
+  ['Entry', 9, 'FFE2E8F0'], ['Dispatch', 7, 'FFDBEAFE'], ['Truck Sheet (RMRD)', 6, 'FFDCFCE7'],
+  ['Variation (Dispatch − Truck Sheet)', 3, 'FFFEF3C7'], ['Plant Acknowledgement (Logistics)', 8, 'FFEDE9FE'], ['', 2, 'FFF1F5F9'],
+];
 router.get('/entries/excel', ...gate, async (req, res) => {
   try {
     const { sql, params } = listSql(req.query);
     const rows = (await query(sql, params)).rows.map(withVar);
+    const rep = groupReport(rows, await ackFor(rows));
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Tanker Dispatch');
-    const head = ws.addRow(['Submission Date', 'Route Name', 'Milk Lifting Date', 'Tanker No', 'BMCU Code', 'BMCU Name', 'Compartment', 'Scale Reading', 'Shift',
+    const FILL = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
+    const thin = { style: 'thin', color: { argb: 'FFBFC7D1' } }, BOX = { top: thin, bottom: thin, left: thin, right: thin };
+    const HEADS = ['Submission Date', 'Route Name', 'Milk Lifting Date', 'Tanker No', 'BMCU Code', 'BMCU Name', 'Compartment', 'Scale Reading', 'Shift',
       'Qty Lts (Dispatch)', 'Fat % (Dispatch)', 'CLR (Dispatch)', 'SNF (Dispatch)', 'Qty Kgs (Dispatch)', 'KG Fat (Dispatch)', 'KG SNF (Dispatch)',
       'Qty Lts (Truck Sheet)', 'Fat % (Truck Sheet)', 'SNF (Truck Sheet)', 'Qty Kgs (Truck Sheet)', 'KG Fat (Truck Sheet)', 'KG SNF (Truck Sheet)',
-      'Qty Variation (Lts)', 'Fat Variation', 'SNF Variation', 'Remarks', 'Entered By']);
-    head.font = { bold: true }; ws.columns.forEach(c => { c.width = 16; });
+      'Qty Variation (Lts)', 'Fat Variation', 'SNF Variation',
+      'Ack Qty Lts', 'Ack Qty Kgs', 'Ack Fat %', 'Ack SNF %', 'Ack KG Fat', 'Ack KG SNF', 'Ack − Truck Sheet (Lts)', 'Ack − Dispatch (Lts)',
+      'Remarks', 'Entered By'];
+    const NC = HEADS.length;
+    ws.mergeCells(1, 1, 1, NC);
+    ws.getCell(1, 1).value = `QA Tanker Dispatch Report ${req.query.from ? fmtDateDisplay(req.query.from) : ''} → ${req.query.to ? fmtDateDisplay(req.query.to) : ''}`;
+    ws.getCell(1, 1).fill = FILL('FF005BA3'); ws.getCell(1, 1).font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 }; ws.getRow(1).height = 22;
+    // Section band row + column header row, coloured per section.
+    let c = 1; const colFill = [];
+    for (const [label, span, argb] of SECTIONS) {
+      if (span > 1) ws.mergeCells(2, c, 2, c + span - 1);
+      const cell = ws.getCell(2, c); cell.value = label; cell.font = { bold: true }; cell.alignment = { horizontal: 'center' };
+      for (let k = c; k < c + span; k++) { ws.getCell(2, k).fill = FILL(argb); ws.getCell(2, k).border = BOX; colFill[k] = argb; }
+      c += span;
+    }
+    const hr = ws.getRow(3); HEADS.forEach((h, i) => { const cell = hr.getCell(i + 1); cell.value = h; cell.font = { bold: true, size: 10 };
+      cell.fill = FILL(colFill[i + 1]); cell.border = BOX; cell.alignment = { wrapText: true, horizontal: 'center', vertical: 'middle' }; });
+    hr.height = 42;
     const f = v => (v == null ? null : parseFloat(v));
-    for (const r of rows.slice().reverse())
-      ws.addRow([fmtDateDisplay(r.submission_date), r.route_name, fmtDateDisplay(r.lifting_date), r.tanker_number, r.bmcu_code, r.bmcu_name, r.compartment,
-        f(r.scale_reading), r.shifts, f(r.d_qty_litres), f(r.d_fat_pct), f(r.d_clr), f(r.d_snf_pct), f(r.d_qty_kgs), f(r.d_kg_fat), f(r.d_kg_snf),
-        f(r.ts_qty_litres), f(r.ts_fat_pct), f(r.ts_snf_pct), f(r.ts_qty_kgs), f(r.ts_kg_fat), f(r.ts_kg_snf),
-        r.qty_var_litres, r.fat_var, r.snf_var, r.remarks, r.entered_by_name]);
-    const sum = k => rows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
-    const tot = ws.addRow(['TOTAL', '', '', '', '', '', '', '', '', sum('d_qty_litres'), '', '', '', sum('d_qty_kgs'), sum('d_kg_fat'), sum('d_kg_snf'),
-      sum('ts_qty_litres'), '', '', sum('ts_qty_kgs'), sum('ts_kg_fat'), sum('ts_kg_snf'), sum('qty_var_litres'), '', '', '', '']);
-    tot.font = { bold: true };
+    const ackCells = t => t.ack ? [t.ack.litres, t.ack.kgs, t.ack.fat_pct, t.ack.snf_pct, t.ack.kg_fat, t.ack.kg_snf, t.ack_vs_ts_litres ?? null, t.ack_vs_d_litres ?? null]
+                                : ['no trip', '', '', '', '', '', '', ''];
+    const totCells = (label, route, t) => [label, route, '', '', '', '', '', '', '',
+      t.d_qty_litres, t.d_fat_pct, '', t.d_snf_pct, t.d_qty_kgs, t.d_kg_fat, t.d_kg_snf,
+      t.ts_qty_litres, t.ts_fat_pct, t.ts_snf_pct, t.ts_qty_kgs, t.ts_kg_fat, t.ts_kg_snf,
+      t.qty_var_litres, '', '', ...ackCells(t), '', ''];
+    const styleRow = (row, fill) => { for (let k = 1; k <= NC; k++) { const cell = row.getCell(k); cell.border = BOX; if (fill) { cell.fill = FILL(fill); cell.font = { bold: true }; }
+      if (k >= 8 && k <= 33 && typeof cell.value === 'number') cell.numFmt = '#,##0.00'; } };
+    let zebra = 0;
+    for (const rg of rep.routes) {
+      for (const tg of rg.tankers) {
+        for (const r of tg.rows) {
+          const row = ws.addRow([fmtDateDisplay(r.submission_date), r.route_name, fmtDateDisplay(r.lifting_date), r.tanker_number, r.bmcu_code, r.bmcu_name, r.compartment,
+            f(r.scale_reading), r.shifts, f(r.d_qty_litres), f(r.d_fat_pct), f(r.d_clr), f(r.d_snf_pct), f(r.d_qty_kgs), f(r.d_kg_fat), f(r.d_kg_snf),
+            f(r.ts_qty_litres), f(r.ts_fat_pct), f(r.ts_snf_pct), f(r.ts_qty_kgs), f(r.ts_kg_fat), f(r.ts_kg_snf),
+            r.qty_var_litres, r.fat_var, r.snf_var, '', '', '', '', '', '', '', '', r.remarks, r.entered_by_name]);
+          styleRow(row, (zebra++ % 2) ? 'FFF5F8FC' : null);
+          if (zebra % 2 === 0) row.font = { bold: false };
+        }
+        styleRow(ws.addRow(totCells(`Tanker total · ${tg.tanker_number} · ${fmtDateDisplay(tg.lifting_date)}`, rg.route, tg.totals)), 'FFEDE9FE');
+      }
+      styleRow(ws.addRow(totCells(`Route total · ${rg.route}`, '', rg.totals)), 'FFDBEAFE');
+    }
+    styleRow(ws.addRow(totCells('GRAND TOTAL', '', rep.totals)), 'FFFFF9C4');
+    ws.columns.forEach((col, i) => { col.width = i === 0 ? 30 : [5, 33].includes(i) ? 22 : 13; });
+    ws.views = [{ state: 'frozen', ySplit: 3, xSplit: 4 }];
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename=qa_tanker_dispatch_${req.query.from || 'all'}_${req.query.to || ''}.xlsx`);
