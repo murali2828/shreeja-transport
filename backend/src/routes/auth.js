@@ -6,7 +6,7 @@ const jwt        = require('jsonwebtoken');
 const crypto     = require('crypto');
 const nodemailer = require('nodemailer');
 const { query }  = require('../config/db');
-const { permissionsFor, isReadOnlyUser } = require('../middleware/auth');
+const { permissionsFor, accessFor, isReadOnlyUser } = require('../middleware/auth');
 const { authenticate, authorize } = require('../middleware/auth');
 
 // Ensure must_change_password column exists
@@ -77,15 +77,16 @@ router.post('/login', async (req, res) => {
     );
     // Attach this user's role's per-module permissions (independent of the
     // billing_enabled env kill-switch below, which stays untouched).
-    let permissions = null;
+    let permissions = null, access = null;
     try {
       permissions = await permissionsFor(roles);
+      access = await accessFor(roles);              // {module: 'view'|'edit'|'none'} (migration 060)
     } catch (err) {
       console.error('[auth] role permissions lookup failed:', err.message);
     }
     let read_only = false;
     try { read_only = await isReadOnlyUser({ roles }); } catch (err) { console.error('[auth] read-only lookup failed:', err.message); }
-    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: primary, roles, permissions, read_only, must_change_password: mustChange, billing_enabled: process.env.BILLING_ENABLED === 'true', optimizer_v2_enabled: process.env.OPTIMIZER_V2_ENABLED === 'true' } });
+    res.json({ token, user: { id: user.id, user_id: user.user_id, username: user.username, full_name: user.full_name, role: primary, roles, permissions, access, read_only, must_change_password: mustChange, billing_enabled: process.env.BILLING_ENABLED === 'true', optimizer_v2_enabled: process.env.OPTIMIZER_V2_ENABLED === 'true' } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

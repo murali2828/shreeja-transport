@@ -72,13 +72,37 @@ async function denyIfReadOnlyWrite(req, res) {
   return false;
 }
 
-// Union of the module permissions of every role the user holds.
-async function permissionsFor(roleNames) {
-  const r = await query('SELECT permissions FROM roles WHERE name = ANY($1)', [roleNames]);
+// Per-module access level (migration 060): roles.access = {module: 'none'|'view'|'edit'};
+// a role without the column filled falls back to its boolean permissions
+// (true = edit, or view when the role is read-only). A user's level per
+// module is the highest over all roles they hold.
+const RANK = { none: 0, view: 1, edit: 2 };
+function roleLevels(row) {
   const out = {};
-  for (const row of r.rows) for (const [k, v] of Object.entries(row.permissions || {})) if (v === true) out[k] = true;
+  const acc = row.access && Object.keys(row.access).length ? row.access : null;
+  for (const [k, v] of Object.entries(acc || row.permissions || {})) {
+    out[k] = acc ? (RANK[v] !== undefined ? v : 'none') : (v === true ? (row.read_only ? 'view' : 'edit') : 'none');
+  }
   return out;
 }
+async function accessFor(roleNames) {
+  const r = await query('SELECT permissions, access, read_only FROM roles WHERE name = ANY($1)', [roleNames]);
+  const out = {};
+  for (const row of r.rows) for (const [k, lvl] of Object.entries(roleLevels(row))) {
+    if (RANK[lvl] > RANK[out[k] || 'none']) out[k] = lvl;
+  }
+  return out;
+}
+// Union of the module permissions of every role the user holds (true = view or edit).
+async function permissionsFor(roleNames) {
+  const lv = await accessFor(roleNames);
+  const out = {};
+  for (const [k, v] of Object.entries(lv)) if (v !== 'none') out[k] = true;
+  return out;
+}
+// A write to a module where the user's best level is View is refused, even
+// when a legacy role name would otherwise let it through.
+const viewOnlyMsg = m => `You have view-only access to ${m} — you can see the data but not create or change it`;
 
 function authorize(...roles) {
   return async (req, res, next) => {
@@ -103,11 +127,9 @@ function authorizeModule(moduleKey) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (hasRole(req.user, 'admin')) return next();
     try {
-      const r = { rows: [{ permissions: await permissionsFor(rolesOf(req.user)) }] };
-      const perms = r.rows[0]?.permissions;
-      if (!perms || perms[moduleKey] !== true) {
-        return res.status(403).json({ error: 'Insufficient permissions' });
-      }
+      const lvl = (await accessFor(rolesOf(req.user)))[moduleKey] || 'none';
+      if (lvl === 'none') return res.status(403).json({ error: 'Insufficient permissions' });
+      if (lvl === 'view' && !READ_METHODS.includes(req.method)) return res.status(403).json({ error: viewOnlyMsg(moduleKey) });
       next();
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -127,13 +149,12 @@ function authorizeOrModule(moduleKey, ...roles) {
     if (await denyIfReadOnlyWrite(req, res)) return;
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (hasRole(req.user, 'admin')) return next();
-    if (hasRole(req.user, ...roles)) return next();
     try {
-      const r = { rows: [{ permissions: await permissionsFor(rolesOf(req.user)) }] };
-      const perms = r.rows[0]?.permissions;
-      if (!perms || perms[moduleKey] !== true) {
-        return res.status(403).json({ error: 'Insufficient permissions' });
-      }
+      const lvl = (await accessFor(rolesOf(req.user)))[moduleKey] || 'none';
+      const write = !READ_METHODS.includes(req.method);
+      if (lvl === 'view' && write) return res.status(403).json({ error: viewOnlyMsg(moduleKey) });
+      if (hasRole(req.user, ...roles)) return next();
+      if (lvl === 'none') return res.status(403).json({ error: 'Insufficient permissions' });
       next();
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -141,4 +162,4 @@ function authorizeOrModule(moduleKey, ...roles) {
   };
 }
 
-module.exports = { authenticate, authorize, authorizeModule, authorizeOrModule, MODULES, rolesOf, hasRole, permissionsFor, isReadOnlyUser };
+module.exports = { authenticate, authorize, authorizeModule, authorizeOrModule, MODULES, rolesOf, hasRole, permissionsFor, accessFor, isReadOnlyUser };

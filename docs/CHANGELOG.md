@@ -7,7 +7,8 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
-_Nothing yet._
+### Added
+- Roles: per-module access level **None / View / Edit** (migration 060, `roles.access`). Masters → Roles shows a three-way selector per module (Masters, Planning, Execution, Billing, Reports, Quality) with "All granted → View / Edit" shortcuts; the table shows EDIT / VIEW badges. View lets a role open the module's screens and reports but every create / change / approve / delete in that module is refused by the server ("view-only access to …"), even for built-in role names such as planner or biller; Edit is full use. A user with several roles gets the highest level per module. Existing roles were migrated as Edit for ticked modules (View for read-only roles such as viewer); `read_only` is now derived (no module at Edit) and the built-in viewer is capped at View. The login response carries `access`; Billing opens without edit controls and Execution hides Start / Other Gate Pass / Approvals for View-only users (owner, 2026-10-10).
 
 ## 2026-09-16 → 2026-10-09 — promoted to `main` 2026-10-09 (migrations 045–059)
 

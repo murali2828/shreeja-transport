@@ -7,13 +7,26 @@ const { authenticate, authorize, MODULES } = require('../middleware/auth');
 
 const NAME_RE = /^[a-z0-9_]+$/;
 
-function normalizePermissions(input) {
-  const perms = {};
-  const src = input && typeof input === 'object' ? input : {};
+// Per-module access level (migration 060). Accepts `access` {m: none|view|edit}
+// or the older boolean `permissions` (true = edit). Returns the levels, the
+// boolean mirror and the derived read_only (no module at Edit). The viewer
+// role is capped at View.
+const LEVELS = ['none', 'view', 'edit'];
+function normalizeAccess(body, roleName) {
+  const src = body.access && typeof body.access === 'object' ? body.access
+    : (body.permissions && typeof body.permissions === 'object' ? body.permissions : {});
   const unknown = Object.keys(src).filter(k => !MODULES.includes(k));
-  if (unknown.length) return { error: `Unknown permission key(s): ${unknown.join(', ')}` };
-  for (const m of MODULES) perms[m] = src[m] === true;
-  return { perms };
+  if (unknown.length) return { error: `Unknown module(s): ${unknown.join(', ')}` };
+  const access = {}, perms = {};
+  for (const m of MODULES) {
+    let v = src[m];
+    if (v === true) v = body.read_only === true ? 'view' : 'edit';
+    if (!LEVELS.includes(v)) v = 'none';
+    if (roleName === 'viewer' && v === 'edit') v = 'view';
+    access[m] = v; perms[m] = v !== 'none';
+  }
+  const read_only = !Object.values(access).includes('edit');
+  return { access, perms, read_only };
 }
 
 // GET /api/roles
@@ -26,15 +39,15 @@ router.get('/', authenticate, authorize('admin'), async (req, res) => {
 
 // POST /api/roles
 router.post('/', authenticate, authorize('admin'), async (req, res) => {
-  const { name, label, permissions, read_only } = req.body;
+  const { name, label } = req.body;
   if (!name || !label) return res.status(400).json({ error: 'name and label required' });
   if (!NAME_RE.test(name)) return res.status(400).json({ error: 'name may contain only lowercase letters, numbers, and underscore (no spaces)' });
-  const { perms, error } = normalizePermissions(permissions);
+  const { access, perms, read_only, error } = normalizeAccess(req.body, name);
   if (error) return res.status(400).json({ error });
   try {
     const r = await query(
-      'INSERT INTO roles (name, label, is_system, permissions, read_only) VALUES ($1,$2,FALSE,$3,$4) RETURNING *',
-      [name, label, JSON.stringify(perms), read_only === true]
+      'INSERT INTO roles (name, label, is_system, permissions, access, read_only) VALUES ($1,$2,FALSE,$3,$4,$5) RETURNING *',
+      [name, label, JSON.stringify(perms), JSON.stringify(access), read_only]
     );
     res.status(201).json(r.rows[0]);
   } catch (err) {
@@ -45,21 +58,17 @@ router.post('/', authenticate, authorize('admin'), async (req, res) => {
 
 // PUT /api/roles/:id
 router.put('/:id', authenticate, authorize('admin'), async (req, res) => {
-  const { label, permissions, read_only } = req.body;
-  const { perms, error } = normalizePermissions(permissions);
-  if (error) return res.status(400).json({ error });
+  const { label } = req.body;
   try {
     const existing = await query('SELECT * FROM roles WHERE id=$1', [req.params.id]);
     if (!existing.rows.length) return res.status(404).json({ error: 'Role not found' });
-    const sets = ['permissions = $1', 'updated_at = NOW()'];
-    const params = [JSON.stringify(perms)];
+    const { access, perms, read_only, error } = normalizeAccess(req.body, existing.rows[0].name);
+    if (error) return res.status(400).json({ error });
+    const sets = ['permissions = $1', 'access = $2', 'read_only = $3', 'updated_at = NOW()'];
+    const params = [JSON.stringify(perms), JSON.stringify(access), read_only];
     if (label !== undefined) {
       params.push(label);
       sets.push(`label = $${params.length}`);
-    }
-    if (read_only !== undefined && existing.rows[0].name !== 'viewer') { // viewer stays read-only
-      params.push(read_only === true);
-      sets.push(`read_only = $${params.length}`);
     }
     params.push(req.params.id);
     const r = await query(
