@@ -1,4 +1,5 @@
 // frontend/src/pages/execution/ExecutionForm.jsx
+import { compartmentCodes } from '../../utils/compartments';
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, Navigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -63,7 +64,7 @@ function InternalShiftingAddButton({ onPick }) {
   );
 }
 
-function ChamberDropdown({ value, onChange, disabled }) {
+function ChamberDropdown({ value, onChange, disabled, codes = CHAMBERS }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const selected = (value || '').split(',').filter(Boolean);
@@ -92,7 +93,7 @@ function ChamberDropdown({ value, onChange, disabled }) {
       {open && (
         <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
           style={{ minWidth: 80 }}>
-          {CHAMBERS.map(c => (
+          {codes.map(c => (
             <label key={c}
               className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-blue-50 select-none">
               <input type="checkbox" checked={selected.includes(c)} onChange={() => toggle(c)}
@@ -204,7 +205,7 @@ function SourcePlantSelect({ bmcuList, code, onSelect, disabled }) {
 
 function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClosed,
                    shiftRowsForBmcu, onAddShiftRow, onUpdateShiftRow, onDeleteShiftRow, execDate,
-                   entriesForBmcu, onAddEntry, onUpdateEntry, onDeleteEntry,
+                   entriesForBmcu, onAddEntry, onUpdateEntry, onDeleteEntry, chamberCodes,
                    salesForBmcu, onAddSale, onUpdateSale, onDeleteSale,
                    onDragStart, onDragOver, onDrop, isDragOver }) {
   const u = (field, val) => onUpdate(idx, field, val);
@@ -276,7 +277,7 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
             value={row.snf_pct || ''} onChange={e => syncCalc('snf_pct', e.target.value)}/>
         </td>
         <td className="table-td">
-          <ChamberDropdown value={row.chamber} onChange={val => u('chamber', val)} disabled={isClosed}/>
+          <ChamberDropdown value={row.chamber} onChange={val => u('chamber', val)} disabled={isClosed} codes={chamberCodes}/>
         </td>
         <td className="table-td">
           <div className="flex gap-1">
@@ -1372,6 +1373,7 @@ export default function ExecutionForm() {
               {bmcuRows.map((row, i) =>
                 row.is_deleted ? null : (
                   <BmcuRow key={i} row={row} idx={i}
+                    chamberCodes={compartmentCodes(exec?.compartments)}
                     bmcuList={bmcuList}
                     onUpdate={updateRow}
                     onDelete={isClosed ? () => {} : deleteRow}

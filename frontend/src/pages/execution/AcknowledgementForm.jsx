@@ -5,9 +5,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getExecution, saveAcknowledgements } from '../../api/index';
+import { compartmentCodes } from '../../utils/compartments';
 
 const KG = 1.0285;
-const CHAMBERS = ['FC', 'MC', 'BC'];
 
 export default function AcknowledgementForm() {
   const { id }   = useParams();
@@ -20,13 +20,17 @@ export default function AcknowledgementForm() {
   });
 
   const [ackDate, setAckDate] = useState(new Date().toISOString().slice(0,10));
-  const [chambers, setChambers] = useState(
-    CHAMBERS.map(c => ({ chamber: c, qty_litres: '', qty_kgs: '', fat_pct: '', snf_pct: '',
-                          kg_fat: '', kg_snf: '', temperature: '', description: '' }))
-  );
+  const [chambers, setChambers] = useState([]);
 
+  // Chambers follow the tanker's compartments in Tanker Master (2C → FC, BC);
+  // a chamber already acknowledged outside that list stays visible.
   useEffect(() => {
-    if (exec?.acknowledgements?.length) {
+    if (!exec) return;
+    const codes = compartmentCodes(exec.compartments);
+    const CHAMBERS = ['FC', 'MC', 'BC'].filter(c => codes.includes(c) || exec.acknowledgements?.some(a => a.chamber === c));
+    setChambers(CHAMBERS.map(c => ({ chamber: c, qty_litres: '', qty_kgs: '', fat_pct: '', snf_pct: '',
+                                     kg_fat: '', kg_snf: '', temperature: '', description: '' })));
+    if (exec.acknowledgements?.length) {
       setChambers(CHAMBERS.map(c => {
         const existing = exec.acknowledgements.find(a => a.chamber === c);
         return existing || { chamber: c, qty_litres:'', qty_kgs:'', fat_pct:'', snf_pct:'',

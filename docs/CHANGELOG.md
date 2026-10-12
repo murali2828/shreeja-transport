@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- Acknowledgement: the chamber cards follow the tanker's compartments in Tanker Master (`2C` → FC, BC; `3C` → FC, MC, BC; `1` → FC); a chamber already acknowledged outside that list stays visible. The server refuses quantities on a chamber the tanker does not have. The BMCU chamber picker on the execution page uses the same list. Shared helper `utils/compartments.js` (also used by QA dispatch) (owner, 2026-10-12).
+
 ## 2026-10-10 — promoted to `main` 2026-10-10 (migrations 060–064)
 
 ### Added

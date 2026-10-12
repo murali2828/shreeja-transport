@@ -1,5 +1,6 @@
 // backend/src/routes/executions.js
 const express = require('express');
+const { compartmentCodes } = require('../utils/compartments');
 const router  = express.Router();
 const { pool, query } = require('../config/db');
 const { authenticate, authorizeOrModule } = require('../middleware/auth');
@@ -511,6 +512,19 @@ router.post('/:id/acknowledgements', authenticate, authorizeOrModule('execution'
     );
     if (!exec.rows.length)
       return res.status(400).json({ error: 'Execution not in pending_ack state' });
+
+    // Chambers must exist on the tanker (Tanker Master compartments, owner 2026-10-12).
+    const tk = (await client.query(
+      `SELECT t.tanker_number, t.compartments FROM trip_plans tp JOIN tankers t ON t.id = tp.tanker_id WHERE tp.id = $1`,
+      [exec.rows[0].trip_plan_id])).rows[0];
+    if (tk) {
+      const codes = compartmentCodes(tk.compartments);
+      const bad = chambers.filter(ch => !codes.includes(ch.chamber) && (parseFloat(ch.qty_litres) || parseFloat(ch.qty_kgs)));
+      if (bad.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `Tanker ${tk.tanker_number} has only ${codes.join(', ')} — remove ${bad.map(b => b.chamber).join(', ')}` });
+      }
+    }
 
     // Delete existing acks and re-insert
     await client.query('DELETE FROM trip_acknowledgements WHERE execution_id=$1', [req.params.id]);

@@ -15,7 +15,7 @@ const { computeDispatch, computeTruckSheet, variations, n } = require('../servic
 const gate = [authenticate, authorizeModule('quality')];
 const COMPARTMENTS = ['FC', 'MC', 'BC'];
 // Tanker Master keeps compartments as text ('2C', '3C', '3'); 2 → FC, BC; 3+ → FC, MC, BC; unknown → all.
-const compartmentCodes = txt => { const k = parseInt(String(txt || '').replace(/[^0-9]/g, ''), 10); return k === 2 ? ['FC', 'BC'] : k === 1 ? ['FC'] : COMPARTMENTS; };
+const { compartmentCodes } = require('../utils/compartments');
 // 'MC,FC' / ['FC','MC'] → 'FC,MC' in canonical order; null when empty or invalid.
 const normalizeCompartments = v => {
   const list = (Array.isArray(v) ? v : String(v || '').split(',')).map(s => String(s).trim().toUpperCase()).filter(Boolean);
