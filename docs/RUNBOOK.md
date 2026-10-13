@@ -175,6 +175,24 @@ docker cp shreeja-qa-backend:/tmp/history_result.csv .                          
   historic rates to the Tanker Rate Master (RATES sheet of the workbook), execute the
   fortnights again.
 
+## Load FY trip history for the analysis (April–August 2026)
+
+The logistics team's "Tanker_Utilization_consalidation_FY_2026-27.xlsx" (one sheet per
+month, one row per trip) feeds the Payment Report and the Month / Year Cumulative
+sheets for dates up to `ANALYTICS_HISTORY_UNTIL` (default 2026-08-31); after that date
+they use portal billing lines. It never creates plans or executions. QA first.
+
+```bash
+docker cp FY.xlsx shreeja-qa-backend:/tmp/FY.xlsx
+docker exec -i shreeja-qa-backend node scripts/import_trip_history.js /tmp/FY.xlsx                         # dry run: totals, corrections, unmatched
+docker exec -i shreeja-qa-backend node scripts/import_trip_history.js /tmp/FY.xlsx --compare "September'26"  # sheet vs portal billing
+docker exec -i shreeja-qa-backend node scripts/import_trip_history.js /tmp/FY.xlsx --apply                 # load April'26 … August'26
+```
+Expected dry-run totals: April 1,132 trips ₹1,63,85,040 · May 1,143 ₹1,70,50,219 · June
+1,292 ₹1,88,97,381 · July 1,312 ₹1,80,46,355 · August 1,291 ₹1,71,75,117. Re-running a
+sheet replaces its rows (corrected workbook). Check: Billing → Payment Report → April
+2026 → Month Cumulative shows April–August "FY workbook" and September from the portal.
+
 ## Quality team: QA dispatch entry on phones
 
 1. Admin creates each QA user with role **quality** (Masters → Users). That role sees only the Quality section.

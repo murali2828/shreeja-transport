@@ -1681,10 +1681,48 @@ router.post('/decide', async (req, res) => {
 // Aggregates billing lines by trip date across ALL runs whose lines fall in
 // the range. status=approved (default) restricts to fully-approved runs —
 // the amounts finance can actually pay.
+// Trips up to ANALYTICS_HISTORY_UNTIL come from the FY workbook loaded into
+// historical_trips (migration 065, scripts/import_trip_history.js); portal
+// billing lines on or before that date are left out so nothing is counted
+// twice (owner, 2026-10-13: the portal is complete from 1 September 2026).
+const HISTORY_UNTIL = /^\d{4}-\d{2}-\d{2}$/.test(process.env.ANALYTICS_HISTORY_UNTIL || '') ? process.env.ANALYTICS_HISTORY_UNTIL : '2026-08-31';
+
+async function historyRows(from, to) {
+  if (from > HISTORY_UNTIL) return [];
+  const end = to < HISTORY_UNTIL ? to : HISTORY_UNTIL;
+  const r = await query(`
+    SELECT NULL::int AS run_id, 'FY workbook' AS run_status, report_date::text AS plan_for_date, trip_date::text AS trip_date,
+           tanker_number, capacity_litres, COALESCE(vendor_name,'— No vendor mapped —') AS vendor_name, vendor_code AS vendor_sap_code,
+           route_name, NULL AS start_point, plant AS delivery_point, NULL AS state, NULL AS transport_type,
+           NULL AS system_km, NULL AS google_km, NULL AS master_km, NULL AS estimated_km,
+           billed_km, rate_per_km, amount, CONCAT_WS('; ', 'From FY workbook (' || source_sheet || ' row ' || source_row || ')', notes) AS remarks,
+           milk_litres, milk_kgs, kg_fat, kg_snf,
+           CASE WHEN bmcu_coverage IS NULL THEN 0 ELSE GREATEST(array_length(string_to_array(bmcu_coverage, '-'), 1) - 2, 0) END AS bmcu_count,
+           bmcu_coverage
+    FROM historical_trips WHERE report_date BETWEEN $1 AND $2
+    ORDER BY report_date, tanker_number`, [from, end]);
+  return r.rows;
+}
+// Add history rows into a grouped result (dates / tankers / vendors) keyed by `key`.
+function mergeHistory(groups, hist, key, init) {
+  const byKey = new Map(groups.map(g => [g[key], g]));
+  const tankerSets = new Map();
+  for (const h of hist) {
+    const k = key === 'date' ? h.plan_for_date : h[key];
+    let g = byKey.get(k);
+    if (!g) { g = { [key]: k, ...init(h), trips: 0, billed_km: 0, amount: 0, milk_litres: 0, milk_kgs: 0, kg_fat: 0, kg_snf: 0, capacity_litres: 0 }; byKey.set(k, g); groups.push(g); }
+    g.trips = (parseInt(g.trips) || 0) + 1;
+    for (const c of ['billed_km', 'amount', 'milk_litres', 'milk_kgs', 'kg_fat', 'kg_snf', 'capacity_litres']) g[c] = (parseFloat(g[c]) || 0) + (parseFloat(h[c]) || 0);
+    if ('tankers' in g) { const s = tankerSets.get(k) || new Set(); s.add(h.tanker_number); tankerSets.set(k, s); }
+  }
+  for (const [k, s] of tankerSets) { const g = byKey.get(k); g.tankers = (parseInt(g.tankers) || 0) + s.size; }
+  return groups.sort((a, b) => String(a[key]).localeCompare(String(b[key])));
+}
+
 async function reportData(q) {
-  const params = [q.from, q.to];
+  const params = [q.from, q.to, HISTORY_UNTIL];
   // Tanker / vendor filters were dropped from this report (owner, 2026-10-09).
-  const cond = ['t.plan_for_date BETWEEN $1 AND $2', 't.excluded = FALSE'];
+  const cond = ['t.plan_for_date BETWEEN $1 AND $2', 't.plan_for_date > $3', 't.excluded = FALSE'];
   if ((q.status || 'approved') !== 'all') { params.push('approved'); cond.push(`br.status = $${params.length}`); }
   const where = 'WHERE ' + cond.join(' AND ');
   const base = `FROM billing_run_trips t JOIN billing_runs br ON br.id = t.run_id ${where}`;
@@ -1771,6 +1809,14 @@ async function reportData(q) {
     fortnights = [...byRun.values()].sort((a, b) => a.from_date.localeCompare(b.from_date) || a.run_id - b.run_id)
       .map(r => ({ ...r, tankers: r.tankers.size, billed_km: rN(r.billed_km), amount: rN(r.amount), toll_amount: rN(r.toll_amount), total_payable: rN(r.amount + r.toll_amount) }));
   }
+  const hist = await historyRows(q.from, q.to);
+  if (hist.length) {
+    trips.rows.push(...hist);
+    trips.rows.sort((a, b) => a.plan_for_date.localeCompare(b.plan_for_date) || a.tanker_number.localeCompare(b.tanker_number));
+    mergeHistory(dates.rows, hist, 'date', () => ({ tankers: 0 }));
+    mergeHistory(tankers.rows, hist, 'tanker_number', h => ({ vendor_name: h.vendor_name }));
+    mergeHistory(vendors.rows, hist, 'vendor_name', () => ({ tankers: 0 }));
+  }
   // Derived per row: fat / SNF %, ₹/km, cost per litre, utilisation %.
   const derive = r => {
     const kgs = parseFloat(r.milk_kgs) || 0, l = parseFloat(r.milk_litres) || 0;
@@ -1820,8 +1866,8 @@ const monthMetrics = r => {
 };
 async function cumulativeData(q) {
   const fy = fyOf(q.from);
-  const params = [];
-  const cond = ['t.excluded = FALSE'];
+  const params = [HISTORY_UNTIL];
+  const cond = ['t.excluded = FALSE', 't.plan_for_date > $1'];
   if ((q.status || 'approved') !== 'all') { params.push('approved'); cond.push(`br.status = $${params.length}`); }
   const portal = await query(`
     SELECT EXTRACT(YEAR FROM t.plan_for_date)::int AS year, EXTRACT(MONTH FROM t.plan_for_date)::int AS month,
@@ -1844,8 +1890,16 @@ async function cumulativeData(q) {
   const dieselMap = new Map(diesel.rows.map(x => [`${x.year}-${x.month}`, parseFloat(x.diesel_price)]));
   const dieselSumMap = new Map(diesel.rows.map(x => [`${x.year}-${x.month}`, parseFloat(x.diesel_sum)]));
   const history = await query(`SELECT * FROM transport_monthly_history ORDER BY fy_start_year, month`);
+  // Months up to ANALYTICS_HISTORY_UNTIL: the trip-level FY workbook (historical_trips).
+  const tripHist = await query(`
+    SELECT EXTRACT(YEAR FROM report_date)::int AS year, EXTRACT(MONTH FROM report_date)::int AS month,
+           COUNT(*)::int AS trips, SUM(capacity_litres) AS capacity_litres, SUM(billed_km) AS total_km, SUM(amount) AS amount,
+           SUM(milk_litres) AS milk_litres, SUM(milk_kgs) AS milk_kgs, SUM(kg_fat) AS kg_fat, SUM(kg_snf) AS kg_snf
+    FROM historical_trips WHERE report_date <= $1 GROUP BY 1, 2`, [HISTORY_UNTIL]);
 
   const portalMap = new Map(portal.rows.map(x => [`${x.year}-${x.month}`, { ...x, fy_start_year: x.month >= 4 ? x.year : x.year - 1, source: 'portal',
+    diesel_price: dieselMap.get(`${x.year}-${x.month}`) ?? null, diesel_sum: dieselSumMap.get(`${x.year}-${x.month}`) ?? null }]));
+  const tripHistMap = new Map(tripHist.rows.map(x => [`${x.year}-${x.month}`, { ...x, fy_start_year: x.month >= 4 ? x.year : x.year - 1, source: 'FY workbook',
     diesel_price: dieselMap.get(`${x.year}-${x.month}`) ?? null, diesel_sum: dieselSumMap.get(`${x.year}-${x.month}`) ?? null }]));
   const histMap = new Map(history.rows.map(h => {
     const year = h.month >= 4 ? h.fy_start_year : h.fy_start_year + 1;
@@ -1855,11 +1909,12 @@ async function cumulativeData(q) {
   const monthRow = (fyYear, m) => {
     const year = m >= 4 ? fyYear : fyYear + 1;
     const key = `${year}-${m}`;
-    const r = portalMap.get(key) || histMap.get(key);
+    const r = portalMap.get(key) || tripHistMap.get(key) || histMap.get(key);
     return monthMetrics(r || { year, month: m, fy_start_year: fyYear, source: null, trips: 0 });
   };
   const months = FY_MONTHS.map(m => monthRow(fy, m));
-  const fys = [...new Set([fy, ...portal.rows.map(x => x.month >= 4 ? x.year : x.year - 1), ...history.rows.map(h => h.fy_start_year)])].sort();
+  const fys = [...new Set([fy, ...portal.rows.map(x => x.month >= 4 ? x.year : x.year - 1), ...tripHist.rows.map(x => x.month >= 4 ? x.year : x.year - 1),
+    ...history.rows.map(h => h.fy_start_year)])].sort();
   const years = fys.map(y => {
     const rows = FY_MONTHS.map(m => monthRow(y, m));
     const sum = k => rows.reduce((s, r) => s + (parseFloat(r[k]) || 0), 0);
