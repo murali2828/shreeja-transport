@@ -157,8 +157,10 @@ cmd_uploads() {
   has_uploads || { log "uploads: no uploads volume configured for $TIER — skipped"; return 0; }
   tools; mkdir -p "$UPLOADS_DIR"
   log "uploads volume ${UPLOADS_VOL_NAME} → $UPLOADS_DIR"
+  # rsync -a copies the volume root's owner onto /dst; the copy is handed back
+  # to the deploy login so it can write .last-sync and read the files.
   docker run --rm -v "${UPLOADS_VOL_NAME}:/src:ro" -v "$UPLOADS_DIR:/dst" "$TOOLS_IMG" \
-    rsync -a --delete --exclude '.last-sync' /src/ /dst/ 2>&1 | tail -n 3 | tee -a "$LOG"
+    sh -c "rsync -a --delete --exclude '.last-sync' /src/ /dst/ && chown -R $(id -u):$(id -g) /dst" 2>&1 | tail -n 3 | tee -a "$LOG"
   date +%s > "$UPLOADS_DIR/.last-sync"
   log "uploads ok ($(du -sh "$UPLOADS_DIR" | cut -f1), $(find "$UPLOADS_DIR" -type f | wc -l) files)"
 }
