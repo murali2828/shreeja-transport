@@ -64,3 +64,12 @@ CLAUDE.local.md
 
 # Day Optimizer replay fixtures (production extracts, never committed)
 backend/scripts/fixtures/
+
+# ─── ops-kit (backups / restore) — secrets and restore scratch, never commit ──
+.env.deploy
+backups/
+.escrow/
+restored-config/
+restored-escrow/
+ops/postgres/conf.d/*.conf
+!ops/postgres/conf.d/*.conf.example

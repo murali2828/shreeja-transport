@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Added
+- Backup and restore on the shared **ops-kit** (`ops/`, from Shreeja Assure; ADR-023): point-in-time recovery of each tier's database to any minute in the last 4 weeks (pgBackRest in the Postgres 16 Alpine image, WAL archived every ≤ 60 s, encrypted repository), encrypted nightly dumps and config bundle, uploads, code bundle and image archive, FTP mirror to the NAS every 4 hours behind a shrink guard, e-mail alerts (watchdog every 2 min, backup check every 30 min), scripted scratch-first restores (`ops/bin/restore.sh --time / --latest / --dump`, `--swap` only with typed confirmation) and `ops/bin/deploy.sh` as the deploy path (dump first, health check on the deployed git sha). `/api/health` now reports `git_sha`; new `/api/health/ready` and `/api/health/backup`. Server bring-up, restore runbook and drills: `docs/BACKUP_RESTORE_STRATEGY.md`. Template `.env.deploy.example` (owner, 2026-10-13).
+
 ## 2026-10-12 — promoted to `main` 2026-10-12 (no migrations)
 
 ### Changed

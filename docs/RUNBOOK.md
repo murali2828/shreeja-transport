@@ -33,7 +33,7 @@ match the running stack (`docker compose ls`), otherwise a second stack is creat
 | Migrations | `docker logs shreeja-backend 2>&1 \| grep '\[migrate\]'` | last line `All migrations complete.` |
 | GPS poller | `GET /api/tracking/status` (JWT, or the Live Tracking page) | `enabled: true`, recent `lastSuccessAt`, `lastError: null` |
 | Assure feed | `TMS_URL=… ASSURE_API_KEY=… docs/assure-handover/scripts/verify_assure_api.sh` | all checks pass |
-| Backups | `deploy/backup.sh status` | fresh dumps locally and on NAS |
+| Backups | `ops/bin/backup.sh <tier> status` | `ok: true`, encrypted, recent WAL archive and off-box copy |
 
 ## Logs
 
@@ -66,21 +66,27 @@ with login id) and its field-level Changes view.
 | Document/challan upload rejected with a size message | >10 MB (documents) / >15 MB (challans, `CHALLAN_MAX_MB`) or wrong type | compress/convert the file |
 | Upload fails with a bare `413` before any app message | host nginx `client_max_body_size` missing (default 1 MB) — both `sites-enabled/tms…` and `qatms…` need `client_max_body_size 20M;` in the **443** server block (added 2026-09-29) | add the line, `nginx -t && systemctl reload nginx` |
 | `[DB SLOW]` lines, timeouts at 30 s | heavy report over a long range | narrow the range; check indexes (migrations 026, 039) |
-| Uploads gone after restore | uploads volume not restored | `deploy/restore.sh uploads <tier> --latest` |
+| Uploads gone after restore | uploads volume not restored | `ops/bin/backup.sh <tier> restore-uploads` |
 | Disk full | Docker images/logs or backups | `docker system prune` (images only), check `BACKUP_DIR` retention |
 
 ## Backup and restore
 
-Nightly cron (01:15) runs `deploy/backup.sh run`; uploads + mirror every 4 h. Manual:
+ops-kit (`ops/`, strategy and bring-up: `BACKUP_RESTORE_STRATEGY.md`). Run in the tier's
+checkout (`~/shreeja-qa` → `qa`, `~/shreeja-transport` → `prod`):
 ```bash
-deploy/backup.sh dumps            # DB dumps for all tiers now
-deploy/backup.sh config && deploy/backup.sh mirror   # after any secret change
-deploy/restore.sh list
-deploy/restore.sh db prod --latest            # drill into a scratch DB (safe)
-deploy/restore.sh db prod --latest --swap     # replace live DB, typed confirmation
+ops/bin/backup.sh prod status                 # every block green, repo_cipher aes-256-cbc
+ops/bin/backup.sh prod dump                   # encrypted dump now
+ops/bin/backup.sh prod config                 # after any secret change (then: offsite)
+ops/bin/restore.sh prod --time "2026-10-13 14:05"   # point in time → scratch cluster 127.0.0.1:5599 (safe)
+ops/bin/restore.sh prod --latest --swap       # replace the live DB, typed confirmation
+ops/bin/restore.sh prod --cleanup             # drop the scratch cluster
+ops/bin/backup.sh prod restore-uploads        # uploads volume back from the mirror
+ops/bin/healthcheck.sh prod status            # watchdog view of every check
 ```
-Scenario A (bad change) and B (server gone) steps: `BACKUP_RESTORE_STRATEGY.md` §4.
-Passphrase and FTP password live in the IT vault, not in git.
+Cron: 01:15 nightly backup, every 30 min check, every 4 h uploads + FTP mirror, Sunday
+verify; watchdog every 2 min. Scenario A (bad change) and B (server gone):
+`BACKUP_RESTORE_STRATEGY.md` §4. The three passphrases live in the vault and the sealed
+envelope, never in git or any backup.
 
 ## When an integration fails
 

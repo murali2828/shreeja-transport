@@ -1,0 +1,9 @@
+-- ops-kit — OPTIONAL project-specific verification printed after every restore
+-- (restore.sh runs it against the scratch cluster). Copy to ops/verify.sql and
+-- set OPS_VERIFY_SQL=ops/verify.sql in ops.env. Without it restore.sh prints
+-- now() and an exact row count of every public table.
+SELECT 'now() in restored cluster: ' || now();
+SELECT 'latest audit entry:       ' || COALESCE(max(created_at)::text, '-') FROM audit_log;
+SELECT rpad(t, 22) || count
+  FROM (SELECT 'users' AS t, count(*)::text AS count FROM users
+        UNION ALL SELECT 'orders', count(*)::text FROM orders) x;

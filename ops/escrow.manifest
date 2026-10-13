@@ -1,0 +1,13 @@
+# Required contents of <repo>/.escrow/ — one glob per line, relative to .escrow/.
+# "?" prefix = OPTIONAL. Checked by ops/bin/escrow.sh check. EDIT FOR THIS PROJECT:
+# keep only what the project actually has (a web-only app has no mobile keys)
+# and add its own service-account keys. What each item is and how to export it:
+# ops/docs/credentials-escrow.md.
+accounts/accounts.md                 # register of third-party accounts → vault entry + custodians + 2FA recovery-code location
+?mobile/credentials.json             # EAS: Android keystore + passwords (eas credentials → download to credentials.json)
+?mobile/*.jks                        # the Android upload keystore
+?mobile/AuthKey_*.p8                 # Apple APNs key and/or App Store Connect API key
+?mobile/asc-api-key.txt              # ASC API Key ID + Issuer ID
+?mobile/play-service-account.json    # Google Play Console API service account
+?cloud/fcm-v1-service-account.json   # Firebase Cloud Messaging V1 key
+?cloud/*.json                        # any other cloud service-account key (object storage, DNS API, mail API …)

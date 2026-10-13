@@ -58,7 +58,29 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // ─── Health check ─────────────────────────────────────────────────────────────
-app.get('/api/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+// /api/health carries the deployed git sha (ops/bin/deploy.sh checks it);
+// /ready and /backup are read by the ops watchdog (ops/bin/healthcheck.sh).
+app.get('/api/health', (_req, res) => res.json({ ok: true, git_sha: process.env.GIT_SHA || null, ts: new Date().toISOString() }));
+app.get('/api/health/ready', async (_req, res) => {
+  try { await require('./config/db').query('SELECT 1'); res.json({ ok: true, db: 'ok' }); }
+  catch { res.status(503).json({ ok: false, db: 'down' }); }
+});
+// Continuous WAL archiving status (pg_stat_archiver) — 503 when archiving is off,
+// has never run, or the last attempt failed after the last success.
+app.get('/api/health/backup', async (_req, res) => {
+  try {
+    const { rows } = await require('./config/db').query(`
+      SELECT current_setting('archive_mode') AS archive_mode, last_archived_time, last_failed_time,
+             COALESCE(extract(epoch FROM now() - last_archived_time) / 60, -1)::int AS archive_lag_min
+        FROM pg_stat_archiver`);
+    const a = rows[0];
+    const problems = [];
+    if (a.archive_mode !== 'on') problems.push('archive_mode is off');
+    else if (a.archive_lag_min < 0) problems.push('no WAL segment archived yet');
+    if (a.last_failed_time && (!a.last_archived_time || a.last_failed_time > a.last_archived_time)) problems.push('last archive attempt failed');
+    res.status(problems.length ? 503 : 200).json({ ok: !problems.length, problems, archive_lag_min: a.archive_lag_min });
+  } catch { res.status(503).json({ ok: false, problems: ['backup status unavailable'] }); }
+});
 
 // ─── Audit trail — records every mutating API call (who/what/when) ───────────
 app.use('/api', require('./middleware/auditLog'));

@@ -1,0 +1,13 @@
+{
+  // CI dependency gate (ops/ci/dependency-audit.yml → copy to .github/workflows/).
+  // Fails the build on any NEW moderate+ vulnerability. Copy this file into
+  // EACH npm package directory listed in the workflow's matrix.
+  //
+  // The allowlist is the KNOWN baseline: add an advisory ONLY when there is no
+  // upstream fix (or the fix is a breaking major upgrade you have scheduled),
+  // with a dated comment saying why and when to remove it. Fixes happen by
+  // upgrading (npm update / npm install <pkg>@<fixed> / package.json
+  // overrides), never by allowlisting a new finding you have not understood.
+  "moderate": true,
+  "allowlist": []
+}

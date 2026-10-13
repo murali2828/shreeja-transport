@@ -12,8 +12,8 @@
 - Frontend build: `cd frontend && npx vite build --logLevel error` (needs `npm ci` once)
 - Local dev: `cd backend && npm run dev` (port 5000) · `cd frontend && npm run dev` (5173, proxies `/api`)
 - Migrations locally: `cd backend && npm run migrate`
-- QA deploy (operator, on server): `docker compose -p shreeja-qa -f docker-compose.qa.yml --env-file .env.qa up -d --build`
-- PROD deploy (operator, on server): `docker compose -p shreeja-transport -f docker-compose.yml --env-file .env up -d --build`
+- QA deploy (operator, on server): `cd ~/shreeja-qa && ops/bin/deploy.sh qa` (before the ops-kit bring-up: `docker compose -p shreeja-qa -f docker-compose.qa.yml --env-file .env.qa up -d --build`)
+- PROD deploy (operator, on server): `cd ~/shreeja-transport && ops/bin/deploy.sh prod` (before bring-up: `docker compose -p shreeja-transport -f docker-compose.yml --env-file .env up -d --build`)
 - Nobody runs docker/psql from the dev sandbox; the operator runs server commands
 
 ## Architecture
@@ -24,6 +24,7 @@
 - Shared logic lives in `services/` (executionData, distanceLookup, roadDistance, optimizerCore, optimizerV2 + dayOptimizerData, rates, wheelseye, changeTracker)
 - Distance cascade: `distance_master` → Google Routes API (cached back) → Haversine × `ROAD_DISTANCE_FACTOR`
 - Background jobs: `jobs/docAlerts.js` (document expiry mail), `jobs/wheelseyePoll.js` (GPS every 120s)
+- Backups / restore / deploy: ops-kit in `ops/` (settings `ops.env`, secrets `.env.deploy` on the server); `ops/bin/deploy.sh <tier>` is the deploy path; strategy and runbook in `docs/BACKUP_RESTORE_STRATEGY.md` (ADR-023)
 - Integrations: Google Routes, WheelsEye GPS, Assure read-only API (`routes/integrations.js`, X-Assure-Key), SMTP
 - Frontend: `src/api/index.js` single axios client; `App.jsx` routes with role guards; pages by module
 - Detail: @docs/ARCHITECTURE.md

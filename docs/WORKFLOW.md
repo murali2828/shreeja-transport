@@ -97,11 +97,11 @@ nothing extra. A new env variable must be added to the server's `.env` / `.env.q
 
 ## Rollback
 
-- Code: `git checkout <previous sha or tag>` on the server and re-run the compose `up
-  --build` command. Migrations are forward-only; if the bad release added a migration,
+- Code: `git checkout <previous sha or tag>` on the server and run
+  `ops/bin/deploy.sh <tier> --no-pull`. Migrations are forward-only; if the bad release added a migration,
   write a new corrective migration rather than deleting the row from `schema_migrations`.
-- Data: `deploy/restore.sh db <tier> --latest` restores to a scratch DB for inspection;
-  `--swap` replaces the live DB with typed confirmation. Full runbook in
+- Data: `ops/bin/restore.sh <tier> --time "<last good minute>"` (or `--latest`) restores
+  to a scratch cluster for inspection; `--swap` replaces the live DB with typed confirmation. Full runbook in
   `BACKUP_RESTORE_STRATEGY.md` section 4.
 - Feature flags are the fastest rollback for billing (`BILLING_ENABLED`), tracking
   (`WHEELSEYE_ACCESS_TOKEN` blank) and the Assure feed (`ASSURE_API_KEY` blank): edit the
@@ -110,10 +110,10 @@ nothing extra. A new env variable must be added to the server's `.env` / `.env.q
 ## Secrets and configuration
 
 - Real values live only in the server's `.env` (prod) and `.env.qa` (QA) and in
-  `deploy/backup.env`; all three are git-ignored. Templates: `.env.example`,
-  `.env.qa.example`, `deploy/backup.env.example`.
+  `.env.deploy` (ops-kit secrets, one per checkout); all git-ignored. Templates:
+  `.env.example`, `.env.qa.example`, `.env.deploy.example`.
 - Generate secrets with `openssl rand -base64 32` (JWT) / `openssl rand -hex 32` (Assure).
   QA and PROD must use different `JWT_SECRET`, DB passwords and API keys.
-- After any secret change: `deploy/backup.sh config && deploy/backup.sh mirror`.
+- After any secret change: `ops/bin/backup.sh <tier> config && ops/bin/backup.sh <tier> offsite`.
 - Key rotation for Assure uses `ASSURE_API_KEY_NEXT` (both accepted while set).
 - Never paste live tokens into commits, tickets, chat or docs; the code never logs them.

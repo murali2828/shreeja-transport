@@ -1,0 +1,70 @@
+# ===========================================================================
+# ops-kit — the Postgres service block every tier's compose file needs, plus
+# the API mounts. Paste into docker-compose.<tier>.yml and replace QA_ with
+# the tier prefix. The compose project `name:` MUST equal <TIER>_PROJECT in
+# ops.env (default <slug>-<tier>); volume names MUST equal <TIER>_PGDATA_VOL /
+# <TIER>_UPLOADS_VOL (default <tier>_pgdata / <tier>_uploads).
+# ===========================================================================
+name: myapp-qa
+
+services:
+  postgres:
+    build:
+      context: ./ops/postgres
+      args:
+        BASE_IMAGE: postgres:16          # or pgvector/pgvector:pg16 …
+    image: myapp-qa-postgres             # = <TIER>_DB_IMAGE (default <project>-postgres)
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    # archive_mode/archive_command stream every WAL segment to the pgBackRest
+    # repository (bind-mounted /backups) — archive_timeout=60 caps data-at-risk
+    # at one minute. Until `ops/bin/backup.sh qa init` has created the stanza,
+    # WAL accumulates in pg_wal (never lost) — run init right after the first up.
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=main archive-push %p
+      - -c
+      - archive_timeout=60
+    environment:
+      POSTGRES_USER: ${QA_DB_USER:-myapp_qa_user}
+      POSTGRES_PASSWORD: ${QA_DB_PASS:?set QA_DB_PASS in .env.deploy}
+      POSTGRES_DB: ${QA_DB_NAME:-myapp_qa_db}
+      PGBACKREST_PG1_USER: ${QA_DB_USER:-myapp_qa_user}   # pgBackRest connects as the tier's superuser
+      TZ: Asia/Kolkata
+      PGTZ: Asia/Kolkata
+    volumes:
+      - qa_pgdata:/var/lib/postgresql/data
+      - ${BACKUP_DIR:-/opt/myapp/backups}/pg-qa:/backups            # repo1 (local)
+      - ${BACKUP_NAS_DIR:-/opt/myapp/backups/nas}/pg-qa:/nas         # repo2 when conf.d/nas-repo.conf exists
+      - ./ops/postgres/conf.d:/etc/pgbackrest/conf.d:ro               # nas/s3 repos + cipher.conf (git-ignored *.conf)
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${QA_DB_USER:-myapp_qa_user} -d ${QA_DB_NAME:-myapp_qa_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    # … your API service …
+    environment:
+      # TWO roles: the API RUNS as the restricted app role; migrations/seeds use the owner.
+      DATABASE_URL: postgresql://${QA_DB_APP_USER:-myapp_qa_app}:${QA_DB_APP_PASS:?set QA_DB_APP_PASS}@postgres:5432/${QA_DB_NAME:-myapp_qa_db}
+      DATABASE_ADMIN_URL: postgresql://${QA_DB_USER:-myapp_qa_user}:${QA_DB_PASS:?set QA_DB_PASS}@postgres:5432/${QA_DB_NAME:-myapp_qa_db}
+      MASTER_EXPORT_DIR: /app/backups/masters          # only if the project has a master export job
+    volumes:
+      - qa_uploads:/app/uploads
+      - ${BACKUP_DIR:-/opt/myapp/backups}/masters-qa:/app/backups/masters
+    build:
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}   # surfaced by the health endpoint; deploy.sh exports it
+
+volumes:
+  qa_pgdata:
+  qa_uploads:

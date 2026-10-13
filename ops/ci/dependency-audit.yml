@@ -1,0 +1,45 @@
+name: Dependency Audit
+
+# Blocks a PR from merging if it introduces a NEW moderate+ severity
+# vulnerability into any package in the matrix, and re-checks the lockfiles
+# weekly so a CVE disclosed against an already-installed version is caught
+# even with no code change. Each package's audit-ci.jsonc documents the
+# currently-known, deliberately-allowlisted baseline (no-fix-available or
+# breaking-upgrade-only issues) — see that file for the reasoning per item.
+on:
+  pull_request:
+    branches: [main, qa]
+  push:
+    branches: [main, qa]
+  schedule:
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: npm audit (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [backend, web]   # every npm package directory in the repo (add mobile etc.)
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+
+      - name: Install dependencies (from lockfile only)
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npx --yes audit-ci@^7 --config audit-ci.jsonc

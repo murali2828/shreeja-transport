@@ -3,10 +3,21 @@
 services:
 
   db:
-    image: postgres:16-alpine
+    # Postgres 16 (Alpine, as before) + pgBackRest: every WAL segment is
+    # archived within 60 s, so the database can be restored to any minute
+    # (ops/README.md, docs/BACKUP_RESTORE_STRATEGY.md).
+    build:
+      context: ./ops/postgres
+      args:
+        BASE_IMAGE: postgres:16-alpine
+    image: shreeja-transport-db
     command: ["postgres", "-c", "shared_buffers=256MB",
               "-c", "statement_timeout=60000",
-              "-c", "idle_in_transaction_session_timeout=300000"]
+              "-c", "idle_in_transaction_session_timeout=300000",
+              "-c", "wal_level=replica",
+              "-c", "archive_mode=on",
+              "-c", "archive_command=pgbackrest --stanza=main archive-push %p",
+              "-c", "archive_timeout=60"]
     container_name: shreeja-db
     restart: always
     logging:
@@ -18,8 +29,12 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       TZ:                Asia/Kolkata
       PGTZ:              Asia/Kolkata
+      PGBACKREST_PG1_USER: ${DB_USER:-shreeja_db}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ${BACKUP_DIR:-/home/chaitanya/tms-backups}/pg-prod:/backups               # pgBackRest repo1
+      - ${BACKUP_NAS_DIR:-/home/chaitanya/tms-backups/nas}/pg-prod:/nas          # repo2 only if conf.d/nas-repo.conf exists
+      - ./ops/postgres/conf.d:/etc/pgbackrest/conf.d:ro                       # cipher.conf (git-ignored)
     networks:
       - shreeja-net
     healthcheck:
@@ -30,9 +45,12 @@ services:
       start_period: 10s
 
   backend:
+    image: shreeja-transport-backend                 # = the name compose already gave it; backed up nightly
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}   # reported by /api/health; ops/bin/deploy.sh exports it
     container_name: shreeja-backend
     restart: always
     logging:
@@ -61,6 +79,7 @@ services:
       start_period: 30s
 
   frontend:
+    image: shreeja-transport-frontend                 # = the name compose already gave it; backed up nightly
     build:
       context: ./frontend
       dockerfile: Dockerfile

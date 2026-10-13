@@ -1,0 +1,38 @@
+# OPTIONAL pgBackRest repository on S3-compatible object storage — the
+# OFF-SITE copy (another region / another provider / the on-prem MinIO in a
+# different building). Copy to `s3-repo.conf` in this directory (git-ignored —
+# it carries a secret), then `ops/bin/backup.sh <tier> init`
+# (stanza-create/upgrade registers the new repo) — every WAL segment and base
+# backup is then written here as well, within a minute.
+#
+# Index: repo3 when the NAS repo2 (nas-repo.conf) exists, otherwise change
+# every "repo3-" below to "repo2-".
+#
+# IMMUTABILITY (ops/docs/disaster-recovery.md §2d) — set up on the bucket:
+#   * versioning ON, and OBJECT LOCK in COMPLIANCE mode with a default
+#     retention ≥ the PITR window (35 days for 4 weekly fulls). pgBackRest's
+#     expire then only adds delete markers; the locked versions stay until
+#     the retention lapses, so a compromised server cannot destroy them.
+#   * a DEDICATED access key whose policy allows s3:PutObject, s3:GetObject,
+#     s3:ListBucket, s3:DeleteObject (delete marker only) and DENIES
+#     s3:DeleteObjectVersion, s3:BypassGovernanceRetention, s3:PutBucketPolicy,
+#     s3:PutObjectRetention — the key on this server can write and expire,
+#     never erase history.
+#   * lifecycle rule: expire non-current versions after retention + 7 days.
+# Encryption: with BACKUP_REPO_CIPHER_PASS set, backup.sh writes the
+# matching repo3-cipher-* lines into conf.d/cipher.conf — objects are
+# encrypted BEFORE they leave the server, independent of bucket SSE.
+[global]
+repo3-type=s3
+repo3-s3-endpoint=s3.ap-south-1.amazonaws.com
+repo3-s3-bucket=myapp-backups-offsite
+repo3-s3-region=ap-south-1
+repo3-s3-key=CHANGE_ME_ACCESS_KEY
+repo3-s3-key-secret=CHANGE_ME_SECRET_KEY
+repo3-s3-uri-style=path
+repo3-path=/pg-qa
+repo3-retention-full=4
+repo3-retention-diff=14
+repo3-retention-archive-type=full
+# Self-signed MinIO certificate? Uncomment:
+# repo3-storage-verify-tls=n

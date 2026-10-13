@@ -1,0 +1,15 @@
+# Second pgBackRest repository ON THE NAS (NFS share mounted on the host at
+# BACKUP_NAS_DIR and bind-mounted into the container at /nas by compose).
+# With this file present every WAL segment and every base backup is written
+# to BOTH repo1 (local disk, fast restores) and repo2 (the NAS) — so a dead
+# server disk loses at most the last minute, and a DR restore on another
+# machine reads straight from the NAS (restore.sh --from-nas).
+#
+# `ops/bin/backup.sh <tier> init` copies this file to nas-repo.conf
+# automatically when BACKUP_NAS_DIR is mounted. No secrets in here.
+[global]
+repo2-type=posix
+repo2-path=/nas
+repo2-retention-full=8
+repo2-retention-diff=30
+repo2-retention-archive-type=full

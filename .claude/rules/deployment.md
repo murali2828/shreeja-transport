@@ -27,7 +27,10 @@ paths:
 - Host nginx (`deploy/reverse-proxy.conf.example`) terminates TLS; `app.set('trust proxy', 1)`
   relies on it, so do not add another proxy layer without updating that.
 - `deploy/deploy.sh` is the legacy PM2/Nginx installer (pre-Docker); do not extend it.
-  `deploy/backup.sh` / `restore.sh` are live tooling — changes must keep the drill in
-  `docs/BACKUP_RESTORE_STRATEGY.md` valid.
+  Backups, restore, watchdog and deploys run on the ops-kit (`ops/`, settings `ops.env`,
+  secrets `.env.deploy`); changes must keep the drill in `docs/BACKUP_RESTORE_STRATEGY.md`
+  valid. `ops/bin/deploy.sh <tier>` is the deploy path — a hand-run `up -d --build`
+  rebuilds the database image and restarts the database. The interim `deploy/backup.sh` /
+  `restore.sh` run only until the switch-over in that document.
 - CI (`.github/workflows/ci.yml`) is syntax check + build only; do not add steps that need
   secrets.

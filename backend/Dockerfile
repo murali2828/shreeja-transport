@@ -19,5 +19,9 @@ EXPOSE 5000
 
 ENV NODE_ENV=production
 
+# Commit being deployed, reported by /api/health (ops/bin/deploy.sh passes it)
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 # Runs migrations first, then starts the Express server
 CMD ["sh", "-c", "node src/config/migrate.js && node src/app.js"]
