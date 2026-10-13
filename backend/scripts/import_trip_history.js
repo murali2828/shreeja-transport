@@ -93,10 +93,17 @@ function readSheet(ws) {
   if (missing.length) throw new Error(`sheet "${ws.name}": columns not found: ${missing.join(', ')}`);
   const monthStart = iso(sm.year, sm.month, 1);
   const out = [], skipped = [];
+  let toll = null;
   for (let r = 3; r <= ws.rowCount; r++) {
     const row = ws.getRow(r); const g = k => (col[k] ? row.getCell(col[k]).value : null);
     const vehicle = str(g('vehicle'));
-    if (!vehicle) continue;                                   // blanks and total rows
+    if (!vehicle) {
+      // The month's toll: one "Toll cost" row below the trips, amount in the
+      // Amount column ("9K KM Fixed cost" rows are left out — owner, later).
+      const label = [1, 2, 3, 4].map(c => str(row.getCell(c).value)).join(' ').toLowerCase();
+      if (/toll\s*cost/.test(label) && num(g('amount')) != null) toll = r2(num(g('amount')));
+      continue;                                               // blanks and total rows
+    }
     const d = cellDate(g('date'));
     if (!d) { skipped.push({ sheet: ws.name, row: r, reason: `unreadable date "${str(g('date'))}"` }); continue; }
     const notes = [];
@@ -118,7 +125,7 @@ function readSheet(ws) {
       bmcu_coverage: str(g('bmcus')) || null, notes: notes.join('; ') || null,
     });
   }
-  return { rows: out, skipped };
+  return { rows: out, skipped, toll: toll == null ? null : { month_start: monthStart, toll_amount: toll, source_sheet: ws.name } };
 }
 
 const totals = rows => rows.reduce((t, r) => ({ trips: t.trips + 1, km: t.km + (r.billed_km || 0), amount: t.amount + (r.amount || 0), litres: t.litres + (r.milk_litres || 0) }),
@@ -143,10 +150,10 @@ const fmt = n => Math.round(n).toLocaleString('en-IN');
     await pool.end(); return;
   }
 
-  const all = [], skipped = [];
+  const all = [], skipped = [], tolls = [];
   for (const name of SHEETS) {
     const ws = wb.getWorksheet(name); if (!ws) throw new Error(`sheet "${name}" not found (sheets: ${wb.worksheets.map(w => w.name).join(', ')})`);
-    const r = readSheet(ws); all.push(...r.rows); skipped.push(...r.skipped);
+    const r = readSheet(ws); all.push(...r.rows); skipped.push(...r.skipped); if (r.toll) tolls.push(r.toll);
   }
   // Masters: tanker by normalised number, vendor by vendor code.
   const tankers = new Map((await pool.query('SELECT id, tanker_number FROM tankers')).rows.map(t => [norm(t.tanker_number), t.id]));
@@ -162,6 +169,9 @@ const fmt = n => Math.round(n).toLocaleString('en-IN');
 
   console.log(`${APPLY ? 'APPLY' : 'DRY RUN'} — ${path.basename(FILE)}`);
   for (const name of SHEETS) { const t = totals(all.filter(r => r.source_sheet === name)); console.log(`  ${name.padEnd(14)} ${String(t.trips).padStart(5)} trips  ${fmt(t.km).padStart(10)} km  ₹${fmt(t.amount).padStart(13)}  ${fmt(t.litres).padStart(12)} L`); }
+  console.log(`\nMonthly toll (${tolls.length}):`); tolls.forEach(t => console.log(`  ${t.source_sheet.padEnd(14)} ₹${fmt(t.toll_amount)}`));
+  const missingToll = SHEETS.filter(n => !tolls.some(t => t.source_sheet === n));
+  if (missingToll.length) console.log(`  no "Toll cost" row on: ${missingToll.join(', ')}`);
   const corrected = all.filter(r => r.notes);
   console.log(`\nCorrections (${corrected.length}):`); corrected.slice(0, 50).forEach(r => console.log(`  ${r.source_sheet} row ${r.source_row} ${r.tanker_number}: ${r.notes}`));
   if (corrected.length > 50) console.log(`  … ${corrected.length - 50} more in the CSV`);
@@ -188,7 +198,12 @@ const fmt = n => Math.round(n).toLocaleString('en-IN');
       await client.query(`INSERT INTO historical_trips (${cols.join(',')}, batch) VALUES (${cols.map((_, i) => `$${i + 1}`).join(',')}, $${cols.length + 1})`,
         [...cols.map(c => r[c] ?? null), path.basename(FILE)]);
     }
+    for (const t of tolls) {
+      await client.query(`INSERT INTO historical_month_tolls (month_start, toll_amount, source_sheet, batch) VALUES ($1,$2,$3,$4)
+        ON CONFLICT (month_start) DO UPDATE SET toll_amount = EXCLUDED.toll_amount, source_sheet = EXCLUDED.source_sheet, batch = EXCLUDED.batch, created_at = NOW()`,
+        [t.month_start, t.toll_amount, t.source_sheet, path.basename(FILE)]);
+    }
     await client.query('COMMIT');
-    console.log(`\nLoaded ${all.length} trips into historical_trips.`);
+    console.log(`\nLoaded ${all.length} trips into historical_trips and ${tolls.length} monthly tolls into historical_month_tolls.`);
   } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); await pool.end(); }
 })().catch(e => { console.error('[history] failed:', e.message); process.exit(1); });

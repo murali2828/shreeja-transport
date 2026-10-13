@@ -1419,6 +1419,13 @@ function PaymentReport() {
             </span>
           </div>
 
+          {(data.history_tolls || []).length > 0 && (
+            <div className="text-xs rounded-lg px-3 py-2" style={{ background: '#FFF7ED', color: '#7C2D12' }}>
+              {data.history_tolls.map(t => (
+                <div key={t.month_start}>Toll for {new Date(t.month_start + 'T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })} (FY workbook, monthly total): <b>₹ {nf(t.toll_amount)}</b> — not split per tanker or date</div>
+              ))}
+            </div>
+          )}
           {tab === 'months' && <CumulativeMonths months={data.months} total={data.months_total}/>}
           {tab === 'years' && <CumulativeYears years={data.years} isAdmin={isAdmin} onHistoryChanged={() => qc.invalidateQueries({ queryKey: ['billing-report'] })}/>}
 
@@ -1529,8 +1536,8 @@ function PaymentReport() {
 const MC_COLS = [
   ['Tankers capacity (L)', 'capacity_litres', 0], ['Milk received (L)', 'milk_litres', 0], ['Milk received (kg)', 'milk_kgs', 0],
   ['Fat %', 'fat_pct', 3], ['SNF %', 'snf_pct', 3], ['TS %', 'ts_pct', 3], ['Fat kgs', 'kg_fat', 0], ['SNF kgs', 'kg_snf', 0],
-  ['Total KM', 'total_km', 0], ['Rate/KM', 'rate_per_km', 2], ['Amount (₹)', 'amount', 0], ['Cost/Ltr', 'cost_per_litre', 4],
-  ['Util %', 'utilisation_pct', 2], ['Trips', 'trips', 0], ['Avg KM', 'avg_km', 2], ['Diesel Price', 'diesel_sum', 2], ['Diesel Rate', 'diesel_price', 2],
+  ['Total KM', 'total_km', 0], ['Rate/KM', 'rate_per_km', 2], ['Amount (₹)', 'amount', 0], ['Toll (₹)', 'toll_amount', 0], ['Total cost (₹)', 'total_cost', 0],
+  ['Cost/Ltr', 'cost_per_litre', 4], ['Util %', 'utilisation_pct', 2], ['Trips', 'trips', 0], ['Avg KM', 'avg_km', 2], ['Diesel Price', 'diesel_sum', 2], ['Diesel Rate', 'diesel_price', 2],
 ];
 function CumulativeMonths({ months, total }) {
   const cell = (m, k, d) => m[k] == null ? '—' : nf(m[k], d);
@@ -1566,6 +1573,7 @@ const YC_ROWS = [
   ['Tanker capacities (L)', 'capacity_litres', 0], ['Milk received (L)', 'milk_litres', 0], ['Milk received (kg)', 'milk_kgs', 0],
   ['Fat %', 'fat_pct', 3], ['SNF %', 'snf_pct', 3], ['TS %', 'ts_pct', 3], ['Kg fat', 'kg_fat', 0], ['Kg SNF', 'kg_snf', 0],
   ['Milk per day (L)', 'milk_per_day', 0], ['Total KM', 'total_km', 0], ['Rate/KM', 'rate_per_km', 2], ['Amount (₹)', 'amount', 0],
+  ['Toll (₹)', 'toll_amount', 0], ['Total cost (₹)', 'total_cost', 0],
   ['Cost/Ltr', 'cost_per_litre', 4], ['Util %', 'utilisation_pct', 2], ['Diesel ₹/L', 'diesel_price', 2], ['Trips', 'trips', 0], ['Avg KM', 'avg_km', 2],
 ];
 function CumulativeYears({ years, isAdmin, onHistoryChanged }) {

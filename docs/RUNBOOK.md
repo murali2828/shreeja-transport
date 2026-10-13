@@ -188,6 +188,7 @@ docker exec -i shreeja-qa-backend node scripts/import_trip_history.js /tmp/FY.xl
 docker exec -i shreeja-qa-backend node scripts/import_trip_history.js /tmp/FY.xlsx --compare "September'26"  # sheet vs portal billing
 docker exec -i shreeja-qa-backend node scripts/import_trip_history.js /tmp/FY.xlsx --apply                 # load April'26 … August'26
 ```
+The dry run also lists the monthly toll per sheet ("Toll cost" row: Apr ₹14,49,817 … Aug ₹16,75,521), loaded with the trips into `historical_month_tolls`; re-running `--apply` after a deploy that added migration 066 loads the tolls for trips already loaded.
 Expected dry-run totals: April 1,132 trips ₹1,63,85,040 · May 1,143 ₹1,70,50,219 · June
 1,292 ₹1,88,97,381 · July 1,312 ₹1,80,46,355 · August 1,291 ₹1,71,75,117. Re-running a
 sheet replaces its rows (corrected workbook). Check: Billing → Payment Report → April
