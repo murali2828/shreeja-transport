@@ -177,6 +177,12 @@ export const getTrackingTripReport  = (executionId) => api.get(`/tracking/trip/$
 export const getTrackingFleetReport = (p) => api.get('/tracking/report', { params: p, responseType: 'blob' });
 
 // ── Day wise Tanker Utilisation ───────────────────────────────────────────────
+// Tanker Utilisation — Month / Year Cumulative (moved from the Payment Report)
+export const getCumulative = (params) => api.get('/reports/cumulative', { params });
+export const downloadCumulativeExcel = (params) => api.get('/reports/cumulative/excel', { params, responseType: 'blob' }).then(r => {
+  const url = URL.createObjectURL(r.data); const a = document.createElement('a');
+  a.href = url; a.download = `tanker_utilisation_cumulative_${params.from}.xlsx`; a.click(); URL.revokeObjectURL(url);
+});
 export const getDayUtilisation = (p) => api.get('/reports/day-utilisation', { params: p });
 export const downloadDayUtilisationExcel = (from, to, threshold) =>
   api.get(`/reports/day-utilisation/excel?from_date=${from}&to_date=${to}&threshold=${threshold}`, { responseType: 'blob' }).then(r => {

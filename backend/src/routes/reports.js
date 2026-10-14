@@ -1979,4 +1979,47 @@ router.get('/trip-durations/excel', authenticate, authorizeOrModule('reports', '
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Tanker Utilisation: Month / Year Cumulative (moved from the Payment
+// Report, owner 2026-10-14; services/transportCumulative.js). Reports module.
+const cumul = require('../services/transportCumulative');
+const multer = require('multer');
+const cumGate = [authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller')];
+const isoOk = s => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+router.get('/cumulative', ...cumGate, async (req, res) => {
+  const from = isoOk(req.query.from) ? req.query.from : new Date().toISOString().slice(0, 10);
+  try { res.json(await cumul.cumulativeData({ from, status: req.query.status })); }
+  catch (err) { console.error('[reports] cumulative error:', err); res.status(500).json({ error: 'Failed to build the cumulative report' }); }
+});
+router.get('/cumulative/excel', ...cumGate, async (req, res) => {
+  const from = isoOk(req.query.from) ? req.query.from : new Date().toISOString().slice(0, 10);
+  try {
+    const d = await cumul.cumulativeData({ from, status: req.query.status });
+    const buf = await cumul.buildCumulativeWorkbook(d, (req.query.status || 'approved') === 'all' ? 'All runs' : 'APPROVED runs only');
+    res.setHeader('Content-Disposition', `attachment; filename=tanker_utilisation_cumulative_FY${d.fy_label}.xlsx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) { console.error('[reports] cumulative excel error:', err); res.status(500).json({ error: 'Failed to build the Excel' }); }
+});
+// Keyed monthly history of earlier financial years (migration 059).
+router.get('/cumulative/history-template', ...cumGate, async (_req, res) => {
+  try {
+    const buf = await cumul.historyTemplateBuffer();
+    res.setHeader('Content-Disposition', 'attachment; filename=transport_monthly_history_template.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) { console.error('[reports] history template error:', err); res.status(500).json({ error: 'Failed to build the template' }); }
+});
+router.get('/cumulative/history', ...cumGate, async (_req, res) => {
+  try { res.json(await cumul.listHistory()); } catch (err) { res.status(500).json({ error: 'Failed to load history' }); }
+});
+const histUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+router.post('/cumulative/history-upload', authenticate, authorizeOrModule('masters', 'admin'), histUpload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try { res.json(await cumul.uploadHistory(req.file.buffer, req.user)); }
+  catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    console.error('[reports] history upload error:', err); res.status(500).json({ error: 'Failed to process the uploaded file' });
+  }
+});
+
 module.exports = router;

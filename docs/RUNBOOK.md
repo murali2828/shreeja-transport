@@ -191,8 +191,8 @@ docker exec -i shreeja-qa-backend node scripts/import_trip_history.js /tmp/FY.xl
 The dry run also lists the monthly toll per sheet ("Toll cost" row: Apr ₹14,49,817 … Aug ₹16,75,521), loaded with the trips into `historical_month_tolls`; re-running `--apply` after a deploy that added migration 066 loads the tolls for trips already loaded.
 Expected dry-run totals: April 1,132 trips ₹1,63,85,040 · May 1,143 ₹1,70,50,219 · June
 1,292 ₹1,88,97,381 · July 1,312 ₹1,80,46,355 · August 1,291 ₹1,71,75,117. Re-running a
-sheet replaces its rows (corrected workbook). Check: Billing → Payment Report → April
-2026 → Month Cumulative shows April–August "FY workbook" and September from the portal.
+sheet replaces its rows (corrected workbook). Check: Reports → Tanker Utilisation → Month Cumulative, FY
+2026-27, shows April–August "FY workbook" and September from the portal.
 
 ## Quality team: QA dispatch entry on phones
 
@@ -203,7 +203,7 @@ sheet replaces its rows (corrected workbook). Check: Billing → Payment Report 
 
 ## Routine tasks
 
-- Payment Report (Billing → Payment Report): Month Cumulative follows the financial year of the From date; Year Cumulative compares financial years. Load the months before the portal once: Year Cumulative tab → History template → fill one row per FY start year × month (capacity, milk L / kg, kg fat / SNF, km, amount, trips, diesel) → Upload earlier years (admin). Re-uploading a month replaces it; portal months are never overwritten by history.
+- Reports → Tanker Utilisation: Month Cumulative shows the chosen financial year; Year Cumulative compares financial years. Load the months before the portal once: Year Cumulative tab → History template → fill one row per FY start year × month (capacity, milk L / kg, kg fat / SNF, km, amount, trips, diesel) → Upload earlier years (admin). Re-uploading a month replaces it; portal months are never overwritten by history.
 
 - New user / role: Masters → Users / Roles (admin). Custom roles get module permissions; set each module to **None / View / Edit** (View = can see screens and reports, cannot change anything; e.g. finance with Billing + Reports at View). A user may hold several roles; permissions add up, and only a user whose roles are all read-only is restricted.
 - Rotate the Assure key: set `ASSURE_API_KEY_NEXT`, `up -d`, hand over, then move it into `ASSURE_API_KEY`, clear `_NEXT`, `up -d`.

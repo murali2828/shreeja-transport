@@ -136,7 +136,7 @@ export default function Sidebar({ collapsed = false }) {
           {ni('/reports/analytics', <BarChart2 size={15}/>, 'Analytics')}
           {ni('/reports/cost-drivers', <Fuel size={15}/>, 'Transport Cost Drivers')}
           {ni('/reports/trip-durations', <BarChart2 size={15}/>, 'Trip Durations')}
-          {ni('/reports/day-utilisation', <BarChart2 size={15}/>, 'Day Utilisation')}
+          {ni('/reports/day-utilisation', <BarChart2 size={15}/>, 'Tanker Utilisation')}
           {isAdmin && ni('/reports/audit', <Users size={15}/>, 'User Activity')}
         </NavSection>
       )}
