@@ -1419,6 +1419,13 @@ function PaymentReport() {
             </span>
           </div>
 
+          {(data.fixed_months || []).length > 0 && (
+            <div className="text-xs rounded-lg px-3 py-2" style={{ background: '#EEF2FF', color: '#1E3A8A' }}>
+              {data.fixed_months.map(f => (
+                <div key={f.month_start}>Fixed cost for {new Date(f.month_start + 'T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })} (9,000 km minimum, {f.tankers} tankers): <b>₹ {nf(f.amount)}</b> — shown per tanker / vendor in Tanker Wise and Vendor Wise</div>
+              ))}
+            </div>
+          )}
           {(data.history_tolls || []).length > 0 && (
             <div className="text-xs rounded-lg px-3 py-2" style={{ background: '#FFF7ED', color: '#7C2D12' }}>
               {data.history_tolls.map(t => (
@@ -1429,6 +1436,8 @@ function PaymentReport() {
 
           {!['trips', 'months', 'years'].includes(tab) && (() => {
             const withToll = tab === 'tankers' || tab === 'vendors';
+            // Minimum-km fixed cost (9,000 km guarantee) for whole months in the period.
+            const withFixed = withToll && (data.fixed_months || []).length > 0;
             const fmtDateDot = d => fmtDate(d).replace(/-/g, '.'); // Date Wise shows DD.MM.YYYY (finance, 2026-10-08)
             const fortnights = tab === 'dates' ? (data.fortnights || []) : [];
             return (
@@ -1438,7 +1447,8 @@ function PaymentReport() {
                   <tr>{[tab === 'dates' ? 'Date' : tab === 'tankers' ? 'Tanker' : 'Vendor',
                         tab === 'tankers' ? 'Vendor' : 'Tankers', 'Trips',
                         'Billed KM', 'Amount (₹)',
-                        ...(withToll || tab === 'dates' ? ['Toll (₹)', 'Total Payable (₹)'] : [])]
+                        ...(withToll || tab === 'dates' ? ['Toll (₹)', 'Total Payable (₹)'] : []),
+                        ...(withFixed ? ['Fixed cost 9000 km (₹)', 'Total cost (₹)', 'Cost/Ltr all-in'] : [])]
                         .map((h, i) => <th key={h} className={`px-3 py-2 ${i >= 2 ? 'text-right' : ''}`}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
@@ -1452,6 +1462,9 @@ function PaymentReport() {
                       {withToll && <td className="px-3 py-1.5 text-right">{nf(r.toll_amount)}</td>}
                       {withToll && <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.total_payable)}</td>}
                       {tab === 'dates' && <td/>}{tab === 'dates' && <td/>}
+                      {withFixed && <td className="px-3 py-1.5 text-right">{nf(r.fixed_cost)}</td>}
+                      {withFixed && <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.total_cost)}</td>}
+                      {withFixed && <td className="px-3 py-1.5 text-right">{r.cost_per_litre_all_in ?? '—'}</td>}
                     </tr>
                   ))}
                   {/* Date Wise: one subtotal row per billing run (fortnight) carrying that run's toll — tolls are per run, never per day. */}
@@ -1474,6 +1487,9 @@ function PaymentReport() {
                     <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.amount || 0), 0))}</td>
                     {(withToll || tab === 'dates') && <td className="px-3 py-2 text-right">{nf((withToll ? rows || [] : fortnights).reduce((s, r) => s + (+r.toll_amount || 0), 0))}</td>}
                     {(withToll || tab === 'dates') && <td className="px-3 py-2 text-right text-[#005ba3]">{nf((withToll ? rows || [] : fortnights).reduce((s, r) => s + (+r.total_payable || 0), 0))}</td>}
+                    {withFixed && <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.fixed_cost || 0), 0))}</td>}
+                    {withFixed && <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.total_cost || 0), 0))}</td>}
+                    {withFixed && <td/>}
                   </tr>
                 </tbody>
               </table>

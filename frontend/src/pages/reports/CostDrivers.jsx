@@ -15,8 +15,8 @@ const monthEnd = (y, m) => new Date(y, m, 0).getDate();
 const nf = (v, d = 0) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 const sg = (v, d = 0) => v == null ? '—' : (v > 0 ? '+' : '') + nf(v, d);
 const inr = v => v == null ? '—' : '₹' + nf(v);
-const C = { diesel: '#c98500', km: '#2a78d6', new_bmcu: '#4a3aa7', closed_bmcu: '#8a8577', mix: '#cc785c', volume: '#008300' };
-const LABELS = { diesel: 'Diesel price', km: 'Kilometres', new_bmcu: 'New BMCUs', closed_bmcu: 'Closed BMCUs', mix: 'Mix / other', volume: 'Volume (litres)' };
+const C = { diesel: '#c98500', km: '#2a78d6', new_bmcu: '#4a3aa7', closed_bmcu: '#8a8577', mix: '#cc785c', volume: '#008300', toll_fixed: '#0e7490' };
+const LABELS = { diesel: 'Diesel price', km: 'Kilometres', new_bmcu: 'New BMCUs', closed_bmcu: 'Closed BMCUs', mix: 'Mix / other', volume: 'Volume (litres)', toll_fixed: 'Toll & fixed cost' };
 
 // Period presets → { from, to }
 function presetDates(kind, year, month, part) {
@@ -56,11 +56,12 @@ export default function CostDrivers() {
 
   const o = data?.overall;
   const eff = o ? (view === 'litre' ? o.effects_per_litre : o.effects) : null;
-  const keys = view === 'litre' ? ['diesel', 'km', 'new_bmcu', 'closed_bmcu', 'mix', 'volume'] : ['diesel', 'km', 'new_bmcu', 'closed_bmcu', 'mix'];
+  // "Toll & fixed cost" (month-level toll + 9,000-km minimum) turns the trip-cost change into the all-in change.
+  const keys = view === 'litre' ? ['diesel', 'km', 'new_bmcu', 'closed_bmcu', 'mix', 'volume', 'toll_fixed'] : ['diesel', 'km', 'new_bmcu', 'closed_bmcu', 'mix', 'toll_fixed'];
   const dec = view === 'litre' ? 3 : 0;
   const unit = view === 'litre' ? '₹/L' : '₹';
   const chart = eff ? keys.map(k => ({ key: k, name: LABELS[k], value: eff[k] ?? 0 })) : [];
-  const total = o ? (view === 'litre' ? o.delta_per_litre : o.delta_cost) : null;
+  const total = o ? (view === 'litre' ? (o.all_in?.delta_per_litre ?? o.delta_per_litre) : (o.all_in?.delta_cost ?? o.delta_cost)) : null;
 
   const years = []; for (let y = now.getFullYear(); y >= 2025; y--) years.push(String(y));
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -188,10 +189,11 @@ export default function CostDrivers() {
                         {c.key === 'closed_bmcu' && `${o.closed_bmcus} BMCU(s) no longer served, ${o.closed_bmcu_trips} earlier trips`}
                         {c.key === 'mix' && 'route / capacity mix, keyed km, other rate changes'}
                         {c.key === 'volume' && `${sg(o.curr.litres - o.prev.litres)} L spreads the earlier cost`}
+                        {c.key === 'toll_fixed' && o.overheads && `toll ${nf(o.overheads.prev.toll, 0)} → ${nf(o.overheads.curr.toll, 0)} · fixed (9,000 km) ${nf(o.overheads.prev.fixed, 0)} → ${nf(o.overheads.curr.fixed, 0)} ₹ (whole months only)`}
                       </td>
                     </tr>
                   ))}
-                  <tr className="border-t-2 border-gray-300 font-semibold"><td className="py-1.5">Total change</td><td className="py-1.5 text-right">{sg(total, dec)} {unit}</td><td/></tr>
+                  <tr className="border-t-2 border-gray-300 font-semibold"><td className="py-1.5">Total change (all-in)</td><td className="py-1.5 text-right">{sg(total, dec)} {unit}</td><td/></tr>
                 </tbody>
               </table>
             </div>

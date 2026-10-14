@@ -27,6 +27,7 @@
 // Per-litre decomposition, Δ(₹/L) = cost_P/L_P − cost_Q/L_Q:
 //   each amount effect ÷ L_P, plus a volume effect = cost_Q × (1/L_P − 1/L_Q)
 //   (more litres over the same cost lowers ₹/L). Both sets add up exactly.
+const { periodOverheads } = require('./transportCumulative');
 const { query } = require('../config/db');
 const { saleTankerSql } = require('../utils/saleTanker');
 const { pickRate, transportTypeFor, stateFromRegistration, loadBillingStates } = require('./rates');
@@ -199,6 +200,23 @@ async function costDrivers(from, to, prevFrom, prevTo) {
   };
 
   const overall = block(P.trips, Qp.trips, null);
+  // All-in view (owner, 2026-10-14): toll + minimum-km fixed cost of the whole
+  // months in each period are month-level, so they enter as one more effect,
+  // "Toll & fixed cost"; the trip-level effects above are unchanged.
+  {
+    const ohP = await periodOverheads(from, to), ohQ = await periodOverheads(Q.from, Q.to);
+    const lP = overall.curr.litres, lQ = overall.prev.litres;
+    const allP = overall.curr.cost + ohP.toll + ohP.fixed, allQ = overall.prev.cost + ohQ.toll + ohQ.fixed;
+    overall.overheads = { curr: { toll: ohP.toll, fixed: ohP.fixed }, prev: { toll: ohQ.toll, fixed: ohQ.fixed } };
+    overall.all_in = {
+      prev_cost: r2(allQ), curr_cost: r2(allP), delta_cost: r2(allP - allQ),
+      prev_per_litre: lQ > 0 ? r4(allQ / lQ) : null, curr_per_litre: lP > 0 ? r4(allP / lP) : null,
+      delta_per_litre: lP > 0 && lQ > 0 ? r4(allP / lP - allQ / lQ) : null,
+    };
+    const ohDelta = (ohP.toll + ohP.fixed) - (ohQ.toll + ohQ.fixed);
+    overall.effects.toll_fixed = r2(ohDelta);
+    overall.effects_per_litre.toll_fixed = lP > 0 && lQ > 0 ? r4((ohP.toll + ohP.fixed) / lP - (ohQ.toll + ohQ.fixed) / lQ) : null;
+  }
   const byState = states.map(st => block(P.trips.filter(t => t.state === st), Qp.trips.filter(t => t.state === st), st));
   const unknownP = P.trips.filter(t => !t.state), unknownQ = Qp.trips.filter(t => !t.state);
   if (unknownP.length || unknownQ.length) byState.push({ ...block(unknownP, unknownQ, null), state: 'Unknown state' });

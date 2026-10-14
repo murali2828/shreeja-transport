@@ -31,6 +31,7 @@ const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
 
 const { autoWidth, stylePortalWorkbook } = require('../services/portalExcel');
 const { HISTORY_UNTIL, MONTH_NAMES } = require('../services/transportCumulative');
+const { fixedCostsInPeriod, normTanker } = require('../services/fixedCosts');
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -1762,6 +1763,35 @@ async function reportData(q) {
     mergeHistory(tankers.rows, hist, 'tanker_number', h => ({ vendor_name: h.vendor_name }));
     mergeHistory(vendors.rows, hist, 'vendor_name', () => ({ tankers: 0 }));
   }
+  // Minimum-km guarantee (migration 067): approved fixed cost per tanker per
+  // month, attached for every whole month inside the period. Tanker Wise by
+  // tanker number, Vendor Wise through the tanker's vendor in this report
+  // (else the transporter named on the fixed-cost sheet).
+  const fixedRows = await fixedCostsInPeriod(q.from, q.to);
+  const fixedMonths = [];
+  if (fixedRows.length) {
+    const byTanker = new Map();
+    for (const f of fixedRows) byTanker.set(normTanker(f.tanker_number), (byTanker.get(normTanker(f.tanker_number)) || 0) + f.amount);
+    const vendorOfTanker = new Map(trips.rows.map(t => [normTanker(t.tanker_number), t.vendor_name]));
+    const byVendor = new Map();
+    for (const f of fixedRows) {
+      const vn = vendorOfTanker.get(normTanker(f.tanker_number)) || f.vendor_name || '— No vendor mapped —';
+      byVendor.set(vn, (byVendor.get(vn) || 0) + f.amount);
+    }
+    const seenT = new Set();
+    for (const t of tankers.rows) { const k = normTanker(t.tanker_number); t.fixed_cost = rN(byTanker.get(k) || 0); seenT.add(k); }
+    // Tankers paid a fixed cost without any trip in the period still appear.
+    for (const [k, amt] of byTanker) if (!seenT.has(k)) {
+      const f = fixedRows.find(x => normTanker(x.tanker_number) === k);
+      tankers.rows.push({ tanker_number: f.tanker_number, vendor_name: f.vendor_name, trips: 0, billed_km: 0, amount: 0, fixed_cost: rN(amt) });
+    }
+    const seenV = new Set();
+    for (const v of vendors.rows) { v.fixed_cost = rN(byVendor.get(v.vendor_name) || 0); seenV.add(v.vendor_name); }
+    for (const [vn, amt] of byVendor) if (!seenV.has(vn)) vendors.rows.push({ vendor_name: vn, tankers: 0, trips: 0, billed_km: 0, amount: 0, fixed_cost: rN(amt) });
+    for (const f of fixedRows) { const m = fixedMonths.find(x => x.month_start === f.month_start); if (m) { m.amount += f.amount; m.tankers++; } else fixedMonths.push({ month_start: f.month_start, amount: f.amount, tankers: 1 }); }
+    fixedMonths.forEach(m => { m.amount = rN(m.amount); });
+    for (const r of [...tankers.rows, ...vendors.rows]) r.total_cost = rN((parseFloat(r.amount) || 0) + (parseFloat(r.toll_amount) || 0) + (parseFloat(r.fixed_cost) || 0));
+  }
   // Derived per row: fat / SNF %, ₹/km, cost per litre, utilisation %.
   const derive = r => {
     const kgs = parseFloat(r.milk_kgs) || 0, l = parseFloat(r.milk_litres) || 0;
@@ -1771,6 +1801,8 @@ async function reportData(q) {
     r.snf_pct = kgs > 0 ? rN(parseFloat(r.kg_snf) / kgs * 100) : null;
     r.rate_avg = km > 0 ? rN(amt / km) : null;
     r.cost_per_litre = l > 0 ? rN(amt / l) : null;
+    // All-in ₹/L adds the toll and the minimum-km fixed cost (owner, 2026-10-14).
+    r.cost_per_litre_all_in = l > 0 ? rN((amt + (parseFloat(r.toll_amount) || 0) + (parseFloat(r.fixed_cost) || 0)) / l, 4) : null;
     r.utilisation_pct = cap > 0 && l > 0 ? rN(l / cap * 100) : null;
     return r;
   };
@@ -1781,7 +1813,7 @@ async function reportData(q) {
     SELECT month_start::text AS month_start, toll_amount, source_sheet FROM historical_month_tolls
     WHERE month_start >= $1 AND (month_start + INTERVAL '1 month' - INTERVAL '1 day')::date <= $2 ORDER BY month_start`, [q.from, q.to])).rows
     .map(t => ({ ...t, toll_amount: rN(t.toll_amount) })) : [];
-  return { history_tolls: historyTolls, trips: trips.rows, dates: dates.rows, fortnights, tankers: tankers.rows, vendors: vendors.rows };
+  return { history_tolls: historyTolls, fixed_months: fixedMonths, trips: trips.rows, dates: dates.rows, fortnights, tankers: tankers.rows, vendors: vendors.rows };
 }
 
 // The report covers whole fortnights or whole months only (finance,
@@ -1842,6 +1874,8 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
 
     // Milk columns sit after Trips on Date Wise (withCost) and after Total
     // Payable on Tanker Wise (finance's marked workbook, 2026-10-08).
+    // Minimum-km fixed cost columns when the period holds approved fixed-cost months.
+    const withFixed = (d.fixed_months || []).length > 0;
     const sheet = (name, rows, firstHead, firstKey, secondKey, withToll = false, withMilk = false, withCost = false) => {
       const ws = wb.addWorksheet(name);
       const milkFirst = withMilk && withCost, milkLast = withMilk && !withCost;
@@ -1851,6 +1885,7 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
         'Billed KM', 'Amount (₹)',
         ...(withCost ? ['Rate Per KM', 'Cost Per Ltr', 'Utilization %'] : []),
         ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : []),
+        ...(withToll && withFixed ? ['Fixed Cost 9000 km (₹)', 'Total Cost (₹)', 'Cost Per Ltr All-in'] : []),
         ...(milkLast ? MILK_HEADS_AGG : [])]);
       // Date Wise dates as DD.MM.YYYY (finance, 2026-10-08); other sheets keep DD-MM-YYYY.
       rows.forEach(r => ws.addRow([firstKey === 'date' ? fmtDateDisplay(r[firstKey]).replace(/-/g, '.') : r[firstKey], r[secondKey], r.trips,
@@ -1859,6 +1894,7 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
         rN(r.billed_km), rN(r.amount),
         ...(withCost ? [r.rate_avg, r.cost_per_litre, r.utilisation_pct] : []),
         ...(withToll ? [rN(r.toll_amount), rN(r.total_payable)] : []),
+        ...(withToll && withFixed ? [rN(r.fixed_cost), rN(r.total_cost), r.cost_per_litre_all_in] : []),
         ...(milkLast ? milkCells(r) : [])]));
       ws.addRow(['TOTAL', '', rows.reduce((s, r) => s + (+r.trips || 0), 0),
         ...(withCost ? [sum(rows, 'capacity_litres')] : []),
@@ -1866,6 +1902,7 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
         sum(rows, 'billed_km'), sum(rows, 'amount'),
         ...(withCost ? [ratio(rows, 'amount', 'billed_km'), ratio(rows, 'amount', 'milk_litres'), util(rows)] : []),
         ...(withToll ? [sum(rows, 'toll_amount'), sum(rows, 'total_payable')] : []),
+        ...(withToll && withFixed ? [sum(rows, 'fixed_cost'), sum(rows, 'total_cost'), ratio(rows, 'total_cost', 'milk_litres')] : []),
         ...(milkLast ? milkTotals(rows) : [])]).font = { bold: true };
     };
     sheet('Date Wise', d.dates, 'Date', 'date', 'tankers', false, true, true);
@@ -1892,6 +1929,15 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
         const v = String(wsDW.getRow(r).getCell(1).value || '');
         if (v.startsWith('Run #')) wsDW.getRow(r).eachCell({ includeEmpty: true }, c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3E0' } }; c.font = { bold: true }; });
       }
+    }
+    // Minimum-km fixed cost: one line per month on the Date Wise sheet (it is per tanker per month, never per day).
+    if (withFixed) {
+      const wsDW = wb.getWorksheet('Date Wise');
+      wsDW.addRow([]);
+      d.fixed_months.forEach(f => {
+        const [y, mo] = f.month_start.split('-').map(Number);
+        wsDW.addRow([`Fixed cost ${MONTH_NAMES[mo - 1]} ${y} (9,000 km minimum, ${f.tankers} tankers): ₹${Number(f.amount).toLocaleString('en-IN')} — in Tanker / Vendor Wise`]).font = { bold: true, color: { argb: 'FF1E3A8A' } };
+      });
     }
     // FY-workbook toll: one total per month, not split per tanker / date.
     if ((d.history_tolls || []).length) {

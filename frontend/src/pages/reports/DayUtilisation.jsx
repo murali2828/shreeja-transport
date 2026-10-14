@@ -6,7 +6,7 @@
 // one row per acknowledged trip by ack date — ack totals, tanker capacity,
 // Utilization % = Ack Qty Ltrs / capacity × 100, remark ABOVE/BELOW threshold.
 import { useState } from 'react';
-import { CumulativeMonths, CumulativeYears } from '../../components/TransportCumulative';
+import { CumulativeMonths, CumulativeYears, FixedCostPanel } from '../../components/TransportCumulative';
 import { getCumulative, downloadCumulativeExcel } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
 import { hasRole } from '../../utils/roles';
@@ -191,7 +191,9 @@ function Cumulative({ view }) {
 
 export default function TankerUtilisation() {
   const [tab, setTab] = useState('day');
-  const TABS = [['day', 'Day wise'], ['months', 'Month Cumulative'], ['years', 'Year Cumulative']];
+  const TABS = [['day', 'Day wise'], ['months', 'Month Cumulative'], ['years', 'Year Cumulative'], ['fixed', 'Fixed cost (9,000 km)']];
+  const { user } = useAuth();
+  const canUpload = hasRole(user, 'admin', 'biller');
   return (
     <div className="space-y-4 w-full">
       <div>
@@ -204,7 +206,7 @@ export default function TankerUtilisation() {
             style={tab === k ? { background: '#4a3aa7', color: '#fff' } : { background: '#fff', color: '#57534e' }}>{l}</button>
         ))}
       </div>
-      {tab === 'day' ? <DayWise/> : <Cumulative view={tab}/>}
+      {tab === 'day' ? <DayWise/> : tab === 'fixed' ? <FixedCostPanel canUpload={canUpload}/> : <Cumulative view={tab}/>}
     </div>
   );
 }

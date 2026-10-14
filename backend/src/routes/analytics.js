@@ -402,7 +402,16 @@ router.get('/summary', authenticate, authorizeOrModule('reports', 'admin', 'plan
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'from and to are required (YYYY-MM-DD)' });
   try {
-    res.json(await buildSummary(filterParams(req)));
+    const out = await buildSummary(filterParams(req));
+    // All-in transport cost (owner, 2026-10-14): trip cost + toll + minimum-km
+    // fixed cost of the whole months inside the period (both are month-level).
+    const o = await periodOverheads(from, to);
+    const k = out.kpis || {};
+    k.toll_amount = o.toll; k.fixed_cost = o.fixed;
+    k.all_in_cost = Math.round(((parseFloat(k.trip_cost) || 0) + o.toll + o.fixed) * 100) / 100;
+    k.all_in_per_1000l = k.cost_per_1000l != null && parseFloat(k.trip_cost) > 0 ? Math.round(k.cost_per_1000l * k.all_in_cost / parseFloat(k.trip_cost) * 100) / 100 : null;
+    k.overhead_months = o.months;
+    res.json(out);
   } catch (err) {
     console.error('Analytics summary error:', err);
     res.status(500).json({ error: 'Failed to build analytics summary' });
@@ -414,6 +423,7 @@ router.get('/summary', authenticate, authorizeOrModule('reports', 'admin', 'plan
 // (services/costDrivers.js, Diesel Rates master migration 058). Any period;
 // prev_from / prev_to override the default comparison period.
 const { costDrivers } = require('../services/costDrivers');
+const { periodOverheads } = require('../services/transportCumulative');
 const { fmtDateDisplay } = require('../utils/date');
 const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
 const periodError = q => {

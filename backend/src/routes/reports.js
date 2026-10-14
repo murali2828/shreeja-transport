@@ -2022,4 +2022,61 @@ router.post('/cumulative/history-upload', authenticate, authorizeOrModule('maste
   }
 });
 
+// ── Minimum-km guarantee: fixed cost per tanker per month (migration 067,
+// services/fixedCosts.js). Read: reports module; upload: admin / biller.
+const fixedCosts = require('../services/fixedCosts');
+const num = v => (v == null ? null : parseFloat(v));
+const fcUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+const fcRows = async (from, to) => (await query(`
+  SELECT month_start::text AS month_start, tanker_number, vendor_name, vendor_code, capacity_litres, run_km, maintenance_days,
+         maintenance_km, total_km, min_km, balance_km, rate_per_km, amount, source_file
+  FROM tanker_fixed_costs WHERE ($1::date IS NULL OR month_start >= $1) AND ($2::date IS NULL OR month_start <= $2)
+  ORDER BY month_start, vendor_name, tanker_number`, [isoOk(from) ? from : null, isoOk(to) ? to : null])).rows;
+router.get('/fixed-costs', ...cumGate, async (req, res) => {
+  try {
+    const rows = await fcRows(req.query.from, req.query.to);
+    const months = {};
+    for (const r of rows) { const m = (months[r.month_start] ||= { month_start: r.month_start, tankers: 0, amount: 0, balance_km: 0 }); m.tankers++; m.amount += parseFloat(r.amount) || 0; m.balance_km += Math.max(0, parseFloat(r.balance_km) || 0); }
+    res.json({ months: Object.values(months).map(m => ({ ...m, amount: rN(m.amount) })), rows });
+  } catch (err) { console.error('[reports] fixed costs error:', err); res.status(500).json({ error: 'Failed to load fixed costs' }); }
+});
+router.get('/fixed-costs/excel', ...cumGate, async (req, res) => {
+  try {
+    const rows = await fcRows(req.query.from, req.query.to);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Fixed Cost');
+    ws.addRow(['Tanker Utilisation · Fixed cost (9,000 km minimum guarantee)']).font = { bold: true, size: 13 };
+    ws.addRow([]);
+    ws.addRow(['Month', 'Transporter', 'Vendor Code', 'Tanker', 'Capacity (L)', 'Run KM', 'Maintenance days', 'Maintenance KM', 'Total KM', 'Minimum KM', 'Balance KM', 'Fixed ₹/KM', 'Fixed Cost (₹)']);
+    let tot = 0;
+    for (const r of rows) {
+      ws.addRow([fmtDateDisplay(r.month_start).slice(3), r.vendor_name, r.vendor_code, r.tanker_number, num(r.capacity_litres), num(r.run_km), num(r.maintenance_days),
+        num(r.maintenance_km), num(r.total_km), num(r.min_km), num(r.balance_km), num(r.rate_per_km), num(r.amount)]);
+      tot += parseFloat(r.amount) || 0;
+    }
+    ws.addRow(['TOTAL', '', '', '', null, null, null, null, null, null, null, null, rN(tot)]);
+    require('../services/portalExcel').stylePortalWorkbook(wb, 'Tanker Utilisation');
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    res.setHeader('Content-Disposition', 'attachment; filename=tanker_fixed_cost.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) { console.error('[reports] fixed costs excel error:', err); res.status(500).json({ error: 'Failed to build the Excel' }); }
+});
+// Preview (no write) and upload of finance's approved monthly workbook; the month replaces any earlier upload.
+const fcWrite = [authenticate, authorizeOrModule('billing', 'admin', 'biller')];
+const fcParse = async req => {
+  if (!req.file) throw Object.assign(new Error('No file uploaded'), { status: 400 });
+  const p = await fixedCosts.parseFixedCostWorkbook(req.file.buffer).catch(e => { throw Object.assign(e, { status: e.status || 400 }); });
+  const m = await fixedCosts.matchMasters(p.rows);
+  return { ...p, rows: m.rows, unmatched_tankers: m.unmatched_tankers, unmatched_vendors: m.unmatched_vendors };
+};
+router.post('/fixed-costs/preview', ...fcWrite, fcUpload.single('file'), async (req, res) => {
+  try { const p = await fcParse(req); res.json({ ...p, existing: (await query('SELECT COUNT(*)::int AS n FROM tanker_fixed_costs WHERE month_start=$1', [p.month_start])).rows[0].n }); }
+  catch (err) { if (err.status === 400) return res.status(400).json({ error: err.message }); console.error('[reports] fixed cost preview error:', err); res.status(500).json({ error: 'Failed to read the workbook' }); }
+});
+router.post('/fixed-costs/upload', ...fcWrite, fcUpload.single('file'), async (req, res) => {
+  try { const p = await fcParse(req); res.json(await fixedCosts.saveMonth(p.month_start, p.rows, { file: req.file.originalname, user: req.user })); }
+  catch (err) { if (err.status === 400) return res.status(400).json({ error: err.message }); console.error('[reports] fixed cost upload error:', err); res.status(500).json({ error: 'Failed to save the fixed cost' }); }
+});
+
 module.exports = router;

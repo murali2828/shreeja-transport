@@ -515,9 +515,10 @@ export default function Analytics() {
              color={(Math.abs(k?.fat_drift ?? 0) > 0.05 || Math.abs(k?.snf_drift ?? 0) > 0.05) ? C.loss : C.gain}
              value={k?.fat_drift != null ? `${k.fat_drift > 0 ? '+' : ''}${nf(k.fat_drift, 3)} F` : '—'}
              sub={k?.snf_drift != null ? `${k.snf_drift > 0 ? '+' : ''}${nf(k.snf_drift, 3)} SNF · Ack% − RMRD%` : 'weighted Ack% − RMRD%'} />
-        <Kpi label="Transport Cost" accent={C.amber}
-             value={`₹ ${nf(k?.trip_cost)}`}
-             sub={k?.cost_per_1000l != null ? `₹ ${nf(k.cost_per_1000l)} / 1000 L dispatched` : 'per-km rate × trip km'} />
+        <Kpi label="Transport Cost (all-in)" accent={C.amber}
+             value={`₹ ${nf(k?.all_in_cost ?? k?.trip_cost)}`}
+             sub={`Trips ₹ ${nf(k?.trip_cost)}${k?.toll_amount ? ` · toll ₹ ${nf(k.toll_amount)}` : ''}${k?.fixed_cost ? ` · fixed (9,000 km) ₹ ${nf(k.fixed_cost)}` : ''}`
+               + (k?.cost_per_1000l != null ? ` · ₹ ${nf(k.cost_per_1000l)} / 1000 L trips${k?.all_in_per_1000l != null && k.all_in_per_1000l !== k.cost_per_1000l ? `, ₹ ${nf(k.all_in_per_1000l)} all-in` : ''}` : '')} />
         <Kpi label="Tanker Maintenance" accent={C.violet}
              value={`${nf(data?.ops?.maintenance_days, 1)} days`}
              sub={data?.ops?.open_maintenance ? `${data.ops.open_maintenance} tanker(s) still out` : 'all returned'} />

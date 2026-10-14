@@ -203,6 +203,7 @@ sheet replaces its rows (corrected workbook). Check: Reports → Tanker Utilisat
 
 ## Routine tasks
 
+- Each month after finance approves the 9,000-km fixed cost: Reports → Tanker Utilisation → Fixed cost (9,000 km) → Upload approved sheet → check the preview total against the sheet → Confirm. Bulk / first load: `docker cp` the workbooks into the backend container, `docker exec -i shreeja-backend node scripts/import_fixed_costs.js /tmp/fc/*.xlsx` (dry run) then `--apply`.
 - Reports → Tanker Utilisation: Month Cumulative shows the chosen financial year; Year Cumulative compares financial years. Load the months before the portal once: Year Cumulative tab → History template → fill one row per FY start year × month (capacity, milk L / kg, kg fat / SNF, km, amount, trips, diesel) → Upload earlier years (admin). Re-uploading a month replaces it; portal months are never overwritten by history.
 
 - New user / role: Masters → Users / Roles (admin). Custom roles get module permissions; set each module to **None / View / Edit** (View = can see screens and reports, cannot change anything; e.g. finance with Billing + Reports at View). A user may hold several roles; permissions add up, and only a user whose roles are all read-only is restricted.

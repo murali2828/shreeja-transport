@@ -7,6 +7,7 @@
 const ExcelJS = require('exceljs');
 const { query } = require('../config/db');
 const { autoWidth, stylePortalWorkbook } = require('./portalExcel');
+const { fixedCostByMonth } = require('./fixedCosts');
 
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 // Trips up to this date come from the FY workbook (historical_trips, migration
@@ -39,7 +40,11 @@ const monthMetrics = r => {
     // Toll of the month: FY-workbook monthly total up to ANALYTICS_HISTORY_UNTIL,
     // else the toll challans of that month's billing runs (by run start).
     toll_amount: r.toll_amount == null ? null : rN(r.toll_amount),
-    total_cost: r.toll_amount == null ? rN(amt) : rN(amt + (parseFloat(r.toll_amount) || 0)),
+    // Minimum-km guarantee of the month (tanker_fixed_costs, migration 067).
+    fixed_cost: r.fixed_cost == null ? null : rN(r.fixed_cost),
+    total_cost: rN(amt + (parseFloat(r.toll_amount) || 0) + (parseFloat(r.fixed_cost) || 0)),
+    // All-in ₹/L = (trip amount + toll + fixed cost) ÷ litres; cost_per_litre stays trips only.
+    cost_per_litre_all_in: l > 0 ? rN((amt + (parseFloat(r.toll_amount) || 0) + (parseFloat(r.fixed_cost) || 0)) / l, 4) : null,
     cost_per_litre: l > 0 ? rN(amt / l, 4) : null,
     utilisation_pct: cap > 0 && l > 0 ? rN(l / cap * 100) : null,
     trips, avg_km: trips > 0 ? rN(km / trips) : null, milk_per_day: rN(l / days),
@@ -83,6 +88,7 @@ async function cumulativeData(q) {
     FROM billing_run_tolls tl JOIN billing_runs br ON br.id = tl.run_id
     WHERE br.from_date > $1 ${(q.status || 'approved') !== 'all' ? "AND br.status = 'approved'" : ''}
     GROUP BY 1, 2`, [HISTORY_UNTIL]);
+  const fixedMap = await fixedCostByMonth();
   const tollMap = new Map([...histToll.rows, ...portalToll.rows].map(x => [`${x.year}-${x.month}`, parseFloat(x.toll_amount)]));
   // Months up to ANALYTICS_HISTORY_UNTIL: the trip-level FY workbook (historical_trips).
   const tripHist = await query(`
@@ -105,7 +111,8 @@ async function cumulativeData(q) {
     const key = `${year}-${m}`;
     const r = portalMap.get(key) || tripHistMap.get(key) || histMap.get(key);
     const toll = tollMap.has(key) ? tollMap.get(key) : null;
-    return monthMetrics({ ...(r || { year, month: m, fy_start_year: fyYear, source: null, trips: 0 }), toll_amount: toll });
+    const fixed = fixedMap.has(key) ? fixedMap.get(key) : null;
+    return monthMetrics({ ...(r || { year, month: m, fy_start_year: fyYear, source: null, trips: 0 }), toll_amount: toll, fixed_cost: fixed });
   };
   const months = FY_MONTHS.map(m => monthRow(fy, m));
   const fys = [...new Set([fy, ...portal.rows.map(x => x.month >= 4 ? x.year : x.year - 1), ...tripHist.rows.map(x => x.month >= 4 ? x.year : x.year - 1),
@@ -117,6 +124,7 @@ async function cumulativeData(q) {
       capacity_litres: sum('capacity_litres'), milk_litres: sum('milk_litres'), milk_kgs: sum('milk_kgs'), kg_fat: sum('kg_fat'), kg_snf: sum('kg_snf'),
       total_km: sum('total_km'), amount: sum('amount'),
       toll_amount: rows.some(r => r.toll_amount != null) ? sum('toll_amount') : null,
+      fixed_cost: rows.some(r => r.fixed_cost != null) ? sum('fixed_cost') : null,
       diesel_price: (() => { const d = rows.filter(r => r.diesel_price != null); return d.length ? d.reduce((s, r) => s + r.diesel_price, 0) / d.length : null; })(),
       diesel_sum: (() => { const d = rows.filter(r => r.diesel_sum != null); return d.length ? d.reduce((s, r) => s + r.diesel_sum, 0) : null; })() });
     ytd.month_name = 'YTD';
@@ -178,18 +186,18 @@ async function buildCumulativeWorkbook(d, statusLabel) {
   const wb = new ExcelJS.Workbook();
     // Month Cumulative — the financial year of the From date
     const MC_HEADS = ['S.NO', 'Month Wise', 'Tankers Capacity in Lits', 'Milk Received From Tankers in Lits', 'Milk Received From Tankers in Kgs',
-      'Fat %', 'Snf%', 'TS %', 'Fat Kgs', 'Snf Kgs', 'Total KM', 'Rate Per KM', 'Amount in RS', 'Toll in RS', 'Total Cost in RS', 'Cost Per Liter Rs', 'Utilization %',
+      'Fat %', 'Snf%', 'TS %', 'Fat Kgs', 'Snf Kgs', 'Total KM', 'Rate Per KM', 'Amount in RS', 'Toll in RS', 'Fixed Cost (9000 km) in RS', 'Total Cost in RS', 'Cost Per Liter Rs', 'Cost Per Liter All-in Rs', 'Utilization %',
       'Total Trips', 'AVG KM', 'Disel Price', 'Diesl Rate'];
     const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const mcRow = (i, m, label) => [i, label, m.capacity_litres, m.milk_litres, m.milk_kgs, m.fat_pct, m.snf_pct, m.ts_pct, m.kg_fat, m.kg_snf,
-      m.total_km, m.rate_per_km, m.amount, m.toll_amount, m.total_cost, m.cost_per_litre, m.utilisation_pct, m.trips || null, m.avg_km, m.diesel_sum, m.diesel_price];
+      m.total_km, m.rate_per_km, m.amount, m.toll_amount, m.fixed_cost, m.total_cost, m.cost_per_litre, m.cost_per_litre_all_in, m.utilisation_pct, m.trips || null, m.avg_km, m.diesel_sum, m.diesel_price];
     const ws5 = wb.addWorksheet('Month Cumulative');
     ws5.addRow([`Tanker Utilisation · Month Cumulative FY ${d.fy_label} · ${statusLabel}`]).font = { bold: true, size: 13 };
     ws5.addRow([]);
     ws5.addRow(MC_HEADS);
     d.months.forEach((m, i) => ws5.addRow(mcRow(i + 1, m, `${MON3[m.month - 1]}-${String(m.year).slice(2)}`)));
     if (d.months_total) ws5.addRow(mcRow('TOTAL', d.months_total, '')).font = { bold: true };
-    const MC_DEC2 = ['Fat %', 'Snf%', 'TS %', 'Rate Per KM', 'Cost Per Liter Rs', 'Utilization %', 'AVG KM', 'Disel Price', 'Diesl Rate'];
+    const MC_DEC2 = ['Fat %', 'Snf%', 'TS %', 'Rate Per KM', 'Cost Per Liter Rs', 'Cost Per Liter All-in Rs', 'Utilization %', 'AVG KM', 'Disel Price', 'Diesl Rate'];
     for (let c = 3; c <= MC_HEADS.length; c++) ws5.getColumn(c).numFmt = MC_DEC2.includes(MC_HEADS[c - 1]) ? '0.00' : '#,##0.00';
     ws5.getColumn(2).alignment = { horizontal: 'center' };
 
@@ -205,8 +213,8 @@ async function buildCumulativeWorkbook(d, statusLabel) {
     groups.forEach((g, gi) => { const c1 = 2 + gi * fyLabels.length; if (fyLabels.length > 1) ws6.mergeCells(2, c1, 2, c1 + fyLabels.length - 1); ws6.getCell(2, c1).alignment = { horizontal: 'center' }; });
     const METRICS = [['Tanker Capacities in Ltrs', 'capacity_litres'], ['Milk Received In Litres', 'milk_litres'], ["Milk Received In KG's", 'milk_kgs'],
       ['FAT%', 'fat_pct'], ['SNF%', 'snf_pct'], ['TS%', 'ts_pct'], ['KG FAT', 'kg_fat'], ['KG SNF', 'kg_snf'], ['Milk Received per day in litres', 'milk_per_day'],
-      ['Total KM', 'total_km'], ['Rate Per KM', 'rate_per_km'], ['Amount in RS', 'amount'], ['Toll in RS', 'toll_amount'], ['Total Cost in RS', 'total_cost'],
-      ['Cost Per Liter Rs', 'cost_per_litre'],
+      ['Total KM', 'total_km'], ['Rate Per KM', 'rate_per_km'], ['Amount in RS', 'amount'], ['Toll in RS', 'toll_amount'], ['Fixed Cost (9000 km) in RS', 'fixed_cost'], ['Total Cost in RS', 'total_cost'],
+      ['Cost Per Liter Rs', 'cost_per_litre'], ['Cost Per Liter All-in Rs', 'cost_per_litre_all_in'],
       ['Utilization %', 'utilisation_pct'], ['Diesel Prices', 'diesel_price'], ['Number Of Trips', 'trips'], ['Average KMs', 'avg_km']];
     METRICS.forEach(([label, k]) => {
       const row = [label];
@@ -227,7 +235,7 @@ async function buildCumulativeWorkbook(d, statusLabel) {
       if (r <= 3) { cell.fill = FILL6('FFDCE9F7'); cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } }; cell.alignment = { horizontal: 'center', vertical: 'middle' }; }
       else if (isYtd) { cell.fill = FILL6('FFFFF9C4'); cell.font = { bold: true }; }
       else if ((r - 3) % 2 === 0) cell.fill = FILL6('FFF5F8FC');
-      if (c > 1 && r > 3) cell.numFmt = ['fat_pct', 'snf_pct', 'ts_pct', 'rate_per_km', 'cost_per_litre', 'utilisation_pct', 'diesel_price', 'avg_km'].includes(METRICS[r - 4][1]) ? '0.00' : '#,##0';
+      if (c > 1 && r > 3) cell.numFmt = ['fat_pct', 'snf_pct', 'ts_pct', 'rate_per_km', 'cost_per_litre', 'cost_per_litre_all_in', 'utilisation_pct', 'diesel_price', 'avg_km'].includes(METRICS[r - 4][1]) ? '0.00' : '#,##0';
     }
     ws6.getColumn(1).width = 30;
     ws6.views = [{ state: 'frozen', xSplit: 1, ySplit: 3 }];
@@ -238,7 +246,35 @@ async function buildCumulativeWorkbook(d, statusLabel) {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
+// Toll + minimum-km fixed cost of the whole months inside [from, to] (both are
+// month-level, never per trip / day): toll from the FY workbook up to the cutoff,
+// else the challans of billing runs starting in the month; fixed cost from
+// tanker_fixed_costs. Used by Analytics and Cost Drivers for the all-in cost.
+async function periodOverheads(from, to, status = 'approved') {
+  const months = [];
+  for (let d = new Date(from.slice(0, 7) + '-01T00:00:00Z'); d.toISOString().slice(0, 10) <= to; d.setUTCMonth(d.getUTCMonth() + 1)) {
+    const start = d.toISOString().slice(0, 10);
+    const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+    if (start >= from && end <= to) months.push({ start, end, y: d.getUTCFullYear(), m: d.getUTCMonth() + 1 });
+  }
+  if (!months.length) return { toll: 0, fixed: 0, months: [] };
+  const fixedMap = await fixedCostByMonth();
+  const hist = new Map((await query(`SELECT month_start::text AS ms, toll_amount FROM historical_month_tolls`)).rows.map(r => [r.ms, parseFloat(r.toll_amount)]));
+  const portal = new Map((await query(`
+    SELECT to_char(date_trunc('month', br.from_date), 'YYYY-MM-DD') AS ms, SUM(tl.amount) AS toll
+    FROM billing_run_tolls tl JOIN billing_runs br ON br.id = tl.run_id
+    WHERE br.from_date BETWEEN $1 AND $2 ${status !== 'all' ? "AND br.status = 'approved'" : ''}
+    GROUP BY 1`, [from, to])).rows.map(r => [r.ms, parseFloat(r.toll)]));
+  const out = months.map(mo => {
+    const toll = mo.end <= HISTORY_UNTIL ? (hist.get(mo.start) || 0) : (portal.get(mo.start) || 0);
+    const fixed = fixedMap.get(`${mo.y}-${mo.m}`) || 0;
+    return { month_start: mo.start, toll: rN(toll), fixed: rN(fixed) };
+  });
+  return { toll: rN(out.reduce((a, x) => a + x.toll, 0)), fixed: rN(out.reduce((a, x) => a + x.fixed, 0)), months: out };
+}
+
 module.exports = {
+  periodOverheads,
   HISTORY_UNTIL, FY_MONTHS, MONTH_NAMES, fyOf, fyLabel,
   cumulativeData, historyTemplateBuffer, listHistory, uploadHistory, buildCumulativeWorkbook,
 };
