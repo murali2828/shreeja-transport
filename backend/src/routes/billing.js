@@ -1907,15 +1907,28 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
     };
     sheet('Date Wise', d.dates, 'Date', 'date', 'tankers', false, true, true);
     {
-      // Fortnight (billing run) subtotals with the run's toll — tolls are per run, never per day.
+      // Toll per run (fortnight) and per FY-workbook month, minimum-km fixed cost per
+      // month: never per day, so they are subtotal rows; TOTAL and Total Payable
+      // include both (owner, 2026-10-14). Columns 16 Toll, 17 Fixed cost, 18 Total Payable.
       const wsDW = wb.getWorksheet('Date Wise');
       const totalRow = wsDW.lastRow;
-      const fnRows = d.fortnights.map(f => [`Run #${f.run_id} · ${fmtDateDisplay(f.from_date).replace(/-/g, '.')} → ${fmtDateDisplay(f.to_date).replace(/-/g, '.')}`,
-        f.tankers, f.trips, '', '', '', '', '', '', '', f.billed_km, f.amount, '', '', '', f.toll_amount, f.total_payable]);
+      const monthLabel = m => { const [y, mo] = m.split('-').map(Number); return `${MONTH_NAMES[mo - 1]} ${y}`; };
+      const blank = n => Array(n).fill('');
+      for (let r = 2; r < totalRow.number; r++) {
+        const row = wsDW.getRow(r);
+        if (typeof row.getCell(12).value === 'number') row.getCell(18).value = row.getCell(12).value;
+      }
+      const subRows = [
+        ...d.fortnights.map(f => [`Run #${f.run_id} · ${fmtDateDisplay(f.from_date).replace(/-/g, '.')} → ${fmtDateDisplay(f.to_date).replace(/-/g, '.')}`,
+          f.tankers, f.trips, ...blank(7), f.billed_km, f.amount, ...blank(3), f.toll_amount, '', f.toll_amount]),
+        ...(d.history_tolls || []).map(t => [`Toll — ${monthLabel(t.month_start)} (FY workbook, monthly total)`, ...blank(14), t.toll_amount, '', t.toll_amount]),
+        ...(d.fixed_months || []).map(f => [`Fixed cost 9,000 km — ${monthLabel(f.month_start)} (${f.tankers} tankers)`, ...blank(15), f.amount, f.amount]),
+      ];
+      const totToll = sum(d.fortnights, 'toll_amount') + sum(d.history_tolls || [], 'toll_amount');
+      const totFixed = sum(d.fixed_months || [], 'amount');
       const totalVals = totalRow.values.slice(1);
-      wsDW.spliceRows(totalRow.number, 1, ...fnRows, [...totalVals.slice(0, 15), sum(d.fortnights, 'toll_amount'), sum(d.fortnights, 'total_payable')]);
-      wsDW.getRow(1).getCell(16).value = 'Toll (₹)'; wsDW.getRow(1).getCell(17).value = 'Total Payable (₹)';
-      wsDW.getRow(1).getCell(16).font = { bold: true }; wsDW.getRow(1).getCell(17).font = { bold: true };
+      wsDW.spliceRows(totalRow.number, 1, ...subRows, [...totalVals.slice(0, 15), rN(totToll), rN(totFixed), rN(sum(d.dates, 'amount') + totToll + totFixed)]);
+      ['Toll (₹)', 'Fixed Cost (₹)', 'Total Payable (₹)'].forEach((h, i) => { const c = wsDW.getRow(1).getCell(16 + i); c.value = h; c.font = { bold: true }; });
       for (let r = totalRow.number; r <= wsDW.rowCount; r++) wsDW.getRow(r).font = { bold: true };
     }
     sheet('Tanker Wise', d.tankers, 'Tanker', 'tanker_number', 'vendor_name', true, true);
@@ -1927,29 +1940,9 @@ router.get('/report-excel', authenticate, authorizeOrModule('billing', ...canBil
       const wsDW = wb.getWorksheet('Date Wise');
       for (let r = 4; r <= wsDW.rowCount; r++) {
         const v = String(wsDW.getRow(r).getCell(1).value || '');
-        if (v.startsWith('Run #')) wsDW.getRow(r).eachCell({ includeEmpty: true }, c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3E0' } }; c.font = { bold: true }; });
+        if (v.startsWith('Run #') || v.startsWith('Toll — ') || v.startsWith('Fixed cost 9,000')) wsDW.getRow(r).eachCell({ includeEmpty: true }, c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3E0' } }; c.font = { bold: true }; });
       }
     }
-    // Minimum-km fixed cost: one line per month on the Date Wise sheet (it is per tanker per month, never per day).
-    if (withFixed) {
-      const wsDW = wb.getWorksheet('Date Wise');
-      wsDW.addRow([]);
-      d.fixed_months.forEach(f => {
-        const [y, mo] = f.month_start.split('-').map(Number);
-        wsDW.addRow([`Fixed cost ${MONTH_NAMES[mo - 1]} ${y} (9,000 km minimum, ${f.tankers} tankers): ₹${Number(f.amount).toLocaleString('en-IN')} — in Tanker / Vendor Wise`]).font = { bold: true, color: { argb: 'FF1E3A8A' } };
-      });
-    }
-    // FY-workbook toll: one total per month, not split per tanker / date.
-    if ((d.history_tolls || []).length) {
-      const wsDW = wb.getWorksheet('Date Wise');
-      wsDW.addRow([]);
-      d.history_tolls.forEach(t => {
-        const [y, mo] = t.month_start.split('-').map(Number);
-        const row = wsDW.addRow([`Toll ${MONTH_NAMES[mo - 1]} ${y} (FY workbook, monthly total — not split per tanker): ₹${Number(t.toll_amount).toLocaleString('en-IN')}`]);
-        row.font = { bold: true, color: { argb: 'FF7C2D12' } };
-      });
-    }
-
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     res.setHeader('Content-Disposition', `attachment; filename=tanker_payment_report_${from}_${to}.xlsx`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

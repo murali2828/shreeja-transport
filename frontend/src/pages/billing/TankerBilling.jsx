@@ -1440,6 +1440,15 @@ function PaymentReport() {
             const withFixed = withToll && (data.fixed_months || []).length > 0;
             const fmtDateDot = d => fmtDate(d).replace(/-/g, '.'); // Date Wise shows DD.MM.YYYY (finance, 2026-10-08)
             const fortnights = tab === 'dates' ? (data.fortnights || []) : [];
+            // Date Wise: toll and fixed cost are per run / per month, never per day —
+            // shown as subtotal rows and summed into TOTAL and Total Payable (owner, 2026-10-14).
+            const isDates = tab === 'dates';
+            const monthName = m => new Date(m + 'T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+            const histTolls = isDates ? (data.history_tolls || []) : [];
+            const fixedMonths = isDates ? (data.fixed_months || []) : [];
+            const dTotAmt = (rows || []).reduce((s, r) => s + (+r.amount || 0), 0);
+            const dTotToll = fortnights.reduce((s, f) => s + (+f.toll_amount || 0), 0) + histTolls.reduce((s, t) => s + (+t.toll_amount || 0), 0);
+            const dTotFixed = fixedMonths.reduce((s, f) => s + (+f.amount || 0), 0);
             return (
             <div className="card overflow-hidden">
               <table className="w-full text-xs">
@@ -1447,7 +1456,8 @@ function PaymentReport() {
                   <tr>{[tab === 'dates' ? 'Date' : tab === 'tankers' ? 'Tanker' : 'Vendor',
                         tab === 'tankers' ? 'Vendor' : 'Tankers', 'Trips',
                         'Billed KM', 'Amount (₹)',
-                        ...(withToll || tab === 'dates' ? ['Toll (₹)', 'Total Payable (₹)'] : []),
+                        ...(withToll ? ['Toll (₹)', 'Total Payable (₹)'] : []),
+                        ...(isDates ? ['Toll (₹)', 'Fixed cost (₹)', 'Total Payable (₹)'] : []),
                         ...(withFixed ? ['Fixed cost 9000 km (₹)', 'Total cost (₹)', 'Cost/Ltr all-in'] : [])]
                         .map((h, i) => <th key={h} className={`px-3 py-2 ${i >= 2 ? 'text-right' : ''}`}>{h}</th>)}</tr>
                 </thead>
@@ -1461,7 +1471,7 @@ function PaymentReport() {
                       <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.amount)}</td>
                       {withToll && <td className="px-3 py-1.5 text-right">{nf(r.toll_amount)}</td>}
                       {withToll && <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.total_payable)}</td>}
-                      {tab === 'dates' && <td/>}{tab === 'dates' && <td/>}
+                      {isDates && <><td/><td/><td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.amount)}</td></>}
                       {withFixed && <td className="px-3 py-1.5 text-right">{nf(r.fixed_cost)}</td>}
                       {withFixed && <td className="px-3 py-1.5 text-right font-bold text-[#005ba3]">{nf(r.total_cost)}</td>}
                       {withFixed && <td className="px-3 py-1.5 text-right">{r.cost_per_litre_all_in ?? '—'}</td>}
@@ -1476,7 +1486,24 @@ function PaymentReport() {
                       <td className="px-3 py-1.5 text-right">{nf(f.billed_km)}</td>
                       <td className="px-3 py-1.5 text-right text-[#005ba3]">{nf(f.amount)}</td>
                       <td className="px-3 py-1.5 text-right">{nf(f.toll_amount)}</td>
-                      <td className="px-3 py-1.5 text-right text-[#005ba3]">{nf(f.total_payable)}</td>
+                      <td className="px-3 py-1.5 text-right"></td>
+                      <td className="px-3 py-1.5 text-right text-[#005ba3]">{nf(f.toll_amount)}</td>
+                    </tr>
+                  ))}
+                  {histTolls.map(t => (
+                    <tr key={'ht' + t.month_start} className="bg-amber-50 font-semibold border-t border-amber-200">
+                      <td className="px-3 py-1.5 whitespace-nowrap" colSpan={5}>Toll — {monthName(t.month_start)} (FY workbook, monthly total)</td>
+                      <td className="px-3 py-1.5 text-right">{nf(t.toll_amount)}</td>
+                      <td className="px-3 py-1.5 text-right"></td>
+                      <td className="px-3 py-1.5 text-right text-[#005ba3]">{nf(t.toll_amount)}</td>
+                    </tr>
+                  ))}
+                  {fixedMonths.map(f => (
+                    <tr key={'fx' + f.month_start} className="bg-indigo-50 font-semibold border-t border-indigo-200">
+                      <td className="px-3 py-1.5 whitespace-nowrap" colSpan={5}>Fixed cost 9,000 km — {monthName(f.month_start)} ({f.tankers} tankers)</td>
+                      <td className="px-3 py-1.5 text-right"></td>
+                      <td className="px-3 py-1.5 text-right">{nf(f.amount)}</td>
+                      <td className="px-3 py-1.5 text-right text-[#005ba3]">{nf(f.amount)}</td>
                     </tr>
                   ))}
                   <tr className="bg-blue-100 font-bold">
@@ -1485,8 +1512,13 @@ function PaymentReport() {
                     <td className="px-3 py-2 text-right">{(rows || []).reduce((s, r) => s + (+r.trips || 0), 0)}</td>
                     <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.billed_km || 0), 0))}</td>
                     <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.amount || 0), 0))}</td>
-                    {(withToll || tab === 'dates') && <td className="px-3 py-2 text-right">{nf((withToll ? rows || [] : fortnights).reduce((s, r) => s + (+r.toll_amount || 0), 0))}</td>}
-                    {(withToll || tab === 'dates') && <td className="px-3 py-2 text-right text-[#005ba3]">{nf((withToll ? rows || [] : fortnights).reduce((s, r) => s + (+r.total_payable || 0), 0))}</td>}
+                    {withToll && <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.toll_amount || 0), 0))}</td>}
+                    {withToll && <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.total_payable || 0), 0))}</td>}
+                    {isDates && <>
+                      <td className="px-3 py-2 text-right">{nf(dTotToll)}</td>
+                      <td className="px-3 py-2 text-right">{nf(dTotFixed)}</td>
+                      <td className="px-3 py-2 text-right text-[#005ba3]">{nf(dTotAmt + dTotToll + dTotFixed)}</td>
+                    </>}
                     {withFixed && <td className="px-3 py-2 text-right">{nf((rows || []).reduce((s, r) => s + (+r.fixed_cost || 0), 0))}</td>}
                     {withFixed && <td className="px-3 py-2 text-right text-[#005ba3]">{nf((rows || []).reduce((s, r) => s + (+r.total_cost || 0), 0))}</td>}
                     {withFixed && <td/>}
