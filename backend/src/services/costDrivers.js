@@ -27,7 +27,7 @@
 // Per-litre decomposition, Δ(₹/L) = cost_P/L_P − cost_Q/L_Q:
 //   each amount effect ÷ L_P, plus a volume effect = cost_Q × (1/L_P − 1/L_Q)
 //   (more litres over the same cost lowers ₹/L). Both sets add up exactly.
-const { periodOverheads } = require('./transportCumulative');
+const { periodOverheads, HISTORY_UNTIL } = require('./transportCumulative');
 const { query } = require('../config/db');
 const { saleTankerSql } = require('../utils/saleTanker');
 const { pickRate, transportTypeFor, stateFromRegistration, loadBillingStates } = require('./rates');
@@ -61,7 +61,56 @@ function previousPeriod(from, to) {
   return { from: addDays(from, -days), to: addDays(from, -1) };
 }
 
-async function loadTrips(from, to) {
+// FY-workbook months (owner, 2026-10-14): up to ANALYTICS_HISTORY_UNTIL the
+// trips come from historical_trips (billed km, amount, acknowledged litres,
+// BMCUs covered as text), after it from portal executions — as the Payment
+// Report and Tanker Utilisation do, so nothing is counted twice.
+const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+async function loadBmcuIndex() {
+  const r = await query('SELECT id, bmcu_code, bmcu_name FROM bmcus');
+  const byCode = new Map(), byName = new Map();
+  for (const b of r.rows) {
+    if (b.bmcu_code != null) byCode.set(String(b.bmcu_code).trim().toLowerCase(), b.id);
+    if (b.bmcu_name) byName.set(normName(b.bmcu_name), b.id);
+  }
+  return { byCode, byName };
+}
+// "3005 Komireddygari Palli, 3006 / Polireddipalli + 3010" → BMCU ids; unmatched tokens counted.
+function parseCoverage(text, idx) {
+  const ids = new Set(); let unmatched = 0;
+  for (const raw of String(text || '').split(/[,/+&;\n]|\s-\s/)) {
+    const tok = raw.trim(); if (!tok) continue;
+    const code = (tok.match(/^\d{3,6}\b/) || [])[0];
+    let id = code ? idx.byCode.get(code) : null;
+    if (!id) id = idx.byCode.get(tok.toLowerCase()) || idx.byName.get(normName(tok.replace(/^\d{3,6}\s*/, '')));
+    if (id) ids.add(id); else unmatched++;
+  }
+  return { ids: [...ids], unmatched };
+}
+async function loadHistoryTrips(from, to, idx) {
+  if (from > HISTORY_UNTIL) return [];
+  const end = to < HISTORY_UNTIL ? to : HISTORY_UNTIL;
+  const r = await query(`
+    SELECT id, report_date::text AS plan_for_date, tanker_number, capacity_litres, route_name, plant AS delivery_point,
+           billed_km, rate_per_km, amount, milk_litres, bmcu_coverage
+    FROM historical_trips WHERE report_date BETWEEN $1::date AND $2::date
+    ORDER BY report_date, tanker_number`, [from, end]);
+  return r.rows.map(h => {
+    const cov = parseCoverage(h.bmcu_coverage, idx);
+    return {
+      plan_id: null, execution_id: null, history_id: h.id, plan_for_date: h.plan_for_date,
+      tanker_number: h.tanker_number, capacity_litres: h.capacity_litres, route_name: h.route_name, delivery_point: h.delivery_point,
+      km: h.billed_km, billing_line_id: null, run_id: null, billed_state: null, billed_type: null,
+      history_rate: num(h.rate_per_km), history_amount: num(h.amount),
+      n_bmcus: cov.ids.length || null, litres: h.milk_litres, bmcu_ids: cov.ids, coverage_unmatched: cov.unmatched,
+    };
+  });
+}
+
+async function loadTrips(from, to, idx) {
+  const hist = await loadHistoryTrips(from, to, idx);
+  if (to <= HISTORY_UNTIL) return hist;
+  const pFrom = from > HISTORY_UNTIL ? from : addDays(HISTORY_UNTIL, 1);
   const r = await query(`
     SELECT tp.id AS plan_id, tp.plan_for_date, te.id AS execution_id,
            t.tanker_number, t.capacity_litres, rm.route_name, dp.name AS delivery_point,
@@ -81,8 +130,8 @@ async function loadTrips(from, to) {
       AND tp.status NOT IN ('cancelled','deleted')
       AND COALESCE(tp.trip_kind, 'milk') = 'milk'
       AND NOT (${saleTankerSql('tp', 't')})
-    ORDER BY tp.plan_for_date, t.tanker_number`, [from, to]);
-  return r.rows;
+    ORDER BY tp.plan_for_date, t.tanker_number`, [pFrom, to]);
+  return [...hist, ...r.rows];
 }
 
 // Every rate row and diesel row touching the period, looked up per trip date.
@@ -106,7 +155,7 @@ const dieselOn = (rows, state, date) => {
 };
 
 // BMCUs served in a period: bmcu_id → { code, name, first_date (ever), last_date (ever) }.
-async function loadBmcuLife() {
+async function loadBmcuLife(idx) {
   const r = await query(`
     SELECT x.bmcu_id, b.bmcu_code, b.bmcu_name, x.first_date::text AS first_date, x.last_date::text AS last_date
     FROM (
@@ -117,11 +166,23 @@ async function loadBmcuLife() {
       WHERE teb.is_deleted = FALSE AND teb.bmcu_id IS NOT NULL
       GROUP BY teb.bmcu_id) x
     JOIN bmcus b ON b.id = x.bmcu_id`);
-  return new Map(r.rows.map(x => [x.bmcu_id, x]));
+  const life = new Map(r.rows.map(x => [x.bmcu_id, x]));
+  // BMCUs served in the FY workbook months count as served then (not "new" later).
+  const h = await query(`SELECT report_date::text AS d, bmcu_coverage FROM historical_trips
+    WHERE report_date <= $1::date AND bmcu_coverage IS NOT NULL`, [HISTORY_UNTIL]);
+  const names = (await query('SELECT id, bmcu_code, bmcu_name FROM bmcus')).rows;
+  const byId = new Map(names.map(b => [b.id, b]));
+  for (const row of h.rows) for (const id of parseCoverage(row.bmcu_coverage, idx).ids) {
+    const l = life.get(id) || { bmcu_id: id, bmcu_code: byId.get(id)?.bmcu_code, bmcu_name: byId.get(id)?.bmcu_name, first_date: row.d, last_date: row.d };
+    if (row.d < l.first_date) l.first_date = row.d;
+    if (row.d > l.last_date) l.last_date = row.d;
+    life.set(id, l);
+  }
+  return life;
 }
 
-async function pricePeriod(from, to, billingStates) {
-  const [trips, rateRows, dieselRows] = await Promise.all([loadTrips(from, to), loadRateRows(from, to), loadDieselRows(from, to)]);
+async function pricePeriod(from, to, billingStates, idx) {
+  const [trips, rateRows, dieselRows] = await Promise.all([loadTrips(from, to, idx), loadRateRows(from, to), loadDieselRows(from, to)]);
   for (const tr of trips) {
     const date = tr.plan_for_date;
     tr.km = num(tr.km) || 0;
@@ -134,9 +195,10 @@ async function pricePeriod(from, to, billingStates) {
     tr.mileage = rateRow ? num(rateRow.mileage_km_per_litre) : null;
     tr.diesel = tr.state ? (dieselOn(dieselRows, tr.state, date) ?? (rateRow ? num(rateRow.diesel_price) : null)) : null;
     const billed = tr.billing_line_id && !tr.billed_excluded && num(tr.billed_amount) != null;
-    tr.rate = billed ? num(tr.billed_rate) : (rr ? rr.rate_per_km : null);
-    tr.cost = billed ? num(tr.billed_amount) : (tr.rate != null ? r2(tr.km * tr.rate) : 0);
-    tr.cost_source = billed ? 'billing run' : (tr.rate != null ? 'rate master' : 'no rate');
+    const fromHistory = tr.history_id != null && tr.history_amount != null;
+    tr.rate = fromHistory ? tr.history_rate : billed ? num(tr.billed_rate) : (rr ? rr.rate_per_km : null);
+    tr.cost = fromHistory ? tr.history_amount : billed ? num(tr.billed_amount) : (tr.rate != null ? r2(tr.km * tr.rate) : 0);
+    tr.cost_source = fromHistory ? 'FY workbook' : billed ? 'billing run' : (tr.rate != null ? 'rate master' : 'no rate');
     tr.in_billing_run = !!tr.billing_line_id;
   }
   return { trips };
@@ -147,8 +209,8 @@ const uniqBmcus = trips => new Set(trips.flatMap(t => t.bmcu_ids || []));
 
 async function costDrivers(from, to, prevFrom, prevTo) {
   const Q = prevFrom && prevTo ? { from: prevFrom, to: prevTo } : previousPeriod(from, to);
-  const billingStates = await loadBillingStates(365);
-  const [P, Qp, life] = await Promise.all([pricePeriod(from, to, billingStates), pricePeriod(Q.from, Q.to, billingStates), loadBmcuLife()]);
+  const [billingStates, idx] = await Promise.all([loadBillingStates(365), loadBmcuIndex()]);
+  const [P, Qp, life] = await Promise.all([pricePeriod(from, to, billingStates, idx), pricePeriod(Q.from, Q.to, billingStates, idx), loadBmcuLife(idx)]);
 
   // New = first ever trip inside P. Closed = served in Q, not served in P.
   const servedP = uniqBmcus(P.trips), servedQ = uniqBmcus(Qp.trips);
@@ -241,6 +303,8 @@ async function costDrivers(from, to, prevFrom, prevTo) {
     new_bmcus: bmcuRows(newIds, P.trips, 'new'), closed_bmcus: bmcuRows(closedIds, Qp.trips, 'closed'),
     trips: P.trips.map(tripOut), previous_trips: Qp.trips.map(tripOut),
     notes: [
+      ...((from <= HISTORY_UNTIL || Q.from <= HISTORY_UNTIL) ? [`Up to ${HISTORY_UNTIL.split('-').reverse().join('-')} trips come from the FY workbook (billed km, amount, acknowledged litres, BMCUs covered); later trips from the portal.`] : []),
+      ...(() => { const n = [...P.trips, ...Qp.trips].filter(t => t.coverage_unmatched > 0).length; return n ? [`${n} FY-workbook trip(s) list BMCUs not found in the BMCU master — new / closed BMCU effects may be understated for them.`] : []; })(),
       'km = billed km when the trip is in a billing run, else the current Distance Master / Google chain. Cost = billed amount when billed, else km × Tanker Rate Master rate valid on the lifting date. Sale tankers and material trips are left out.',
       'Diesel effect = this period\'s km × (diesel on the lifting date − km-weighted diesel of the previous period in that state) ÷ mileage of the rate row.',
       'New BMCUs = cost of this period\'s trips visiting a BMCU whose first ever trip is in this period. Closed BMCUs = − cost of the previous period\'s trips visiting a BMCU not served in this period.',
