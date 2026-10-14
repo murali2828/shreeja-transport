@@ -197,8 +197,8 @@ async function buildCumulativeWorkbook(d, statusLabel) {
     ws5.addRow(MC_HEADS);
     d.months.forEach((m, i) => ws5.addRow(mcRow(i + 1, m, `${MON3[m.month - 1]}-${String(m.year).slice(2)}`)));
     if (d.months_total) ws5.addRow(mcRow('TOTAL', d.months_total, '')).font = { bold: true };
-    const MC_DEC2 = ['Fat %', 'Snf%', 'TS %', 'Rate Per KM', 'Cost Per Liter Rs', 'Cost Per Liter All-in Rs', 'Utilization %', 'AVG KM', 'Disel Price', 'Diesl Rate'];
-    for (let c = 3; c <= MC_HEADS.length; c++) ws5.getColumn(c).numFmt = MC_DEC2.includes(MC_HEADS[c - 1]) ? '0.00' : '#,##0.00';
+    const MC_DEC2 = ['Fat %', 'Snf%', 'TS %', 'Rate Per KM', 'Cost Per Liter Rs', 'Cost Per Liter All-in Rs', 'Utilization %', 'Disel Price', 'Diesl Rate'];
+    for (let c = 3; c <= MC_HEADS.length; c++) ws5.getColumn(c).numFmt = MC_HEADS[c - 1] === 'AVG KM' ? '#,##0' : MC_DEC2.includes(MC_HEADS[c - 1]) ? '0.00' : '#,##0.00';
     ws5.getColumn(2).alignment = { horizontal: 'center' };
 
     // Year Cumulative — metric rows × (month × FY) columns, YTD at the end
@@ -235,7 +235,7 @@ async function buildCumulativeWorkbook(d, statusLabel) {
       if (r <= 3) { cell.fill = FILL6('FFDCE9F7'); cell.font = { bold: true, size: 10, color: { argb: 'FF1F2937' } }; cell.alignment = { horizontal: 'center', vertical: 'middle' }; }
       else if (isYtd) { cell.fill = FILL6('FFFFF9C4'); cell.font = { bold: true }; }
       else if ((r - 3) % 2 === 0) cell.fill = FILL6('FFF5F8FC');
-      if (c > 1 && r > 3) cell.numFmt = ['fat_pct', 'snf_pct', 'ts_pct', 'rate_per_km', 'cost_per_litre', 'cost_per_litre_all_in', 'utilisation_pct', 'diesel_price', 'avg_km'].includes(METRICS[r - 4][1]) ? '0.00' : '#,##0';
+      if (c > 1 && r > 3) cell.numFmt = ['fat_pct', 'snf_pct', 'ts_pct', 'rate_per_km', 'cost_per_litre', 'cost_per_litre_all_in', 'utilisation_pct', 'diesel_price'].includes(METRICS[r - 4][1]) ? '0.00' : '#,##0';
     }
     ws6.getColumn(1).width = 30;
     ws6.views = [{ state: 'frozen', xSplit: 1, ySplit: 3 }];

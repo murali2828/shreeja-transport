@@ -11,9 +11,9 @@ const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', {
 // ── Month Cumulative (financial year of the From date) ───────────────────────
 const MC_COLS = [
   ['Tankers capacity (L)', 'capacity_litres', 0], ['Milk received (L)', 'milk_litres', 0], ['Milk received (kg)', 'milk_kgs', 0],
-  ['Fat %', 'fat_pct', 3], ['SNF %', 'snf_pct', 3], ['TS %', 'ts_pct', 3], ['Fat kgs', 'kg_fat', 0], ['SNF kgs', 'kg_snf', 0],
+  ['Fat %', 'fat_pct', 2], ['SNF %', 'snf_pct', 2], ['TS %', 'ts_pct', 2], ['Fat kgs', 'kg_fat', 0], ['SNF kgs', 'kg_snf', 0],
   ['Total KM', 'total_km', 0], ['Rate/KM', 'rate_per_km', 2], ['Amount (₹)', 'amount', 0], ['Toll (₹)', 'toll_amount', 0], ['Fixed cost 9000 km (₹)', 'fixed_cost', 0], ['Total cost (₹)', 'total_cost', 0],
-  ['Cost/Ltr (trips)', 'cost_per_litre', 4], ['Cost/Ltr (all-in)', 'cost_per_litre_all_in', 4], ['Util %', 'utilisation_pct', 2], ['Trips', 'trips', 0], ['Avg KM', 'avg_km', 2], ['Diesel Price', 'diesel_sum', 2], ['Diesel Rate', 'diesel_price', 2],
+  ['Cost/Ltr (trips)', 'cost_per_litre', 2], ['Cost/Ltr (all-in)', 'cost_per_litre_all_in', 2], ['Util %', 'utilisation_pct', 2], ['Trips', 'trips', 0], ['Avg KM', 'avg_km', 0], ['Diesel Price', 'diesel_sum', 2], ['Diesel Rate', 'diesel_price', 2],
 ];
 export function CumulativeMonths({ months, total }) {
   const cell = (m, k, d) => m[k] == null ? '—' : nf(m[k], d);
@@ -47,10 +47,10 @@ export function CumulativeMonths({ months, total }) {
 // ── Year Cumulative (month × FY matrix with YTD) + history upload (admin) ────
 const YC_ROWS = [
   ['Tanker capacities (L)', 'capacity_litres', 0], ['Milk received (L)', 'milk_litres', 0], ['Milk received (kg)', 'milk_kgs', 0],
-  ['Fat %', 'fat_pct', 3], ['SNF %', 'snf_pct', 3], ['TS %', 'ts_pct', 3], ['Kg fat', 'kg_fat', 0], ['Kg SNF', 'kg_snf', 0],
+  ['Fat %', 'fat_pct', 2], ['SNF %', 'snf_pct', 2], ['TS %', 'ts_pct', 2], ['Kg fat', 'kg_fat', 0], ['Kg SNF', 'kg_snf', 0],
   ['Milk per day (L)', 'milk_per_day', 0], ['Total KM', 'total_km', 0], ['Rate/KM', 'rate_per_km', 2], ['Amount (₹)', 'amount', 0],
   ['Toll (₹)', 'toll_amount', 0], ['Fixed cost 9000 km (₹)', 'fixed_cost', 0], ['Total cost (₹)', 'total_cost', 0],
-  ['Cost/Ltr (trips)', 'cost_per_litre', 4], ['Cost/Ltr (all-in)', 'cost_per_litre_all_in', 4], ['Util %', 'utilisation_pct', 2], ['Diesel ₹/L', 'diesel_price', 2], ['Trips', 'trips', 0], ['Avg KM', 'avg_km', 2],
+  ['Cost/Ltr (trips)', 'cost_per_litre', 2], ['Cost/Ltr (all-in)', 'cost_per_litre_all_in', 2], ['Util %', 'utilisation_pct', 2], ['Diesel ₹/L', 'diesel_price', 2], ['Trips', 'trips', 0], ['Avg KM', 'avg_km', 0],
 ];
 export function CumulativeYears({ years, isAdmin, onHistoryChanged }) {
   const fileRef = useRef(null);
