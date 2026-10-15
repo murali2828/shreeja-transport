@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Fixed
+- Transport Cost Drivers: a fortnight whose diesel price is not keyed showed diesel 0.00 and no diesel effect; the last known price of the state now carries forward (Diesel Rates master, else the rate cards' diesel price), mileage falls back to the latest rate card of the same state × type × capacity, a missing price shows "—" and the notes name each state and period whose price was carried or missing (owner, 2026-10-15).
+
 ## 2026-10-15 (2) — promoted to `main` 2026-10-15 (no migrations)
 
 ### Changed

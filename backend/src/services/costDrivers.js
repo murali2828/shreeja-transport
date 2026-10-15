@@ -148,14 +148,26 @@ async function loadRateRows(from, to) {
 async function loadDieselRows(from, to) {
   const r = await query(`
     SELECT state, price_per_litre, effective_from::text AS effective_from, effective_to::text AS effective_to
-    FROM diesel_rates WHERE effective_from <= $2::date AND effective_to >= $1::date
+    FROM diesel_rates WHERE effective_from <= $2::date
     ORDER BY effective_from DESC`, [from, to]);
   return r.rows;
 }
+// Price valid on the date; when the fortnight's price is not keyed yet, the
+// last known price of the state carries forward (owner, 2026-10-15) and the
+// trip is marked so the page can say so.
 const dieselOn = (rows, state, date) => {
   const hit = rows.find(x => x.state === state && x.effective_from <= date && x.effective_to >= date);
-  return hit ? parseFloat(hit.price_per_litre) : null;
+  if (hit) return { price: parseFloat(hit.price_per_litre), carried: false };
+  const last = rows.find(x => x.state === state && x.effective_from <= date);   // rows sorted newest first
+  return last ? { price: parseFloat(last.price_per_litre), carried: true, from: last.effective_from } : null;
 };
+// Rate rows up to the period end, newest first: diesel / mileage fallbacks.
+async function loadRateHistory(to) {
+  const r = await query(`
+    SELECT state, transport_type, capacity_kl, mileage_km_per_litre, diesel_price, effective_from::text AS effective_from
+    FROM tanker_rates WHERE effective_from <= $1::date ORDER BY effective_from DESC`, [to]);
+  return r.rows;
+}
 
 // BMCUs served in a period: bmcu_id → { code, name, first_date (ever), last_date (ever) }.
 async function loadBmcuLife(idx) {
@@ -185,7 +197,7 @@ async function loadBmcuLife(idx) {
 }
 
 async function pricePeriod(from, to, billingStates, idx) {
-  const [trips, rateRows, dieselRows] = await Promise.all([loadTrips(from, to, idx), loadRateRows(from, to), loadDieselRows(from, to)]);
+  const [trips, rateRows, dieselRows, rateHist] = await Promise.all([loadTrips(from, to, idx), loadRateRows(from, to), loadDieselRows(from, to), loadRateHistory(to)]);
   for (const tr of trips) {
     const date = tr.plan_for_date;
     tr.km = num(tr.km) || 0;
@@ -196,7 +208,22 @@ async function pricePeriod(from, to, billingStates, idx) {
     const rr = tr.state ? pickRate(onDate, tr.state, tr.transport_type, tr.capacity_litres) : null;
     const rateRow = rr ? onDate.find(x => x.id === rr.id) : null;
     tr.mileage = rateRow ? num(rateRow.mileage_km_per_litre) : null;
-    tr.diesel = tr.state ? (dieselOn(dieselRows, tr.state, date) ?? (rateRow ? num(rateRow.diesel_price) : null)) : null;
+    if (!tr.mileage && tr.state) {
+      // Latest rate card of the same state × type × capacity that carries a mileage.
+      const kl = num(tr.capacity_litres) ? Math.round(num(tr.capacity_litres) / 1000) : null;
+      const m = rateHist.find(x => x.state === tr.state && x.transport_type === tr.transport_type && num(x.mileage_km_per_litre) && (kl == null || Math.round(num(x.capacity_kl)) === kl) && x.effective_from <= date)
+        || rateHist.find(x => x.state === tr.state && num(x.mileage_km_per_litre) && x.effective_from <= date);
+      tr.mileage = m ? num(m.mileage_km_per_litre) : null;
+    }
+    const d = tr.state ? dieselOn(dieselRows, tr.state, date) : null;
+    if (d && !d.carried) tr.diesel = d.price;
+    else if (rateRow && num(rateRow.diesel_price)) tr.diesel = num(rateRow.diesel_price);
+    else if (d) { tr.diesel = d.price; tr.diesel_carried_from = d.from; }
+    else {
+      const rh = tr.state ? rateHist.find(x => x.state === tr.state && num(x.diesel_price) && x.effective_from <= date) : null;
+      tr.diesel = rh ? num(rh.diesel_price) : null;
+      if (rh) tr.diesel_carried_from = rh.effective_from;
+    }
     const billed = tr.billing_line_id && !tr.billed_excluded && num(tr.billed_amount) != null;
     const fromHistory = tr.history_id != null && tr.history_amount != null;
     tr.rate = fromHistory ? tr.history_rate : billed ? num(tr.billed_rate) : (rr ? rr.rate_per_km : null);
@@ -252,7 +279,7 @@ async function costDrivers(from, to, prevFrom, prevTo) {
     });
     return {
       state: st || 'All',
-      diesel_prev: st ? r2(dQby[st]) : r2(wavg(qT, t => t.diesel)), diesel_curr: r2(wavg(pT, t => t.diesel)),
+      diesel_prev: (v => v == null ? null : r2(v))(st ? dQby[st] : wavg(qT, t => t.diesel)), diesel_curr: (v => v == null ? null : r2(v))(wavg(pT, t => t.diesel)),
       prev: stats(qT, kmQ, lQ, costQ, perKmQ, perLQ), curr: stats(pT, kmP, lP, costP, perKmP, perLP),
       delta_cost: r2(delta), delta_per_km: r2(perKmP - perKmQ), delta_per_litre: r4(perLP - perLQ),
       effects: { diesel: r2(diesel), km: r2(kmEffect), new_bmcu: r2(newCost), closed_bmcu: r2(closedCost), mix: r2(mix) },
@@ -313,6 +340,21 @@ async function costDrivers(from, to, prevFrom, prevTo) {
     trips: P.trips.map(tripOut), previous_trips: Qp.trips.map(tripOut),
     notes: [
       ...((from <= HISTORY_UNTIL || Q.from <= HISTORY_UNTIL) ? [`Up to ${HISTORY_UNTIL.split('-').reverse().join('-')} trips come from the FY workbook (billed km, amount, acknowledged litres, BMCUs covered); later trips from the portal.`] : []),
+      ...(() => {
+        // Diesel prices not keyed for the period: last known price used, or none at all.
+        const out = [];
+        for (const [label, T] of [['this period', P.trips], ['the comparison period', Qp.trips]]) {
+          const carried = new Map(), none = new Set();
+          for (const t of T) {
+            if (!t.state) continue;
+            if (t.diesel == null) none.add(t.state);
+            else if (t.diesel_carried_from) carried.set(t.state, t.diesel_carried_from);
+          }
+          for (const [st, d] of carried) out.push(`Diesel price for ${st} not keyed for ${label}: last known price (from ${d.split('-').reverse().join('-')}) used — key it in Masters → Tanker Rates (diesel strip).`);
+          for (const st of none) out.push(`No diesel price at all for ${st} in ${label}: diesel effect counted as 0 for it.`);
+        }
+        return out;
+      })(),
       ...(() => { const n = [...P.trips, ...Qp.trips].filter(t => t.coverage_unmatched > 0).length; return n ? [`${n} FY-workbook trip(s) list BMCUs not found in the BMCU master — new / closed BMCU effects may be understated for them.`] : []; })(),
       'km = billed km when the trip is in a billing run, else the current Distance Master / Google chain. Cost = billed amount when billed, else km × Tanker Rate Master rate valid on the lifting date. Sale tankers and material trips are left out.',
       'Diesel effect = this period\'s km × (diesel on the lifting date − km-weighted diesel of the previous period in that state) ÷ mileage of the rate row.',
