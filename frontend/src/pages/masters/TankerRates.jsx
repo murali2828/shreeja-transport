@@ -236,7 +236,7 @@ export default function TankerRates() {
               <tr className="text-left text-gray-600">
                 {['Effective From', 'Effective To', 'State', 'Capacity (KL)', 'Transport Type',
                   'Mileage (KM/L)', 'Rate / KM (₹)', 'Diesel (₹/L)', 'Entered By', canEdit ? 'Actions' : null]
-                  .filter(Boolean).map(h => <th key={h} className="px-3 py-2 whitespace-nowrap">{h}</th>)}
+                  .filter(Boolean).map(h => <th key={h} className={`px-3 py-2 whitespace-nowrap ${['Capacity (KL)', 'Mileage (KM/L)', 'Rate / KM (₹)', 'Diesel (₹/L)'].includes(h) ? 'text-right' : ''}`}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
