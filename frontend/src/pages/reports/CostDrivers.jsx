@@ -38,13 +38,18 @@ export default function CostDrivers() {
   const [month, setMonth] = useState(String(now.getMonth() === 0 ? 12 : now.getMonth())); // last full month
   const [part, setPart]   = useState('1');
   const [custom, setCustom] = useState({ from: '', to: '', prev_from: '', prev_to: '' });
-  const [compare, setCompare] = useState('previous'); // previous | last_year | custom
+  const [compare, setCompare] = useState('previous'); // previous | last_year | month | custom
+  const [cmpYear, setCmpYear]   = useState(year);   // FY start of the chosen comparison month
+  const [cmpMonth, setCmpMonth] = useState(String(Number(month) === 1 ? 12 : Number(month) - 1));
   const [view, setView] = useState('litre'); // litre | amount
 
   const period = kind === 'custom' ? (custom.from && custom.to ? { from: custom.from, to: custom.to } : null)
     : presetDates(kind, kind === 'month' || kind === 'fortnight' ? (Number(month) >= 4 ? year : Number(year) + 1) : year, month, part);
   const shiftYear = iso => iso ? `${Number(iso.slice(0, 4)) - 1}${iso.slice(4)}` : '';
   const prev = compare === 'last_year' && period ? { prev_from: shiftYear(period.from), prev_to: shiftYear(period.to) }
+    : compare === 'month' ? (() => { const cy = Number(cmpMonth) >= 4 ? Number(cmpYear) : Number(cmpYear) + 1;
+        const mm = String(cmpMonth).padStart(2, '0'), last = new Date(Date.UTC(cy, Number(cmpMonth), 0)).getUTCDate();
+        return { prev_from: `${cy}-${mm}-01`, prev_to: `${cy}-${mm}-${last}` }; })()
     : compare === 'custom' && custom.prev_from && custom.prev_to ? { prev_from: custom.prev_from, prev_to: custom.prev_to } : {};
   const params = period ? { from: period.from, to: period.to, ...prev } : null;
 
@@ -109,8 +114,19 @@ export default function CostDrivers() {
         <select className="input text-xs" value={compare} onChange={e => setCompare(e.target.value)} title="Comparison period">
           <option value="previous">vs previous period</option>
           <option value="last_year">vs same period last year</option>
+          <option value="month">vs a chosen month…</option>
           <option value="custom">vs custom period…</option>
         </select>
+        {compare === 'month' && (
+          <>
+            <select className="input text-xs" value={cmpYear} onChange={e => setCmpYear(e.target.value)} title="Financial year of the comparison month">
+              {years.map(y => <option key={y} value={y}>FY {y}-{String(Number(y) + 1).slice(2)}</option>)}
+            </select>
+            <select className="input text-xs" value={cmpMonth} onChange={e => setCmpMonth(e.target.value)} title="Comparison month">
+              {[4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3].map(m => <option key={m} value={m}>{MONTHS[m - 1]}</option>)}
+            </select>
+          </>
+        )}
         {compare === 'custom' && (
           <>
             <input type="date" className="input text-xs" value={custom.prev_from} onChange={e => setCustom(c => ({ ...c, prev_from: e.target.value }))}/>
