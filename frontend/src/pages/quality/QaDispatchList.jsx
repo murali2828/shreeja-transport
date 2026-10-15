@@ -17,11 +17,13 @@ const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')
 // Column sections (owner, 2026-10-10): colour band per section, light tint on the body cells.
 const SEC = { e: 'bg-slate-100', d: 'bg-sky-100', t: 'bg-green-100', v: 'bg-amber-100', a: 'bg-violet-100', r: 'bg-pink-100', x: 'bg-gray-50' };
 const SEC_BODY = { d: 'bg-sky-50/60', t: 'bg-green-50/60', v: 'bg-amber-50/60', a: 'bg-violet-50/60', r: 'bg-pink-50/60' };
-const SECTIONS = [['Entry', 9, SEC.e], ['Dispatch', 7, SEC.d], ['Truck Sheet (RMRD)', 7, SEC.t], ['Variation', 3, SEC.v],
-  ['Plant Acknowledgement (Logistics)', 6, SEC.a], ['Ack vs RMRD (Truck Sheet)', 5, SEC.r], ['', 2, SEC.x]];
+const SECTIONS = [['Entry', 9, SEC.e], ['Dispatch', 7, SEC.d], ['Truck Sheet (RMRD)', 19, SEC.t], ['Dispatch − RMRD (adjusted)', 3, SEC.v],
+  ['Plant Acknowledgement (Logistics)', 6, SEC.a], ['Ack vs RMRD (adjusted)', 5, SEC.r], ['', 2, SEC.x]];
 const HEADS = [['Submitted', 'e'], ['Route', 'e'], ['Lifting', 'e'], ['Tanker', 'e'], ['BMCU', 'e'], ['Comp', 'e'], ['Milk', 'e'], ['Scale', 'e'], ['Shift', 'e'],
   ['D Lts', 'd'], ['D Fat%', 'd'], ['CLR', 'd'], ['D SNF', 'd'], ['D Kgs', 'd'], ['D KgFat', 'd'], ['D KgSNF', 'd'],
   ['TS Lts', 't'], ['TS Fat%', 't'], ['TS SNF', 't'], ['TS Kgs', 't'], ['TS KgFat', 't'], ['TS KgSNF', 't'], ['MBRT', 't'],
+  ['LO Lts', 't'], ['LO Fat%', 't'], ['LO SNF%', 't'], ['Lifted Lts', 't'], ['Lifted Fat%', 't'], ['Lifted SNF%', 't'],
+  ['RMRD adj Lts', 't'], ['RMRD adj Kgs', 't'], ['RMRD adj Fat%', 't'], ['RMRD adj SNF%', 't'], ['RMRD adj KgFat', 't'], ['RMRD adj KgSNF', 't'],
   ['Var Lts', 'v'], ['Var Fat', 'v'], ['Var SNF', 'v'],
   ['Ack Lts', 'a'], ['Ack Kgs', 'a'], ['Ack Fat%', 'a'], ['Ack SNF%', 'a'], ['Ack KgFat', 'a'], ['Ack KgSNF', 'a'],
   ['Ack−RMRD Lts', 'r'], ['Ack−RMRD Kgs', 'r'], ['Ack−RMRD Fat', 'r'], ['Ack−RMRD SNF', 'r'], ['Ack−Disp Lts', 'r'],
@@ -49,6 +51,8 @@ export default function QaDispatchList() {
       <td className="px-2 py-1.5 whitespace-nowrap" colSpan={9}>{label}</td>
       {col(t.d_qty_litres, 0)}{col(t.d_fat_pct)}<td/>{col(t.d_snf_pct)}{col(t.d_qty_kgs)}{col(t.d_kg_fat)}{col(t.d_kg_snf)}
       {col(t.ts_qty_litres, 0)}{col(t.ts_fat_pct)}{col(t.ts_snf_pct)}{col(t.ts_qty_kgs)}{col(t.ts_kg_fat)}{col(t.ts_kg_snf)}<td className="px-2 py-1 text-right whitespace-nowrap" title="Lowest MBRT in the group">{t.ts_mbrt_min == null ? '—' : `min ${fx(t.ts_mbrt_min, 0)}`}</td>
+      {col(t.lo_qty_litres, 0)}{col(t.lo_fat_pct)}{col(t.lo_snf_pct)}{col(t.lf_qty_litres, 0)}{col(t.lf_fat_pct)}{col(t.lf_snf_pct)}
+      {col(t.rmrd_adj_qty_litres, 0)}{col(t.rmrd_adj_qty_kgs)}{col(t.rmrd_adj_fat_pct)}{col(t.rmrd_adj_snf_pct)}{col(t.rmrd_adj_kg_fat)}{col(t.rmrd_adj_kg_snf)}
       {vcol(t.qty_var_litres)}<td/><td/>
       {t.ack ? <>{col(t.ack.litres, 0)}{col(t.ack.kgs)}{col(t.ack.fat_pct)}{col(t.ack.snf_pct)}{col(t.ack.kg_fat)}{col(t.ack.kg_snf)}
                  {vcol(t.ack_vs_ts_litres)}{vcol(t.ack_vs_ts_kgs)}{vcol(t.ack_vs_ts_fat)}{vcol(t.ack_vs_ts_snf)}{vcol(t.ack_vs_d_litres)}</>
@@ -100,6 +104,9 @@ export default function QaDispatchList() {
                           {col(r.scale_reading)}<td className="px-2 py-1">{r.shifts || '—'}</td>
                           {col(r.d_qty_litres, 0, 'd')}{col(r.d_fat_pct, 2, 'd')}{col(r.d_clr, 2, 'd')}{col(r.d_snf_pct, 2, 'd')}{col(r.d_qty_kgs, 2, 'd')}{col(r.d_kg_fat, 2, 'd')}{col(r.d_kg_snf, 2, 'd')}
                           {col(r.ts_qty_litres, 0, 't')}{col(r.ts_fat_pct, 2, 't')}{col(r.ts_snf_pct, 2, 't')}{col(r.ts_qty_kgs, 2, 't')}{col(r.ts_kg_fat, 2, 't')}{col(r.ts_kg_snf, 2, 't')}{col(r.ts_mbrt_mins, 0, 't')}
+                          <td className={`px-2 py-1 text-right whitespace-nowrap ${SEC_BODY.t}`} title={r.lo_remarks || ''}>{fx(r.lo_qty_litres, 0)}</td>{col(r.lo_fat_pct, 2, 't')}{col(r.lo_snf_pct, 2, 't')}
+                          <td className={`px-2 py-1 text-right whitespace-nowrap ${SEC_BODY.t}`} title={r.lf_remarks || ''}>{fx(r.lf_qty_litres, 0)}</td>{col(r.lf_fat_pct, 2, 't')}{col(r.lf_snf_pct, 2, 't')}
+                          {col(r.rmrd_adj_qty_litres, 0, 't')}{col(r.rmrd_adj_qty_kgs, 2, 't')}{col(r.rmrd_adj_fat_pct, 2, 't')}{col(r.rmrd_adj_snf_pct, 2, 't')}{col(r.rmrd_adj_kg_fat, 2, 't')}{col(r.rmrd_adj_kg_snf, 2, 't')}
                           {vcol(r.qty_var_litres, 'v')}{vcol(r.fat_var, 'v')}{vcol(r.snf_var, 'v')}
                           {Array.from({ length: 11 }).map((_, k) => <td key={k} className={k < 6 ? SEC_BODY.a : SEC_BODY.r}/>)}
                           <td className="px-2 py-1 whitespace-nowrap">{r.entered_by_name}</td>

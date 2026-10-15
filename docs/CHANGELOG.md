@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Added
+- QA Dispatch Entry: **Balance milk** in the Truck sheet card, as on Active Trips — Left Over milk (deducted from RMRD) and Lifted milk (added), each with qty (L), fat %, SNF % (blank = truck sheet's) and remarks, plus a live "RMRD after adjustment" line; the QA report, totals and Excel show left over, lifted and RMRD adjusted (L, kgs, fat %, SNF %, kg fat, kg SNF), and dispatch − RMRD and Ack − RMRD use the adjusted RMRD like the TS report (migration 068, `qa_dispatch_entries.lo_* / lf_*`) (owner, 2026-10-15).
+
 ### Fixed
 - Transport Cost Drivers: a fortnight whose diesel price is not keyed showed diesel 0.00 and no diesel effect; the last known price of the state now carries forward (Diesel Rates master, else the rate cards' diesel price), mileage falls back to the latest rate card of the same state × type × capacity, a missing price shows "—" and the notes name each state and period whose price was carried or missing (owner, 2026-10-15).
 

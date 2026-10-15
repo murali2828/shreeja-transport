@@ -21,7 +21,10 @@ const pad = v => String(v).padStart(2, '0');
 const addDays = (iso, k) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + k); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 
 const EMPTY = { lifting_date: today(), route_id: '', tanker_id: '', bmcu_id: '', compartment: ['FC'], milk_type: '', scale_reading: '', shifts: [],
-  d_qty_litres: '', d_fat_pct: '', d_clr: '', ts_date: '', ts_shift: '', ts_qty_litres: '', ts_fat_pct: '', ts_snf_pct: '', ts_mbrt_mins: '', remarks: '' };
+  d_qty_litres: '', d_fat_pct: '', d_clr: '', ts_date: '', ts_shift: '', ts_qty_litres: '', ts_fat_pct: '', ts_snf_pct: '', ts_mbrt_mins: '',
+  lo_qty_litres: '', lo_fat_pct: '', lo_snf_pct: '', lo_remarks: '', lf_qty_litres: '', lf_fat_pct: '', lf_snf_pct: '', lf_remarks: '', remarks: '' };
+// Balance milk (migration 068), as on Active Trips: Left Over is deducted from RMRD, Lifted is added.
+const BALANCE = [['lo', 'Left Over milk (− RMRD)', -1], ['lf', 'Lifted milk (+ RMRD)', 1]];
 
 export default function QaDispatchEntry() {
   const qc = useQueryClient(); const navigate = useNavigate();
@@ -43,6 +46,8 @@ export default function QaDispatchEntry() {
       compartment: editing.compartment ? editing.compartment.split(',') : [], milk_type: editing.milk_type || '', scale_reading: editing.scale_reading ?? '', shifts: editing.shifts ? editing.shifts.split(',') : [],
       d_qty_litres: editing.d_qty_litres ?? '', d_fat_pct: editing.d_fat_pct ?? '', d_clr: editing.d_clr ?? '',
       ts_date: editing.ts_date || '', ts_shift: editing.ts_shift || '', ts_qty_litres: editing.ts_qty_litres ?? '', ts_fat_pct: editing.ts_fat_pct ?? '', ts_snf_pct: editing.ts_snf_pct ?? '', ts_mbrt_mins: editing.ts_mbrt_mins ?? '',
+      lo_qty_litres: editing.lo_qty_litres ?? '', lo_fat_pct: editing.lo_fat_pct ?? '', lo_snf_pct: editing.lo_snf_pct ?? '', lo_remarks: editing.lo_remarks || '',
+      lf_qty_litres: editing.lf_qty_litres ?? '', lf_fat_pct: editing.lf_fat_pct ?? '', lf_snf_pct: editing.lf_snf_pct ?? '', lf_remarks: editing.lf_remarks || '',
       remarks: editing.remarks || '' });
   }, [editing]);
 
@@ -69,8 +74,20 @@ export default function QaDispatchEntry() {
   const tKgs = n(f.ts_qty_litres) != null ? n(f.ts_qty_litres) * KG_FACTOR : null;
   const tKgFat = tKgs != null && n(f.ts_fat_pct) != null ? tKgs * n(f.ts_fat_pct) / 100 : null;
   const tKgSnf = tKgs != null && n(f.ts_snf_pct) != null ? tKgs * n(f.ts_snf_pct) / 100 : null;
+  // RMRD after balance milk: blank fat / SNF of a balance line take the truck sheet's; % from kg totals.
+  const adj = (() => {
+    const hasBal = BALANCE.some(([p]) => n(f[`${p}_qty_litres`]) != null);
+    if (n(f.ts_qty_litres) == null && !hasBal) return { l: null, kgs: null, fat: null, snf: null };
+    let l = n(f.ts_qty_litres) || 0, kgs = tKgs || 0, kf = tKgFat || 0, ks = tKgSnf || 0;
+    for (const [p, , sign] of BALANCE) {
+      const bl = n(f[`${p}_qty_litres`]); if (bl == null) continue;
+      const bk = bl * KG_FACTOR, bf = n(f[`${p}_fat_pct`]) ?? n(f.ts_fat_pct), bs = n(f[`${p}_snf_pct`]) ?? n(f.ts_snf_pct);
+      l += sign * bl; kgs += sign * bk; kf += sign * (bf != null ? bk * bf / 100 : 0); ks += sign * (bs != null ? bk * bs / 100 : 0);
+    }
+    return { l, kgs, fat: kgs > 0 ? kf / kgs * 100 : null, snf: kgs > 0 ? ks / kgs * 100 : null };
+  })();
   const v = (a, b) => (a != null && b != null ? a - b : null);
-  const vars = { qty: v(n(f.d_qty_litres), n(f.ts_qty_litres)), fat: v(n(f.d_fat_pct), n(f.ts_fat_pct)), snf: v(dSnf, n(f.ts_snf_pct)) };
+  const vars = { qty: v(n(f.d_qty_litres), adj.l), fat: v(n(f.d_fat_pct), adj.fat), snf: v(dSnf, adj.snf) };
 
   const payload = () => ({ ...f, compartment: f.compartment.join(','), shifts: f.shifts.join(','), ts_date: f.ts_date || f.lifting_date });
   const saveMut = useMutation({
@@ -157,10 +174,22 @@ export default function QaDispatchEntry() {
         {num('ts_qty_litres', 'Qty (Lts)', '0.01', true)}
         <div className="grid grid-cols-3 gap-3">{num('ts_fat_pct', 'Fat %')}{num('ts_snf_pct', 'SNF %')}{num('ts_mbrt_mins', 'MBRT (mins)')}</div>
         <div className="grid grid-cols-3 gap-3">{ro('Qty (Kgs)', tKgs)}{ro('KG Fat', tKgFat)}{ro('KG SNF', tKgSnf)}</div>
+        <div className="pt-2 border-t border-gray-100 space-y-3">
+          <div className="font-semibold text-xs text-[#003a6b]">Balance milk <span className="text-gray-400 font-normal">blank fat / SNF = truck sheet's</span></div>
+          {BALANCE.map(([p, label]) => (
+            <div key={p} className="space-y-2">
+              <div className="text-[11px] font-semibold text-gray-700">{label}</div>
+              <div className="grid grid-cols-3 gap-3">{num(`${p}_qty_litres`, 'Qty (L)')}{num(`${p}_fat_pct`, 'Fat %')}{num(`${p}_snf_pct`, 'SNF %')}</div>
+              <input className="input w-full py-1.5 text-sm" placeholder="Remarks" value={f[`${p}_remarks`]} onChange={e => set(`${p}_remarks`, e.target.value)}/>
+            </div>))}
+          <div className="rounded-lg bg-green-50 px-3 py-2 text-xs text-gray-800">
+            <span className="font-semibold">RMRD after adjustment:</span> {fx(adj.l)} L · {fx(adj.kgs)} Kgs · Fat {fx(adj.fat)} / SNF {fx(adj.snf)}
+          </div>
+        </div>
       </div>
 
       <div className="card p-4">
-        <div className="font-semibold text-sm text-[#003a6b] mb-2">Variation (dispatch − truck sheet)</div>
+        <div className="font-semibold text-sm text-[#003a6b] mb-2">Variation (dispatch − RMRD adjusted)</div>
         <div className="grid grid-cols-3 gap-3 text-center">
           {[['Qty (Lts)', vars.qty, 2], ['Fat', vars.fat, 2], ['SNF', vars.snf, 2]].map(([l, x, d]) => (
             <div key={l} className={`rounded-lg py-2 ${x == null ? 'bg-gray-50 text-gray-400' : Math.abs(x) < 0.005 ? 'bg-gray-100' : x < 0 ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
