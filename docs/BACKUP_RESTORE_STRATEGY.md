@@ -41,7 +41,7 @@ Health: `/api/health` (carries `git_sha`), `/api/health/ready`,
 |---|---|
 | Off-box target | NAS over **FTP** (as before); NFS later would cut the server-loss gap from 4 h to 1 min |
 | Restricted app role (playbook Layer 1) | **phase 2** — the app hard-deletes in many places (acknowledgements, billing lines, plans, change requests); the allow-list is built and tested on QA separately. Until then `OPS_HARDEN_SQL` is empty |
-| Alerts | murali.m@shreejamilk.com + the operator (chaitanya) |
+| Alerts | murali.m@shreejamilk.com + the operator (chaitanya.y@shreejamilk.com) |
 | Credentials escrow | not used (`OPS_ESCROW=no`): no mobile app or signing keys; API keys (Google, WheelsEye, Assure, SMTP) are in the env files inside the config bundle |
 | Passphrase custodians | to name: two people + a sealed envelope |
 | Rebuild target | to name: a VM / machine that can be brought up within an hour |
