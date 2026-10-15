@@ -122,7 +122,10 @@ export default function QaDispatchList() {
                           <td className={`px-2 py-1 text-right whitespace-nowrap ${SEC_BODY.t}`} title={r.lf_remarks || ''}>{fx(r.lf_qty_litres, 0)}</td>{col(r.lf_fat_pct, 2, 't')}{col(r.lf_snf_pct, 2, 't')}
                           {col(r.rmrd_adj_qty_litres, 0, 't')}{col(r.rmrd_adj_qty_kgs, 2, 't')}{col(r.rmrd_adj_fat_pct, 2, 't')}{col(r.rmrd_adj_snf_pct, 2, 't')}{col(r.rmrd_adj_kg_fat, 2, 't')}{col(r.rmrd_adj_kg_snf, 2, 't')}
                           {vcol(r.qty_var_litres, 'v')}{vcol(r.fat_var, 'v')}{vcol(r.snf_var, 'v')}
-                          {Array.from({ length: 12 }).map((_, k) => <td key={k} className={k < 7 ? SEC_BODY.a : SEC_BODY.r}/>)}
+                          {r.chamber_ack?.ack
+                            ? <>{col(r.chamber_ack.ack.litres, 0, 'a')}{col(r.chamber_ack.ack.kgs, 2, 'a')}{col(r.chamber_ack.ack.fat_pct, 2, 'a')}{col(r.chamber_ack.ack.snf_pct, 2, 'a')}{col(r.chamber_ack.ack.kg_fat, 2, 'a')}{col(r.chamber_ack.ack.kg_snf, 2, 'a')}{col(r.chamber_ack.ack.mbrt_min, 0, 'a')}
+                                {vcol(r.chamber_ack.ack_vs_ts_litres, 'r')}{vcol(r.chamber_ack.ack_vs_ts_kgs, 'r')}{vcol(r.chamber_ack.ack_vs_ts_fat, 'r')}{vcol(r.chamber_ack.ack_vs_ts_snf, 'r')}{vcol(r.chamber_ack.ack_vs_d_litres, 'r')}</>
+                            : Array.from({ length: 12 }).map((_, k) => <td key={k} className={k < 7 ? SEC_BODY.a : SEC_BODY.r}/>)}
                           <td className="px-2 py-1 whitespace-nowrap">{r.entered_by_name}</td>
                           <td className="px-2 py-1 whitespace-nowrap">
                             <button className="text-[#005ba3] underline mr-2" onClick={() => navigate(`/quality/entry?id=${r.id}`)}>edit</button>

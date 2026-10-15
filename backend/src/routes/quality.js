@@ -356,7 +356,14 @@ function groupReport(rows, acks, ackCh = {}) {
   const out = [...routes.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([route, g]) => {
     let routeAck = {};
     const tankers = [...g.values()].sort((a, b) => b.lifting_date.localeCompare(a.lifting_date) || a.tanker_number.localeCompare(b.tanker_number))
-      .map(t => { const ack = acks[t.key] || null; routeAck = addAck(routeAck, ack); return { ...t, totals: withAckVar(totalsOf(t.rows), ack), chambers: chamberBreakup(t.rows, ackCh[t.key]) }; });
+      .map(t => { const ack = acks[t.key] || null; routeAck = addAck(routeAck, ack); const chambers = chamberBreakup(t.rows, ackCh[t.key]);
+        // A chamber filled by exactly one entry shows its QA ack on that entry's row
+        // (no repeated line); a separate chamber row stays only for shared / split chambers (owner, 2026-10-15).
+        for (const ch of chambers) {
+          const hits = t.rows.filter(r => String(r.compartment || '').split(',').map(c => c.trim().toUpperCase()).includes(ch.chamber));
+          if (hits.length === 1 && String(hits[0].compartment).trim().toUpperCase() === ch.chamber) { hits[0].chamber_ack = ch; ch.inline = true; }
+        }
+        return { ...t, totals: withAckVar(totalsOf(t.rows), ack), chambers: chambers.filter(ch => !ch.inline) }; });
     grandAck = addAck(grandAck, routeAck);
     const routeRows = tankers.flatMap(t => t.rows);
     return { route, tankers, totals: withAckVar(totalsOf(routeRows), routeAck.trips ? routeAck : null) };
@@ -440,7 +447,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
             f(r.ts_qty_litres), f(r.ts_fat_pct), f(r.ts_snf_pct), f(r.ts_qty_kgs), f(r.ts_kg_fat), f(r.ts_kg_snf), f(r.ts_mbrt_mins),
             f(r.lo_qty_litres), f(r.lo_fat_pct), f(r.lo_snf_pct), f(r.lf_qty_litres), f(r.lf_fat_pct), f(r.lf_snf_pct),
             r.rmrd_adj_qty_litres, r.rmrd_adj_qty_kgs, r.rmrd_adj_fat_pct, r.rmrd_adj_snf_pct, r.rmrd_adj_kg_fat, r.rmrd_adj_kg_snf,
-            r.qty_var_litres, r.fat_var, r.snf_var, '', '', '', '', '', '', '', '', '', '', '', '', r.remarks, r.entered_by_name]);
+            r.qty_var_litres, r.fat_var, r.snf_var, ...(r.chamber_ack ? ackCells(r.chamber_ack) : Array(12).fill('')), r.remarks, r.entered_by_name]);
           styleRow(row, (zebra++ % 2) ? 'FFF5F8FC' : null);
           if (zebra % 2 === 0) row.font = { bold: false };
         }
