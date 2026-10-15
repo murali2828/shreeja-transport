@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- FY-workbook trips show the portal's Delivery Point names (e.g. "Balaji Dairy" for MDFVPL, "Jersey Milk Processing Unit, Madanapalli.") in the Payment Report and Transport Cost Drivers, so workbook and portal trips of one plant fall on one row; mapping by plant in `services/plantNames.js` at read time, no reload needed (owner, 2026-10-15).
+
 ## 2026-10-15 — promoted to `main` 2026-10-15 (no migrations)
 
 ### Added

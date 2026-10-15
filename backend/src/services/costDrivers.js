@@ -28,6 +28,7 @@
 //   each amount effect ÷ L_P, plus a volume effect = cost_Q × (1/L_P − 1/L_Q)
 //   (more litres over the same cost lowers ₹/L). Both sets add up exactly.
 const { periodOverheads, HISTORY_UNTIL } = require('./transportCumulative');
+const { portalPlantMap } = require('./plantNames');
 const { query } = require('../config/db');
 const { saleTankerSql } = require('../utils/saleTanker');
 const { pickRate, transportTypeFor, stateFromRegistration, loadBillingStates } = require('./rates');
@@ -89,7 +90,7 @@ function parseCoverage(text, idx) {
 }
 async function loadHistoryTrips(from, to, idx) {
   if (from > HISTORY_UNTIL) return [];
-  const dps = new Map((await query('SELECT name FROM delivery_points')).rows.map(d => [normName(d.name), d.name]));
+  const toPortal = await portalPlantMap();
   const end = to < HISTORY_UNTIL ? to : HISTORY_UNTIL;
   const r = await query(`
     SELECT id, report_date::text AS plan_for_date, tanker_number, capacity_litres, route_name, plant AS delivery_point,
@@ -101,7 +102,7 @@ async function loadHistoryTrips(from, to, idx) {
     return {
       plan_id: null, execution_id: null, history_id: h.id, plan_for_date: h.plan_for_date,
       tanker_number: h.tanker_number, capacity_litres: h.capacity_litres, route_name: h.route_name,
-      delivery_point: dps.get(normName(h.delivery_point)) || h.delivery_point,
+      delivery_point: toPortal(h.delivery_point),
       km: h.billed_km, billing_line_id: null, run_id: null, billed_state: null, billed_type: null,
       history_rate: num(h.rate_per_km), history_amount: num(h.amount),
       n_bmcus: cov.ids.length || null, litres: h.milk_litres, bmcu_ids: cov.ids, coverage_unmatched: cov.unmatched,

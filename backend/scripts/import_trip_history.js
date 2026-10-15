@@ -58,23 +58,8 @@ function cellDate(v) {
   const s = String(v ?? '').trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
   return s ? { y: +s[3], m: +s[2], d: +s[1] } : null;
 }
-// Receiving plant → one name per plant (the sheets spell them many ways).
-const PLANTS = [
-  [/mdfvpl|mdvfpl|balaji/, 'Balaji Dairy (MDFVPL)'],
-  [/kmf|kanakapura|shivanahalli/, 'KMF Kanakapura'],
-  [/^ska|^s\s*k\s*a/, 'SKA Dairy'],
-  [/bathalapalli/, 'Bathalapalli'],
-  [/mukund/, 'Mukunda Dairy'],
-  [/arvai|arvie/, 'Arvais Dairy (HYD)'],
-  [/narmul/, 'NARMUL'],
-  [/calvinkare|cavinkare/, 'CavinKare'],
-  [/atchay/, 'Atchayam Agro Products'],
-  [/jersey.*madanapal/, 'Jersey, Madanapalli'],
-  [/jersey.*chennai/, 'Jersey, Chennai'],
-  [/farmgate/, 'Farmgate, Palamaner'],
-  [/hindustan unilever|\bhul\b/, 'Hindustan Unilever'],
-];
-const plantName = s => { const t = String(s || '').replace(/\s+/g, ' ').trim(); const l = t.toLowerCase(); const hit = PLANTS.find(([re]) => re.test(l)); return hit ? hit[1] : t || null; };
+// Receiving plant → one name per plant (the sheets spell them many ways); shared list.
+const { plantName } = require('../src/services/plantNames');
 
 // Header row 2 (row 1 is the title); columns found by their label so the
 // optional "Loader" column on some sheets does not shift anything.

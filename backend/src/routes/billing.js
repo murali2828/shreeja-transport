@@ -32,6 +32,7 @@ const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
 const { autoWidth, stylePortalWorkbook } = require('../services/portalExcel');
 const { HISTORY_UNTIL, MONTH_NAMES } = require('../services/transportCumulative');
 const { fixedCostsInPeriod, normTanker } = require('../services/fixedCosts');
+const { portalPlantMap } = require('../services/plantNames');
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -1647,6 +1648,9 @@ async function historyRows(from, to) {
            bmcu_coverage
     FROM historical_trips WHERE report_date BETWEEN $1 AND $2
     ORDER BY report_date, tanker_number`, [from, end]);
+  // Portal Delivery Point names for the workbook's plants (owner, 2026-10-15).
+  const toPortal = await portalPlantMap();
+  for (const h of r.rows) h.delivery_point = toPortal(h.delivery_point);
   return r.rows;
 }
 // Add history rows into a grouped result (dates / tankers / vendors) keyed by `key`.
