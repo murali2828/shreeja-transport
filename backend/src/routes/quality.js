@@ -457,6 +457,11 @@ router.get('/docs/tankers', ...gate, async (req, res) => {
   } catch (err) { console.error('[quality] docs tankers error:', err); res.status(500).json({ error: 'Failed to load tankers' }); }
 });
 
+// Milk Dispatch Voucher template defaults (yellow fields of Dispatch.docx).
+const DEFAULT_BILL_TO = { name: 'NDDB Dairy Services', address: 'NDDB House, Safdarjung Enclave, South West Delhi, New Delhi 110029',
+  gstin: '07AADCN1059J1ZG', state: 'Delhi', state_code: '07' };
+const DEFAULT_SHIP_TO = { sap_vendor_code: '4024119', name: 'Mother Dairy Fruit and Vegetable Private Limited (c/o Balaji Dairy)',
+  place_of_supply: 'TIRUPATI', gstin: '37AACCM3174A1ZU', state: 'ANDHRA PRADESH', state_code: '37' };
 async function docPrefill(date, tankerId) {
   const tk = (await query(`SELECT t.id, t.tanker_number, t.compartments,
       COALESCE(v.vendor_name, t.vendor_name) AS vendor_name
@@ -498,8 +503,10 @@ async function docPrefill(date, tankerId) {
       challan_date: date, route_name: routeName, dispatch_center_code: '', dispatch_from: plan.start_point || routeName,
       transporter: tk.vendor_name || '', driver: plan.driver_name || '', vehicle_no: tk.tanker_number,
       lr_no: '', lr_date: '', po_date: '', address: '',
-      bill_to: Object.fromEntries(PARTY_KEYS.map(k => [k, dp?.bill_to?.[k] || ''])),
-      ship_to: Object.fromEntries(PARTY_KEYS.map(k => [k, dp?.ship_to?.[k] || ''])),
+      // Default parties = the paper template's (yellow) values; a plant's saved
+      // Bill-to / Ship-to wins field by field; every field stays editable (owner, 2026-10-15).
+      bill_to: Object.fromEntries(PARTY_KEYS.map(k => [k, dp?.bill_to?.[k] || DEFAULT_BILL_TO[k] || ''])),
+      ship_to: Object.fromEntries(PARTY_KEYS.map(k => [k, dp?.ship_to?.[k] || DEFAULT_SHIP_TO[k] || ''])),
       compartments,
       item: { description: mtWord[milkType] || 'RAW COW MILK', hsn: '0401', batch: '', quantity: litres ? r2(litres) : '', uom: 'Ltrs', value: '',
               cgst_rate: '-', cgst_amt: '-', sgst_rate: '-', sgst_amt: '-', igst_rate: '-', igst_amt: '-', total: '' },
