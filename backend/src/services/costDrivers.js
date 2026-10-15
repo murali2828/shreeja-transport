@@ -89,6 +89,7 @@ function parseCoverage(text, idx) {
 }
 async function loadHistoryTrips(from, to, idx) {
   if (from > HISTORY_UNTIL) return [];
+  const dps = new Map((await query('SELECT name FROM delivery_points')).rows.map(d => [normName(d.name), d.name]));
   const end = to < HISTORY_UNTIL ? to : HISTORY_UNTIL;
   const r = await query(`
     SELECT id, report_date::text AS plan_for_date, tanker_number, capacity_litres, route_name, plant AS delivery_point,
@@ -99,7 +100,8 @@ async function loadHistoryTrips(from, to, idx) {
     const cov = parseCoverage(h.bmcu_coverage, idx);
     return {
       plan_id: null, execution_id: null, history_id: h.id, plan_for_date: h.plan_for_date,
-      tanker_number: h.tanker_number, capacity_litres: h.capacity_litres, route_name: h.route_name, delivery_point: h.delivery_point,
+      tanker_number: h.tanker_number, capacity_litres: h.capacity_litres, route_name: h.route_name,
+      delivery_point: dps.get(normName(h.delivery_point)) || h.delivery_point,
       km: h.billed_km, billing_line_id: null, run_id: null, billed_state: null, billed_type: null,
       history_rate: num(h.rate_per_km), history_amount: num(h.amount),
       n_bmcus: cov.ids.length || null, litres: h.milk_litres, bmcu_ids: cov.ids, coverage_unmatched: cov.unmatched,
@@ -283,6 +285,12 @@ async function costDrivers(from, to, prevFrom, prevTo) {
   const unknownP = P.trips.filter(t => !t.state), unknownQ = Qp.trips.filter(t => !t.state);
   if (unknownP.length || unknownQ.length) byState.push({ ...block(unknownP, unknownQ, null), state: 'Unknown state' });
 
+  // By delivery point (owner, 2026-10-15): the same decomposition per receiving plant.
+  const plantOf = t => t.delivery_point || 'Unknown plant';
+  const plants = [...new Set([...P.trips, ...Qp.trips].map(plantOf))];
+  const byPlant = plants.map(pl => ({ ...block(P.trips.filter(t => plantOf(t) === pl), Qp.trips.filter(t => plantOf(t) === pl), null), state: pl, delivery_point: pl }))
+    .sort((a, b) => b.curr.cost - a.curr.cost || b.prev.cost - a.prev.cost);
+
   const bmcuRows = (ids, trips, kind) => [...ids].map(id => {
     const l = life.get(id) || {};
     const T = trips.filter(t => (t.bmcu_ids || []).includes(id));
@@ -299,7 +307,7 @@ async function costDrivers(from, to, prevFrom, prevTo) {
 
   return {
     period: { from, to }, previous: Q,
-    overall, by_state: byState,
+    overall, by_state: byState, by_delivery_point: byPlant,
     new_bmcus: bmcuRows(newIds, P.trips, 'new'), closed_bmcus: bmcuRows(closedIds, Qp.trips, 'closed'),
     trips: P.trips.map(tripOut), previous_trips: Qp.trips.map(tripOut),
     notes: [

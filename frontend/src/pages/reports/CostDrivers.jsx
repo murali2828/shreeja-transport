@@ -199,16 +199,16 @@ export default function CostDrivers() {
             </div>
           </div>
 
-          {/* By state */}
-          <div className="card overflow-hidden">
-            <div className="px-4 py-2 font-semibold text-sm border-b border-gray-100">By state</div>
+          {[['By state', 'State', data.by_state], ['By delivery point', 'Delivery point', data.by_delivery_point || []]].map(([title, firstHead, list]) => (
+                    <div key={title} className="card overflow-hidden">
+            <div className="px-4 py-2 font-semibold text-sm border-b border-gray-100">{title}</div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="bg-blue-50 text-gray-600"><tr>
-                  {['State', 'Diesel ₹/L', 'Trips', 'Litres', 'Km', 'Cost ₹', '₹/km', '₹/L', `Δ ${unit}`, ...keys.map(k => LABELS[k])].map(h => <th key={h} className="px-2 py-2 text-right first:text-left whitespace-nowrap">{h}</th>)}
+                  {[firstHead, 'Diesel ₹/L', 'Trips', 'Litres', 'Km', 'Cost ₹', '₹/km', '₹/L', `Δ ${unit}`, ...keys.map(k => LABELS[k])].map(h => <th key={h} className="px-2 py-2 text-right first:text-left whitespace-nowrap">{h}</th>)}
                 </tr></thead>
                 <tbody>
-                  {[o, ...data.by_state].map((b, i) => {
+                  {[o, ...list].map((b, i) => {
                     const e = view === 'litre' ? b.effects_per_litre : b.effects;
                     const d = view === 'litre' ? b.delta_per_litre : b.delta_cost;
                     return (
@@ -230,6 +230,8 @@ export default function CostDrivers() {
               </table>
             </div>
           </div>
+
+          ))}
 
           {/* BMCU changes */}
           {(data.new_bmcus.length > 0 || data.closed_bmcus.length > 0) && (

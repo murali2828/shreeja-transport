@@ -473,6 +473,11 @@ router.get('/cost-drivers/excel', authenticate, authorizeOrModule('reports', 'ad
     ws1.addRow([]);
     for (const n of d.notes) ws1.addRow([n]);
 
+    const wsP = wb.addWorksheet('By delivery point');
+    head(wsP, ['Delivery point', ...HEADS.slice(1)]);
+    wsP.addRow(blockRows(d.overall)).font = { bold: true };
+    for (const b of d.by_delivery_point || []) wsP.addRow(blockRows(b));
+
     const ws2 = wb.addWorksheet('BMCU changes');
     head(ws2, ['Change', 'BMCU code', 'BMCU name', 'First trip ever', 'Last trip', 'Trips (in its period)', 'Km', 'Litres', 'Cost ₹']);
     for (const b of [...d.new_bmcus, ...d.closed_bmcus]) ws2.addRow([b.kind === 'new' ? 'New' : 'Closed / not served', b.bmcu_code, b.bmcu_name, fmtDateDisplay(b.first_date), fmtDateDisplay(b.last_date), b.trips, b.km, b.litres, b.cost]);
