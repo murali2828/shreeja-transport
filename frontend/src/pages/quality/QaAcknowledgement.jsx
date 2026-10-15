@@ -37,14 +37,14 @@ export default function QaAcknowledgement() {
   useEffect(() => {
     if (!ack) { setRows([]); return; }
     setAckDate(ack.ack_date || addDays(ack.lifting_date, 1));
-    setRows(ack.chambers.map(c => ({ chamber: c.chamber, qty_kgs: c.qty_kgs ?? '', fat_pct: c.fat_pct ?? '', snf_pct: c.snf_pct ?? '', remarks: c.remarks || '',
+    setRows(ack.chambers.map(c => ({ chamber: c.chamber, qty_kgs: c.qty_kgs ?? '', fat_pct: c.fat_pct ?? '', snf_pct: c.snf_pct ?? '', mbrt_mins: c.mbrt_mins ?? '', remarks: c.remarks || '',
       outside: !ack.compartment_codes.includes(c.chamber) })));
   }, [ack]);
   const setRow = (i, k, v) => setRows(p => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
 
   const saveMut = useMutation({
     mutationFn: () => saveQaAck({ lifting_date: date, tanker_id: parseInt(tankerId, 10), ack_date: ackDate || null,
-      chambers: rows.map(r => ({ chamber: r.chamber, qty_kgs: r.qty_kgs, fat_pct: r.fat_pct, snf_pct: r.snf_pct, remarks: r.remarks })) }),
+      chambers: rows.map(r => ({ chamber: r.chamber, qty_kgs: r.qty_kgs, fat_pct: r.fat_pct, snf_pct: r.snf_pct, mbrt_mins: r.mbrt_mins, remarks: r.remarks })) }),
     onSuccess: res => {
       toast.success('QA acknowledgement saved');
       qc.setQueryData(['qa-ack', date, tankerId], res.data);
@@ -57,6 +57,8 @@ export default function QaAcknowledgement() {
   const d = rows.map(derive);
   const tot = d.reduce((s, x) => ({ kgs: s.kgs + (x.kgs || 0), litres: s.litres + (x.litres || 0), kg_fat: s.kg_fat + (x.kg_fat || 0), kg_snf: s.kg_snf + (x.kg_snf || 0) }),
     { kgs: 0, litres: 0, kg_fat: 0, kg_snf: 0 });
+  const mbrts = rows.map(r => parseFloat(r.mbrt_mins)).filter(Number.isFinite);
+  const mbrtMin = mbrts.length ? Math.min(...mbrts) : null;   // lowest chamber MBRT = weakest milk
   const ref = ack?.reference;
   const Ro = ({ label, value, dp = 2 }) => (
     <div><span className="text-[11px] font-semibold text-gray-600">{label}</span>
@@ -98,6 +100,8 @@ export default function QaAcknowledgement() {
               <input type="number" inputMode="decimal" step="0.01" className="input w-full py-2" value={r.snf_pct} onChange={e => setRow(i, 'snf_pct', e.target.value)}/></label>
             <Ro label="Kg fat" value={d[i].kg_fat}/>
             <Ro label="Kg SNF" value={d[i].kg_snf}/>
+            <label className="block"><span className="text-[11px] font-semibold text-gray-600">MBRT (mins)</span>
+              <input type="number" inputMode="decimal" step="1" min="0" max="1440" className="input w-full py-2" value={r.mbrt_mins} onChange={e => setRow(i, 'mbrt_mins', e.target.value)}/></label>
           </div>
           <input className="input w-full py-2 text-sm" placeholder="Remarks" value={r.remarks} onChange={e => setRow(i, 'remarks', e.target.value)}/>
         </div>
@@ -108,6 +112,7 @@ export default function QaAcknowledgement() {
           <div>Total {fx(tot.kgs)} kg</div><div>{fx(tot.litres)} L</div>
           <div>Kg fat {fx(tot.kg_fat)} ({tot.kgs > 0 ? fx(tot.kg_fat / tot.kgs * 100) : '—'} %)</div>
           <div>Kg SNF {fx(tot.kg_snf)} ({tot.kgs > 0 ? fx(tot.kg_snf / tot.kgs * 100) : '—'} %)</div>
+          <div>MBRT (lowest) {mbrtMin == null ? '—' : `${fx(mbrtMin, 0)} mins`}</div>
         </div>
       )}
 

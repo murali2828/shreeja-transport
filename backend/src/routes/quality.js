@@ -155,7 +155,8 @@ async function ackFor(rows) {
   const dates = keys.map(k => k.split('|')[1]);
   const r = await query(`
     SELECT a.tanker_id, a.lifting_date::text AS d, 1 AS trips,
-           SUM(a.qty_litres) AS litres, SUM(a.qty_kgs) AS kgs, SUM(a.kg_fat) AS kg_fat, SUM(a.kg_snf) AS kg_snf
+           SUM(a.qty_litres) AS litres, SUM(a.qty_kgs) AS kgs, SUM(a.kg_fat) AS kg_fat, SUM(a.kg_snf) AS kg_snf,
+           MIN(a.mbrt_mins) AS mbrt_min
     FROM unnest($1::int[], $2::date[]) AS k(tanker_id, d)
     JOIN qa_acknowledgements a ON a.tanker_id = k.tanker_id AND a.lifting_date = k.d
     GROUP BY a.tanker_id, a.lifting_date`, [tankerIds, dates]);
@@ -164,7 +165,8 @@ async function ackFor(rows) {
     const kgs = parseFloat(x.kgs) || 0;
     out[`${x.tanker_id}|${x.d}`] = { trips: x.trips, litres: x.litres == null ? null : r2(x.litres), kgs: x.kgs == null ? null : r2(x.kgs),
       kg_fat: x.kg_fat == null ? null : r2(x.kg_fat), kg_snf: x.kg_snf == null ? null : r2(x.kg_snf),
-      fat_pct: kgs > 0 ? r2(parseFloat(x.kg_fat) / kgs * 100) : null, snf_pct: kgs > 0 ? r2(parseFloat(x.kg_snf) / kgs * 100) : null };
+      fat_pct: kgs > 0 ? r2(parseFloat(x.kg_fat) / kgs * 100) : null, snf_pct: kgs > 0 ? r2(parseFloat(x.kg_snf) / kgs * 100) : null,
+      mbrt_min: x.mbrt_min == null ? null : r2(x.mbrt_min) };   // lowest chamber MBRT = weakest milk
   }
   return out;
 }
@@ -175,7 +177,7 @@ async function ackFor(rows) {
 const { KG_FACTOR } = require('../services/executionData');
 const r3 = v => Math.round(v * 1000) / 1000;
 const ACK_COLS = `id, lifting_date::text AS lifting_date, tanker_id, tanker_number, chamber, ack_date::text AS ack_date, qty_kgs, qty_litres,
-  fat_pct, snf_pct, kg_fat, kg_snf, remarks, entered_by_name, updated_at`;
+  fat_pct, snf_pct, kg_fat, kg_snf, mbrt_mins, remarks, entered_by_name, updated_at`;
 
 // GET /api/quality/acks/tankers?date= — tankers with QA entries (or QA acks) that lifting date.
 router.get('/acks/tankers', ...gate, async (req, res) => {
@@ -201,7 +203,7 @@ async function ackState(date, tankerId) {
   const entries = (await query(`SELECT e.*, e.lifting_date::text AS lifting_date FROM qa_dispatch_entries e WHERE e.lifting_date=$1 AND e.tanker_id=$2`, [date, tankerId])).rows.map(withVar);
   const t = totalsOf(entries);
   const chambers = COMPARTMENTS.filter(c => codes.includes(c) || saved.some(s => s.chamber === c))
-    .map(c => saved.find(s => s.chamber === c) || { chamber: c, qty_kgs: null, qty_litres: null, fat_pct: null, snf_pct: null, kg_fat: null, kg_snf: null, remarks: null });
+    .map(c => saved.find(s => s.chamber === c) || { chamber: c, qty_kgs: null, qty_litres: null, fat_pct: null, snf_pct: null, kg_fat: null, kg_snf: null, mbrt_mins: null, remarks: null });
   return {
     lifting_date: date, tanker_id: tk.id, tanker_number: tk.tanker_number, compartment_codes: codes,
     ack_date: saved.find(s => s.ack_date)?.ack_date || null, chambers,
@@ -247,8 +249,10 @@ router.put('/acks', ...gate, async (req, res) => {
     const snf = blank(c.snf_pct) ? null : parseFloat(c.snf_pct);
     if (fat != null && !(fat >= 0 && fat <= 15)) return res.status(400).json({ error: `${ch}: fat % must be between 0 and 15` });
     if (snf != null && !(snf >= 0 && snf <= 15)) return res.status(400).json({ error: `${ch}: SNF % must be between 0 and 15` });
+    const mbrt = blank(c.mbrt_mins) ? null : parseFloat(c.mbrt_mins);
+    if (mbrt != null && !(mbrt >= 0 && mbrt <= 1440)) return res.status(400).json({ error: `${ch}: MBRT (minutes) must be between 0 and 1440` });
     rows.push({ chamber: ch, kgs, litres: r3(kgs / KG_FACTOR), fat, snf,
-      kg_fat: fat == null ? null : r3(kgs * fat / 100), kg_snf: snf == null ? null : r3(kgs * snf / 100),
+      kg_fat: fat == null ? null : r3(kgs * fat / 100), kg_snf: snf == null ? null : r3(kgs * snf / 100), mbrt,
       remarks: String(c.remarks || '').trim() || null });
   }
   const client = await pool.connect();
@@ -257,13 +261,13 @@ router.put('/acks', ...gate, async (req, res) => {
     for (const r of rows) {
       if (r.del) { await client.query('DELETE FROM qa_acknowledgements WHERE lifting_date=$1 AND tanker_id=$2 AND chamber=$3', [b.lifting_date, tankerId, r.chamber]); continue; }
       await client.query(`
-        INSERT INTO qa_acknowledgements (lifting_date, tanker_id, tanker_number, chamber, ack_date, qty_kgs, qty_litres, fat_pct, snf_pct, kg_fat, kg_snf, remarks, entered_by, entered_by_name)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        INSERT INTO qa_acknowledgements (lifting_date, tanker_id, tanker_number, chamber, ack_date, qty_kgs, qty_litres, fat_pct, snf_pct, kg_fat, kg_snf, mbrt_mins, remarks, entered_by, entered_by_name)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         ON CONFLICT ON CONSTRAINT uq_qa_acknowledgements_trip_chamber DO UPDATE SET
           tanker_number=EXCLUDED.tanker_number, ack_date=EXCLUDED.ack_date, qty_kgs=EXCLUDED.qty_kgs, qty_litres=EXCLUDED.qty_litres,
-          fat_pct=EXCLUDED.fat_pct, snf_pct=EXCLUDED.snf_pct, kg_fat=EXCLUDED.kg_fat, kg_snf=EXCLUDED.kg_snf, remarks=EXCLUDED.remarks,
+          fat_pct=EXCLUDED.fat_pct, snf_pct=EXCLUDED.snf_pct, kg_fat=EXCLUDED.kg_fat, kg_snf=EXCLUDED.kg_snf, mbrt_mins=EXCLUDED.mbrt_mins, remarks=EXCLUDED.remarks,
           entered_by=EXCLUDED.entered_by, entered_by_name=EXCLUDED.entered_by_name, updated_at=NOW()`,
-        [b.lifting_date, tankerId, tk.tanker_number, r.chamber, b.ack_date || null, r.kgs, r.litres, r.fat, r.snf, r.kg_fat, r.kg_snf, r.remarks,
+        [b.lifting_date, tankerId, tk.tanker_number, r.chamber, b.ack_date || null, r.kgs, r.litres, r.fat, r.snf, r.kg_fat, r.kg_snf, r.mbrt, r.remarks,
           req.user.id, req.user.full_name || req.user.user_id]);
     }
     // One ack date per tanker × lifting date.
@@ -305,6 +309,8 @@ function addAck(a, b) {
   out.trips = (a.trips || 0) + (b.trips || 0);
   out.fat_pct = out.kgs > 0 ? r2(out.kg_fat / out.kgs * 100) : null;
   out.snf_pct = out.kgs > 0 ? r2(out.kg_snf / out.kgs * 100) : null;
+  const mb = [a.mbrt_min, b.mbrt_min].filter(v => v != null);
+  out.mbrt_min = mb.length ? Math.min(...mb) : null;   // lowest MBRT across the group
   return out;
 }
 function withAckVar(t, ack) {
@@ -356,7 +362,7 @@ router.get('/entries', ...gate, async (req, res) => {
 // tanker subtotal (owner, 2026-10-10); section-coloured headers.
 const SECTIONS = [
   ['Entry', 10, 'FFE2E8F0'], ['Dispatch', 7, 'FFDBEAFE'], ['Truck Sheet (RMRD)', 19, 'FFDCFCE7'],
-  ['Dispatch − RMRD (adjusted)', 3, 'FFFEF3C7'], ['Plant Acknowledgement (QA)', 6, 'FFEDE9FE'], ['Ack vs RMRD (adjusted)', 5, 'FFFCE7F3'], ['', 2, 'FFF1F5F9'],
+  ['Dispatch − RMRD (adjusted)', 3, 'FFFEF3C7'], ['Plant Acknowledgement (QA)', 7, 'FFEDE9FE'], ['Ack vs RMRD (adjusted)', 5, 'FFFCE7F3'], ['', 2, 'FFF1F5F9'],
 ];
 router.get('/entries/excel', ...gate, async (req, res) => {
   try {
@@ -373,7 +379,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
       'Left Over Lts', 'Left Over Fat %', 'Left Over SNF %', 'Lifted Lts', 'Lifted Fat %', 'Lifted SNF %',
       'RMRD adjusted Lts', 'RMRD adjusted Kgs', 'RMRD adjusted Fat %', 'RMRD adjusted SNF %', 'RMRD adjusted KG Fat', 'RMRD adjusted KG SNF',
       'Qty Variation (Lts)', 'Fat Variation', 'SNF Variation',
-      'Ack Qty Lts', 'Ack Qty Kgs', 'Ack Fat %', 'Ack SNF %', 'Ack KG Fat', 'Ack KG SNF',
+      'Ack Qty Lts', 'Ack Qty Kgs', 'Ack Fat %', 'Ack SNF %', 'Ack KG Fat', 'Ack KG SNF', 'Ack MBRT (mins)',
       'Ack − RMRD Lts', 'Ack − RMRD Kgs', 'Ack − RMRD Fat %', 'Ack − RMRD SNF %', 'Ack − Dispatch Lts',
       'Remarks', 'Entered By'];
     const NC = HEADS.length;
@@ -392,9 +398,9 @@ router.get('/entries/excel', ...gate, async (req, res) => {
       cell.fill = FILL(colFill[i + 1]); cell.border = BOX; cell.alignment = { wrapText: true, horizontal: 'center', vertical: 'middle' }; });
     hr.height = 42;
     const f = v => (v == null ? null : parseFloat(v));
-    const ackCells = t => t.ack ? [t.ack.litres, t.ack.kgs, t.ack.fat_pct, t.ack.snf_pct, t.ack.kg_fat, t.ack.kg_snf,
+    const ackCells = t => t.ack ? [t.ack.litres, t.ack.kgs, t.ack.fat_pct, t.ack.snf_pct, t.ack.kg_fat, t.ack.kg_snf, t.ack.mbrt_min ?? null,
                                    t.ack_vs_ts_litres ?? null, t.ack_vs_ts_kgs ?? null, t.ack_vs_ts_fat ?? null, t.ack_vs_ts_snf ?? null, t.ack_vs_d_litres ?? null]
-                                : ['no QA ack', '', '', '', '', '', '', '', '', '', ''];
+                                : ['no QA ack', '', '', '', '', '', '', '', '', '', '', ''];
     const totCells = (label, route, t) => [label, route, '', '', '', '', '', '', '', '',
       t.d_qty_litres, t.d_fat_pct, '', t.d_snf_pct, t.d_qty_kgs, t.d_kg_fat, t.d_kg_snf,
       t.ts_qty_litres, t.ts_fat_pct, t.ts_snf_pct, t.ts_qty_kgs, t.ts_kg_fat, t.ts_kg_snf, t.ts_mbrt_min,
@@ -402,7 +408,8 @@ router.get('/entries/excel', ...gate, async (req, res) => {
       t.rmrd_adj_qty_litres, t.rmrd_adj_qty_kgs, t.rmrd_adj_fat_pct, t.rmrd_adj_snf_pct, t.rmrd_adj_kg_fat, t.rmrd_adj_kg_snf,
       t.qty_var_litres, '', '', ...ackCells(t), '', ''];
     const styleRow = (row, fill) => { for (let k = 1; k <= NC; k++) { const cell = row.getCell(k); cell.border = BOX; if (fill) { cell.fill = FILL(fill); cell.font = { bold: true }; }
-      if (k >= 9 && k <= NC - 2 && typeof cell.value === 'number') cell.numFmt = '#,##0.00'; } };
+      if (k >= 9 && k <= NC - 2 && typeof cell.value === 'number') cell.numFmt = MBRT_COLS.includes(k) ? '0.0' : '#,##0.00'; } };
+    const MBRT_COLS = [HEADS.indexOf('MBRT (mins)') + 1, HEADS.indexOf('Ack MBRT (mins)') + 1];
     let zebra = 0;
     for (const rg of rep.routes) {
       for (const tg of rg.tankers) {
@@ -412,7 +419,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
             f(r.ts_qty_litres), f(r.ts_fat_pct), f(r.ts_snf_pct), f(r.ts_qty_kgs), f(r.ts_kg_fat), f(r.ts_kg_snf), f(r.ts_mbrt_mins),
             f(r.lo_qty_litres), f(r.lo_fat_pct), f(r.lo_snf_pct), f(r.lf_qty_litres), f(r.lf_fat_pct), f(r.lf_snf_pct),
             r.rmrd_adj_qty_litres, r.rmrd_adj_qty_kgs, r.rmrd_adj_fat_pct, r.rmrd_adj_snf_pct, r.rmrd_adj_kg_fat, r.rmrd_adj_kg_snf,
-            r.qty_var_litres, r.fat_var, r.snf_var, '', '', '', '', '', '', '', '', '', '', '', r.remarks, r.entered_by_name]);
+            r.qty_var_litres, r.fat_var, r.snf_var, '', '', '', '', '', '', '', '', '', '', '', '', r.remarks, r.entered_by_name]);
           styleRow(row, (zebra++ % 2) ? 'FFF5F8FC' : null);
           if (zebra % 2 === 0) row.font = { bold: false };
         }
