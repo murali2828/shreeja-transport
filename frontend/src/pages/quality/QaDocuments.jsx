@@ -164,11 +164,11 @@ export default function QaDocuments() {
         <div className="card p-4 space-y-3">
           <h2 className="font-semibold">Compartments</h2>
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-gray-600"><th>Description</th><th>Front cell (FC)</th><th>Middle cell (MC)</th><th>Back cell (BC)</th></tr></thead>
+            <thead><tr className="text-left text-gray-600"><th>Description</th><th>Front cell (FC)</th><th>Middle cell (MC)</th><th>Back cell (BC)</th><th>Valve</th></tr></thead>
             <tbody>
-              <tr><td>Milk Type</td>{['FC', 'MC', 'BC'].map(c => <td key={c} className="pr-2"><Pick value={d.compartments?.[c]?.milk_type} options={MILK_TYPES} onChange={v => set(`compartments.${c}.milk_type`, v)} disabled={!editable}/></td>)}</tr>
-              <tr><td>Milk Quantity In Ltrs</td>{['FC', 'MC', 'BC'].map(c => <td key={c} className="pr-2">{inp(`compartments.${c}.litres`, { type: 'number' })}</td>)}</tr>
-              <tr><td>Seal Number</td>{['FC', 'MC', 'BC'].map(c => <td key={c} className="pr-2">{inp(`compartments.${c}.seal_no`)}</td>)}</tr>
+              <tr><td>Milk Type</td>{['FC', 'MC', 'BC'].map(c => <td key={c} className="pr-2"><Pick value={d.compartments?.[c]?.milk_type} options={MILK_TYPES} onChange={v => set(`compartments.${c}.milk_type`, v)} disabled={!editable}/></td>)}<td className="text-gray-400">—</td></tr>
+              <tr><td>Milk Quantity In Ltrs</td>{['FC', 'MC', 'BC'].map(c => <td key={c} className="pr-2">{inp(`compartments.${c}.litres`, { type: 'number' })}</td>)}<td className="text-gray-400">—</td></tr>
+              <tr><td>Seal Number</td>{['FC', 'MC', 'BC'].map(c => <td key={c} className="pr-2">{inp(`compartments.${c}.seal_no`)}</td>)}<td className="pr-2">{inp('compartments.VALVE.seal_no')}</td></tr>
             </tbody>
           </table>
         </div>

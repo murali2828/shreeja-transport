@@ -281,10 +281,10 @@ export function printQaDispatch(doc, printNo = 1) {
       <td style="font-weight:bold">Name of the Route: ${esc(d.route_name)}</td></tr>
       <tr><td style="font-weight:bold" colspan="2">Tanker Number&nbsp;&nbsp;&nbsp;: ${esc(doc.tanker_number || d.vehicle_no)}</td></tr></table>
     <table style="font-size:11pt;margin-bottom:10px">
-      <tr><th style="width:25%">Description</th><th>Front cell</th><th>Middle cell</th><th>Back cell</th></tr>
-      <tr><td class="n">Milk Type</td><td class="c n">${cell('FC', 'milk_type')}</td><td class="c n">${cell('MC', 'milk_type')}</td><td class="c n">${cell('BC', 'milk_type')}</td></tr>
-      <tr><td class="n">Milk Quantity In Ltrs</td><td class="c n">${cell('FC', 'litres')}</td><td class="c n">${cell('MC', 'litres')}</td><td class="c n">${cell('BC', 'litres')}</td></tr>
-      <tr><td class="n">Seal Number</td><td class="c n">${cell('FC', 'seal_no')}</td><td class="c n">${cell('MC', 'seal_no')}</td><td class="c n">${cell('BC', 'seal_no')}</td></tr>
+      <tr><th style="width:25%">Description</th><th>Front cell</th><th>Middle cell</th><th>Back cell</th><th>Valve</th></tr>
+      <tr><td class="n">Milk Type</td><td class="c n">${cell('FC', 'milk_type')}</td><td class="c n">${cell('MC', 'milk_type')}</td><td class="c n">${cell('BC', 'milk_type')}</td><td></td></tr>
+      <tr><td class="n">Milk Quantity In Ltrs</td><td class="c n">${cell('FC', 'litres')}</td><td class="c n">${cell('MC', 'litres')}</td><td class="c n">${cell('BC', 'litres')}</td><td></td></tr>
+      <tr><td class="n">Seal Number</td><td class="c n">${cell('FC', 'seal_no')}</td><td class="c n">${cell('MC', 'seal_no')}</td><td class="c n">${cell('BC', 'seal_no')}</td><td class="c n">${cell('VALVE', 'seal_no')}</td></tr>
     </table>
     <table>
       <tr>${L('Delivery Challan Date:', fmtD(d.challan_date))}<td colspan="2" class="c">Details of (Bill to Party)</td><td colspan="2" class="c">Details of (Ship to Party)</td></tr>
