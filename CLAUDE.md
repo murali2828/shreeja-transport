@@ -57,6 +57,7 @@
 - @docs/DECISIONS.md
 
 ## Current state
+- 2026-10-15: `main` fast-forwarded to cb7c143: Transport Cost Drivers By delivery point table and "vs a chosen month" comparison. No migration, no env change.
 - 2026-10-14: `main` fast-forwarded to 512e34a (migrations 065–067): ops-kit backups / restore / deploy (PROD bring-up with this deploy: `.env.deploy`, `deploy.sh prod --rebuild-db`, `backup.sh prod init`), FY 2026-27 trip history + monthly tolls for analysis, Tanker Utilisation (Month / Year Cumulative moved from the Payment Report), 9,000-km fixed cost (upload per month) in all cost reports, Date Wise toll / fixed / total payable, Cost Drivers on the FY workbook. Optional env `ANALYTICS_HISTORY_UNTIL` (default 2026-08-31). Post-release: load the FY workbook and the fixed-cost sheets on PROD.
 - 2026-10-12: `main` fast-forwarded to 9246735: acknowledgement and execution chamber pickers follow Tanker Master compartments (server refuses chambers the tanker lacks). No migration, no env change.
 - 2026-10-10: `main` fast-forwarded to 6bcc9ea (migrations 060–064): per-module None / View / Edit role access, QA report section colours + acknowledgement vs RMRD, MBRT (mins) and milk type on QA entries, Quality → Dispatch & COA print screen (challan series DC/26-27/NNNN). No new env vars. Post-release: review roles' View / Edit levels on PROD; check Bill-to / Ship-to on the delivering plants.

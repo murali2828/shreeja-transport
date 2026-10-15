@@ -7,6 +7,8 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+## 2026-10-15 — promoted to `main` 2026-10-15 (no migrations)
+
 ### Added
 - Transport Cost Drivers: **By delivery point** table (screen and Excel sheet) with the same columns as By state — trips, litres, km, cost, ₹/km, ₹/L and every effect per receiving plant; FY-workbook plant names mapped to the delivery point master (owner, 2026-10-15).
 - Transport Cost Drivers: comparison option **vs a chosen month…** with financial-year and month pickers (owner, 2026-10-15).
