@@ -9,6 +9,7 @@ import {
   ClipboardList, Package, Play, CheckSquare, BarChart2, Mail, IndianRupee,
   ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText, ShieldCheck, Fuel,
   Printer,
+  ClipboardCheck,
 } from 'lucide-react';
 
 function NavItem({ to, icon, label, end = false, collapsed = false }) {
@@ -144,6 +145,7 @@ export default function Sidebar({ collapsed = false }) {
       {canQuality && (
         <NavSection label={collapsed ? '' : 'Quality'}>
           {ni('/quality/entry', <ClipboardList size={15}/>, 'QA Dispatch Entry')}
+          {ni('/quality/ack', <ClipboardCheck size={15}/>, 'QA Acknowledgement')}
           {ni('/quality/entries', <BarChart2 size={15}/>, 'QA Dispatch Report')}
           {ni('/quality/documents', <Printer size={15}/>, 'Dispatch & COA')}
         </NavSection>

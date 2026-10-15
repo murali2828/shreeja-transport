@@ -8,6 +8,7 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
 ### Added
+- Quality → **QA Acknowledgement**: the QA team keys its own plant acknowledgement per tanker × lifting date, chamber cards following Tanker Master compartments (FC / MC / BC), Kgs first with litres (kgs ÷ 1.0285), kg fat and kg SNF derived server-side, ack date, remarks, and a reference strip with QA dispatch and RMRD adjusted totals; the server refuses a chamber the tanker lacks. The QA Dispatch Report, its totals and Excel now compare against this QA ack ("Plant Acknowledgement (QA)") instead of the logistics team's; nothing else reads it (`GET /api/quality/acks/tankers`, `GET /api/quality/acks`, `PUT /api/quality/acks`; migration 069, `qa_acknowledgements`) (owner, 2026-10-15).
 - QA Dispatch Entry: **Balance milk** in the Truck sheet card, as on Active Trips — Left Over milk (deducted from RMRD) and Lifted milk (added), each with qty (L), fat %, SNF % (blank = truck sheet's) and remarks, plus a live "RMRD after adjustment" line; the QA report, totals and Excel show left over, lifted and RMRD adjusted (L, kgs, fat %, SNF %, kg fat, kg SNF), and dispatch − RMRD and Ack − RMRD use the adjusted RMRD like the TS report (migration 068, `qa_dispatch_entries.lo_* / lf_*`) (owner, 2026-10-15).
 
 ### Fixed

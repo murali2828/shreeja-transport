@@ -1,9 +1,10 @@
 // backend/src/routes/quality.js
 // Quality team: tanker dispatch vs truck-sheet (RMRD) entries — migration 052.
 // Independent of the tanker team's executions: own table, own module
-// permission ('quality'). The one exception (owner, 2026-10-10): the report
-// shows, per tanker × lifting date, the plant acknowledgement totals keyed by
-// the logistics team, read-only, so QA can compare. Mounted at /api/quality.
+// permission ('quality'). The report shows, per tanker × lifting date, the
+// plant acknowledgement keyed by the QA team itself (qa_acknowledgements,
+// migration 069, owner 2026-10-15; replaced the logistics team's acks shown
+// since 2026-10-10). Mounted at /api/quality.
 const express = require('express');
 const router  = express.Router();
 const ExcelJS = require('exceljs');
@@ -145,21 +146,19 @@ function listSql(q) {
 
 const r2 = v => (v == null || !Number.isFinite(parseFloat(v)) ? null : Math.round(parseFloat(v) * 100) / 100);
 // Plant acknowledgement per tanker × lifting date for the QA rows in the
-// filter: live (non-cancelled) executions of milk plans of that tanker on that
-// plan date, all chambers. Keyed "tanker_id|YYYY-MM-DD".
+// filter: the QA team's own acknowledgement (qa_acknowledgements, migration
+// 069), all chambers. Keyed "tanker_id|YYYY-MM-DD"; `trips` = 1 marks presence.
 async function ackFor(rows) {
   const keys = [...new Set(rows.map(r => `${r.tanker_id}|${r.lifting_date}`))];
   if (!keys.length) return {};
   const tankerIds = keys.map(k => parseInt(k.split('|')[0], 10));
   const dates = keys.map(k => k.split('|')[1]);
   const r = await query(`
-    SELECT tp.tanker_id, tp.plan_for_date::text AS d, COUNT(DISTINCT te.id)::int AS trips,
+    SELECT a.tanker_id, a.lifting_date::text AS d, 1 AS trips,
            SUM(a.qty_litres) AS litres, SUM(a.qty_kgs) AS kgs, SUM(a.kg_fat) AS kg_fat, SUM(a.kg_snf) AS kg_snf
     FROM unnest($1::int[], $2::date[]) AS k(tanker_id, d)
-    JOIN trip_plans tp ON tp.tanker_id = k.tanker_id AND tp.plan_for_date = k.d AND tp.status NOT IN ('cancelled','deleted')
-    JOIN trip_executions te ON te.trip_plan_id = tp.id AND te.status <> 'cancelled'
-    LEFT JOIN trip_acknowledgements a ON a.execution_id = te.id
-    GROUP BY tp.tanker_id, tp.plan_for_date`, [tankerIds, dates]);
+    JOIN qa_acknowledgements a ON a.tanker_id = k.tanker_id AND a.lifting_date = k.d
+    GROUP BY a.tanker_id, a.lifting_date`, [tankerIds, dates]);
   const out = {};
   for (const x of r.rows) {
     const kgs = parseFloat(x.kgs) || 0;
@@ -169,6 +168,115 @@ async function ackFor(rows) {
   }
   return out;
 }
+
+// ── QA plant acknowledgement (migration 069, owner 2026-10-15) ─────────────
+// Kgs first like the logistics Acknowledgement screen; litres / kg fat / kg SNF
+// derived here with KG_FACTOR. Writes only qa_acknowledgements.
+const { KG_FACTOR } = require('../services/executionData');
+const r3 = v => Math.round(v * 1000) / 1000;
+const ACK_COLS = `id, lifting_date::text AS lifting_date, tanker_id, tanker_number, chamber, ack_date::text AS ack_date, qty_kgs, qty_litres,
+  fat_pct, snf_pct, kg_fat, kg_snf, remarks, entered_by_name, updated_at`;
+
+// GET /api/quality/acks/tankers?date= — tankers with QA entries (or QA acks) that lifting date.
+router.get('/acks/tankers', ...gate, async (req, res) => {
+  if (!ISO.test(req.query.date || '')) return res.status(400).json({ error: 'date required (YYYY-MM-DD)' });
+  try {
+    const r = await query(`
+      SELECT t.id, t.tanker_number, t.compartments,
+             EXISTS (SELECT 1 FROM qa_acknowledgements a WHERE a.tanker_id = t.id AND a.lifting_date = $1) AS has_ack,
+             (SELECT COUNT(*)::int FROM qa_dispatch_entries e WHERE e.tanker_id = t.id AND e.lifting_date = $1) AS entries
+      FROM tankers t
+      WHERE t.id IN (SELECT tanker_id FROM qa_dispatch_entries WHERE lifting_date = $1
+                     UNION SELECT tanker_id FROM qa_acknowledgements WHERE lifting_date = $1)
+      ORDER BY t.tanker_number`, [req.query.date]);
+    res.json(r.rows.map(t => ({ ...t, compartment_codes: compartmentCodes(t.compartments) })));
+  } catch (err) { console.error('[quality] ack tankers error:', err); res.status(500).json({ error: 'Failed to load tankers' }); }
+});
+
+async function ackState(date, tankerId) {
+  const tk = (await query('SELECT id, tanker_number, compartments FROM tankers WHERE id=$1', [tankerId])).rows[0];
+  if (!tk) return null;
+  const codes = compartmentCodes(tk.compartments);
+  const saved = (await query(`SELECT ${ACK_COLS} FROM qa_acknowledgements WHERE lifting_date=$1 AND tanker_id=$2`, [date, tankerId])).rows;
+  const entries = (await query(`SELECT e.*, e.lifting_date::text AS lifting_date FROM qa_dispatch_entries e WHERE e.lifting_date=$1 AND e.tanker_id=$2`, [date, tankerId])).rows.map(withVar);
+  const t = totalsOf(entries);
+  const chambers = COMPARTMENTS.filter(c => codes.includes(c) || saved.some(s => s.chamber === c))
+    .map(c => saved.find(s => s.chamber === c) || { chamber: c, qty_kgs: null, qty_litres: null, fat_pct: null, snf_pct: null, kg_fat: null, kg_snf: null, remarks: null });
+  return {
+    lifting_date: date, tanker_id: tk.id, tanker_number: tk.tanker_number, compartment_codes: codes,
+    ack_date: saved.find(s => s.ack_date)?.ack_date || null, chambers,
+    reference: { entries: entries.length, d_qty_litres: t.d_qty_litres, d_qty_kgs: t.d_qty_kgs, d_fat_pct: t.d_fat_pct, d_snf_pct: t.d_snf_pct,
+      rmrd_adj_qty_litres: t.rmrd_adj_qty_litres, rmrd_adj_qty_kgs: t.rmrd_adj_qty_kgs, rmrd_adj_fat_pct: t.rmrd_adj_fat_pct, rmrd_adj_snf_pct: t.rmrd_adj_snf_pct },
+  };
+}
+
+// GET /api/quality/acks?date=&tanker_id= — chamber rows (saved or blank) plus QA dispatch / RMRD reference.
+router.get('/acks', ...gate, async (req, res) => {
+  const { date, tanker_id } = req.query;
+  if (!ISO.test(date || '') || !parseInt(tanker_id, 10)) return res.status(400).json({ error: 'date and tanker_id required' });
+  try {
+    const st = await ackState(date, parseInt(tanker_id, 10));
+    if (!st) return res.status(404).json({ error: 'Tanker not found' });
+    res.json(st);
+  } catch (err) { console.error('[quality] ack load error:', err); res.status(500).json({ error: 'Failed to load the acknowledgement' }); }
+});
+
+// PUT /api/quality/acks — upsert per chamber in one transaction; blank qty deletes the chamber's row.
+router.put('/acks', ...gate, async (req, res) => {
+  const b = req.body || {};
+  const tankerId = parseInt(b.tanker_id, 10);
+  if (!ISO.test(b.lifting_date || '') || !tankerId) return res.status(400).json({ error: 'lifting_date and tanker_id required' });
+  if (b.ack_date && !ISO.test(b.ack_date)) return res.status(400).json({ error: 'ack_date must be YYYY-MM-DD' });
+  if (b.ack_date && b.ack_date < b.lifting_date) return res.status(400).json({ error: 'ack_date cannot be before the lifting date' });
+  if (!Array.isArray(b.chambers) || !b.chambers.length) return res.status(400).json({ error: 'chambers required' });
+  const tk = (await query('SELECT id, tanker_number, compartments FROM tankers WHERE id=$1', [tankerId]).catch(() => ({ rows: [] }))).rows[0];
+  if (!tk) return res.status(404).json({ error: 'Tanker not found' });
+  const codes = compartmentCodes(tk.compartments);
+  const blank = v => v == null || String(v).trim() === '';
+  const rows = []; const seen = new Set();
+  for (const c of b.chambers) {
+    const ch = String(c.chamber || '').toUpperCase();
+    if (!COMPARTMENTS.includes(ch)) return res.status(400).json({ error: `Unknown chamber ${c.chamber}` });
+    if (seen.has(ch)) return res.status(400).json({ error: `Chamber ${ch} listed twice` });
+    seen.add(ch);
+    if (blank(c.qty_kgs)) { rows.push({ chamber: ch, del: true }); continue; }
+    if (!codes.includes(ch)) return res.status(400).json({ error: `Tanker ${tk.tanker_number} has only ${codes.join(', ')}` });
+    const kgs = parseFloat(c.qty_kgs);
+    if (!Number.isFinite(kgs) || kgs <= 0) return res.status(400).json({ error: `${ch}: qty (kgs) must be a positive number` });
+    const fat = blank(c.fat_pct) ? null : parseFloat(c.fat_pct);
+    const snf = blank(c.snf_pct) ? null : parseFloat(c.snf_pct);
+    if (fat != null && !(fat >= 0 && fat <= 15)) return res.status(400).json({ error: `${ch}: fat % must be between 0 and 15` });
+    if (snf != null && !(snf >= 0 && snf <= 15)) return res.status(400).json({ error: `${ch}: SNF % must be between 0 and 15` });
+    rows.push({ chamber: ch, kgs, litres: r3(kgs / KG_FACTOR), fat, snf,
+      kg_fat: fat == null ? null : r3(kgs * fat / 100), kg_snf: snf == null ? null : r3(kgs * snf / 100),
+      remarks: String(c.remarks || '').trim() || null });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const r of rows) {
+      if (r.del) { await client.query('DELETE FROM qa_acknowledgements WHERE lifting_date=$1 AND tanker_id=$2 AND chamber=$3', [b.lifting_date, tankerId, r.chamber]); continue; }
+      await client.query(`
+        INSERT INTO qa_acknowledgements (lifting_date, tanker_id, tanker_number, chamber, ack_date, qty_kgs, qty_litres, fat_pct, snf_pct, kg_fat, kg_snf, remarks, entered_by, entered_by_name)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        ON CONFLICT ON CONSTRAINT uq_qa_acknowledgements_trip_chamber DO UPDATE SET
+          tanker_number=EXCLUDED.tanker_number, ack_date=EXCLUDED.ack_date, qty_kgs=EXCLUDED.qty_kgs, qty_litres=EXCLUDED.qty_litres,
+          fat_pct=EXCLUDED.fat_pct, snf_pct=EXCLUDED.snf_pct, kg_fat=EXCLUDED.kg_fat, kg_snf=EXCLUDED.kg_snf, remarks=EXCLUDED.remarks,
+          entered_by=EXCLUDED.entered_by, entered_by_name=EXCLUDED.entered_by_name, updated_at=NOW()`,
+        [b.lifting_date, tankerId, tk.tanker_number, r.chamber, b.ack_date || null, r.kgs, r.litres, r.fat, r.snf, r.kg_fat, r.kg_snf, r.remarks,
+          req.user.id, req.user.full_name || req.user.user_id]);
+    }
+    // One ack date per tanker × lifting date.
+    await client.query('UPDATE qa_acknowledgements SET ack_date=$3 WHERE lifting_date=$1 AND tanker_id=$2', [b.lifting_date, tankerId, b.ack_date || null]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[quality] ack save error:', err);
+    return res.status(500).json({ error: 'Failed to save the acknowledgement' });
+  } finally { client.release(); }
+  try { res.json(await ackState(b.lifting_date, tankerId)); }
+  catch (err) { console.error('[quality] ack reload error:', err); res.status(500).json({ error: 'Saved, but failed to reload' }); }
+});
 
 // Route → tanker × lifting date groups with QA totals and the acknowledgement.
 const SUMS = ['d_qty_litres', 'd_qty_kgs', 'd_kg_fat', 'd_kg_snf', 'ts_qty_litres', 'ts_qty_kgs', 'ts_kg_fat', 'ts_kg_snf',
@@ -248,7 +356,7 @@ router.get('/entries', ...gate, async (req, res) => {
 // tanker subtotal (owner, 2026-10-10); section-coloured headers.
 const SECTIONS = [
   ['Entry', 10, 'FFE2E8F0'], ['Dispatch', 7, 'FFDBEAFE'], ['Truck Sheet (RMRD)', 19, 'FFDCFCE7'],
-  ['Dispatch − RMRD (adjusted)', 3, 'FFFEF3C7'], ['Plant Acknowledgement (Logistics)', 6, 'FFEDE9FE'], ['Ack vs RMRD (adjusted)', 5, 'FFFCE7F3'], ['', 2, 'FFF1F5F9'],
+  ['Dispatch − RMRD (adjusted)', 3, 'FFFEF3C7'], ['Plant Acknowledgement (QA)', 6, 'FFEDE9FE'], ['Ack vs RMRD (adjusted)', 5, 'FFFCE7F3'], ['', 2, 'FFF1F5F9'],
 ];
 router.get('/entries/excel', ...gate, async (req, res) => {
   try {
@@ -286,7 +394,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
     const f = v => (v == null ? null : parseFloat(v));
     const ackCells = t => t.ack ? [t.ack.litres, t.ack.kgs, t.ack.fat_pct, t.ack.snf_pct, t.ack.kg_fat, t.ack.kg_snf,
                                    t.ack_vs_ts_litres ?? null, t.ack_vs_ts_kgs ?? null, t.ack_vs_ts_fat ?? null, t.ack_vs_ts_snf ?? null, t.ack_vs_d_litres ?? null]
-                                : ['no trip', '', '', '', '', '', '', '', '', '', ''];
+                                : ['no QA ack', '', '', '', '', '', '', '', '', '', ''];
     const totCells = (label, route, t) => [label, route, '', '', '', '', '', '', '', '',
       t.d_qty_litres, t.d_fat_pct, '', t.d_snf_pct, t.d_qty_kgs, t.d_kg_fat, t.d_kg_snf,
       t.ts_qty_litres, t.ts_fat_pct, t.ts_snf_pct, t.ts_qty_kgs, t.ts_kg_fat, t.ts_kg_snf, t.ts_mbrt_min,

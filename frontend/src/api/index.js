@@ -219,6 +219,9 @@ export const getQaDocTankers        = (date)    => api.get('/quality/docs/tanker
 export const getQaDocs             = (params)  => api.get('/quality/docs', { params });
 export const saveQaDocs            = (d)       => api.post('/quality/docs', d);
 export const markQaDocPrinted      = (id, doc) => api.post(`/quality/docs/${id}/printed`, null, { params: { doc } });
+export const getQaAckTankers       = (date)    => api.get('/quality/acks/tankers', { params: { date } });
+export const getQaAck              = (params)  => api.get('/quality/acks', { params });
+export const saveQaAck             = (d)       => api.put('/quality/acks', d);
 export const downloadQaEntriesExcel = (params) => api.get('/quality/entries/excel', { params, responseType: 'blob' });
 export const createMaterial      = (d)      => api.post('/materials', d);
 export const updateMaterial      = (id, d)  => api.put(`/materials/${id}`, d);
