@@ -11,7 +11,7 @@ const ExcelJS = require('exceljs');
 const { query, pool } = require('../config/db');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { fmtDateDisplay } = require('../utils/date');
-const { computeDispatch, computeTruckSheet, adjustRmrd, variations, n } = require('../services/qaDispatch');
+const { computeDispatch, computeTruckSheet, adjustRmrd, variations, chamberBreakup, n } = require('../services/qaDispatch');
 
 const gate = [authenticate, authorizeModule('quality')];
 const COMPARTMENTS = ['FC', 'MC', 'BC'];
@@ -170,6 +170,24 @@ async function ackFor(rows) {
   }
   return out;
 }
+// Sibling of ackFor: the QA acknowledgement per chamber, keyed "tanker_id|YYYY-MM-DD"
+// → { FC: {...}, MC: {...}, BC: {...} } (owner, 2026-10-15).
+async function ackChambersFor(rows) {
+  const keys = [...new Set(rows.map(r => `${r.tanker_id}|${r.lifting_date}`))];
+  if (!keys.length) return {};
+  const r = await query(`
+    SELECT a.tanker_id, a.lifting_date::text AS d, a.chamber, a.qty_litres, a.qty_kgs, a.fat_pct, a.snf_pct, a.kg_fat, a.kg_snf, a.mbrt_mins
+    FROM unnest($1::int[], $2::date[]) AS k(tanker_id, d)
+    JOIN qa_acknowledgements a ON a.tanker_id = k.tanker_id AND a.lifting_date = k.d`,
+    [keys.map(k => parseInt(k.split('|')[0], 10)), keys.map(k => k.split('|')[1])]);
+  const out = {};
+  for (const x of r.rows) {
+    const key = `${x.tanker_id}|${x.d}`;
+    (out[key] || (out[key] = {}))[x.chamber] = { litres: r2(x.qty_litres), kgs: r2(x.qty_kgs), fat_pct: r2(x.fat_pct), snf_pct: r2(x.snf_pct),
+      kg_fat: r2(x.kg_fat), kg_snf: r2(x.kg_snf), mbrt_min: r2(x.mbrt_mins) };
+  }
+  return out;
+}
 
 // ── QA plant acknowledgement (migration 069, owner 2026-10-15) ─────────────
 // Kgs first like the logistics Acknowledgement screen; litres / kg fat / kg SNF
@@ -298,6 +316,9 @@ function totalsOf(rows) {
   t.rmrd_adj_fat_pct = pctOf(t.rmrd_adj_kg_fat, t.rmrd_adj_qty_kgs);
   t.rmrd_adj_snf_pct = pctOf(t.rmrd_adj_kg_snf, t.rmrd_adj_qty_kgs);
   t.qty_var_litres = r2(t.d_qty_litres - t.rmrd_adj_qty_litres);   // dispatch − RMRD adjusted for balance milk
+  // Fat / SNF points on kg-weighted %, same sign as the entry rows (owner, 2026-10-15).
+  t.fat_var = t.d_fat_pct != null && t.rmrd_adj_fat_pct != null ? r2(t.d_fat_pct - t.rmrd_adj_fat_pct) : null;
+  t.snf_var = t.d_snf_pct != null && t.rmrd_adj_snf_pct != null ? r2(t.d_snf_pct - t.rmrd_adj_snf_pct) : null;
   const mb = rows.map(r => parseFloat(r.ts_mbrt_mins)).filter(Number.isFinite);
   t.ts_mbrt_min = mb.length ? r2(Math.min(...mb)) : null;      // lowest MBRT = weakest milk in the group
   return t;
@@ -321,7 +342,7 @@ function withAckVar(t, ack) {
     ack_vs_ts_fat: ack.fat_pct != null && t.rmrd_adj_fat_pct != null ? r2(ack.fat_pct - t.rmrd_adj_fat_pct) : null,
     ack_vs_ts_snf: ack.snf_pct != null && t.rmrd_adj_snf_pct != null ? r2(ack.snf_pct - t.rmrd_adj_snf_pct) : null };
 }
-function groupReport(rows, acks) {
+function groupReport(rows, acks, ackCh = {}) {
   const routes = new Map();
   for (const r of rows) {
     const rk = r.route_name || '— No route —';
@@ -335,7 +356,7 @@ function groupReport(rows, acks) {
   const out = [...routes.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([route, g]) => {
     let routeAck = {};
     const tankers = [...g.values()].sort((a, b) => b.lifting_date.localeCompare(a.lifting_date) || a.tanker_number.localeCompare(b.tanker_number))
-      .map(t => { const ack = acks[t.key] || null; routeAck = addAck(routeAck, ack); return { ...t, totals: withAckVar(totalsOf(t.rows), ack) }; });
+      .map(t => { const ack = acks[t.key] || null; routeAck = addAck(routeAck, ack); return { ...t, totals: withAckVar(totalsOf(t.rows), ack), chambers: chamberBreakup(t.rows, ackCh[t.key]) }; });
     grandAck = addAck(grandAck, routeAck);
     const routeRows = tankers.flatMap(t => t.rows);
     return { route, tankers, totals: withAckVar(totalsOf(routeRows), routeAck.trips ? routeAck : null) };
@@ -348,7 +369,7 @@ router.get('/entries/report', ...gate, async (req, res) => {
   try {
     const { sql, params } = listSql(req.query);
     const rows = (await query(sql, params)).rows.map(withVar);
-    res.json(groupReport(rows, await ackFor(rows)));
+    res.json(groupReport(rows, await ackFor(rows), await ackChambersFor(rows)));
   } catch (err) { console.error('[quality] report error:', err); res.status(500).json({ error: `Failed to build the report: ${err.message}` }); }
 });
 
@@ -368,7 +389,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
   try {
     const { sql, params } = listSql(req.query);
     const rows = (await query(sql, params)).rows.map(withVar);
-    const rep = groupReport(rows, await ackFor(rows));
+    const rep = groupReport(rows, await ackFor(rows), await ackChambersFor(rows));
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Tanker Dispatch');
     const FILL = c => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
@@ -406,7 +427,7 @@ router.get('/entries/excel', ...gate, async (req, res) => {
       t.ts_qty_litres, t.ts_fat_pct, t.ts_snf_pct, t.ts_qty_kgs, t.ts_kg_fat, t.ts_kg_snf, t.ts_mbrt_min,
       t.lo_qty_litres, t.lo_fat_pct, t.lo_snf_pct, t.lf_qty_litres, t.lf_fat_pct, t.lf_snf_pct,
       t.rmrd_adj_qty_litres, t.rmrd_adj_qty_kgs, t.rmrd_adj_fat_pct, t.rmrd_adj_snf_pct, t.rmrd_adj_kg_fat, t.rmrd_adj_kg_snf,
-      t.qty_var_litres, '', '', ...ackCells(t), '', ''];
+      t.qty_var_litres, t.fat_var, t.snf_var, ...ackCells(t), '', ''];
     const styleRow = (row, fill) => { for (let k = 1; k <= NC; k++) { const cell = row.getCell(k); cell.border = BOX; if (fill) { cell.fill = FILL(fill); cell.font = { bold: true }; }
       if (k >= 9 && k <= NC - 2 && typeof cell.value === 'number') cell.numFmt = MBRT_COLS.includes(k) ? '0.0' : '#,##0.00'; } };
     const MBRT_COLS = [HEADS.indexOf('MBRT (mins)') + 1, HEADS.indexOf('Ack MBRT (mins)') + 1];
@@ -422,6 +443,15 @@ router.get('/entries/excel', ...gate, async (req, res) => {
             r.qty_var_litres, r.fat_var, r.snf_var, '', '', '', '', '', '', '', '', '', '', '', '', r.remarks, r.entered_by_name]);
           styleRow(row, (zebra++ % 2) ? 'FFF5F8FC' : null);
           if (zebra % 2 === 0) row.font = { bold: false };
+        }
+        // Chamber-wise QA acknowledgement under the tanker's last entry (owner, 2026-10-15).
+        for (const ch of tg.chambers || []) {
+          const row = ws.addRow([`${tg.tanker_number} · ${ch.chamber}`, '', fmtDateDisplay(tg.lifting_date), tg.tanker_number, '', '', ch.chamber, '', '', '',
+            ch.d_qty_litres ?? null, ch.d_fat_pct ?? null, '', ch.d_snf_pct ?? null, ch.d_qty_kgs ?? null, ch.d_kg_fat ?? null, ch.d_kg_snf ?? null,
+            '', '', '', '', '', '', '', '', '', '', '', '', '',
+            ch.rmrd_adj_qty_litres ?? null, ch.rmrd_adj_qty_kgs ?? null, ch.rmrd_adj_fat_pct ?? null, ch.rmrd_adj_snf_pct ?? null, ch.rmrd_adj_kg_fat ?? null, ch.rmrd_adj_kg_snf ?? null,
+            ch.qty_var_litres ?? null, ch.fat_var ?? null, ch.snf_var ?? null, ...ackCells(ch), '', '']);
+          styleRow(row, 'FFF5F3FF');
         }
       }
       styleRow(ws.addRow(totCells(`Route total · ${rg.route}`, '', rg.totals)), 'FFDBEAFE');

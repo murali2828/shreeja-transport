@@ -8,6 +8,7 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
 ### Added
+- QA Dispatch Report: route and grand totals (screen and Excel) fill "Dispatch − RMRD (adjusted)" Var Fat and Var SNF from kg-weighted fat % / SNF %; under each tanker × lifting date a tinted row per chamber (FC, MC, BC) shows the QA acknowledgement of that chamber beside its dispatch and RMRD adjusted figures (an entry on several compartments split equally, as in the Dispatch & COA prefill) with Ack − RMRD Lts / Kgs / Fat / SNF and Ack − Dispatch Lts (owner, 2026-10-15).
 - Quality → Dispatch & COA: **Valve** column with its own seal number beside Front / Middle / Back cell, on screen and on the printed Milk Dispatch Voucher, as on the paper template (stored in the document data, no migration) (owner, 2026-10-15).
 - Quality → Dispatch & COA: the template's Bill-to (NDDB Dairy Services …) and Ship-to (Mother Dairy Fruit and Vegetable Pvt Ltd c/o Balaji Dairy, SAP 4024119 …) values pre-fill every new document whatever the plant; a plant's saved parties win field by field; all fields stay editable (owner, 2026-10-15).
 - QA Acknowledgement: **MBRT (mins)** per chamber (optional, 0–1440, server-validated) with the lowest value on the total line; the QA Dispatch Report and its Excel show "Ack MBRT" in the Plant Acknowledgement (QA) section, the lowest MBRT across chambers on tanker, route and grand totals (migration 070, `qa_acknowledgements.mbrt_mins`, CHECK `chk_qa_ack_mbrt`) (owner, 2026-10-15).

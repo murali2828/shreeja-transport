@@ -53,10 +53,24 @@ export default function QaDispatchList() {
       {col(t.ts_qty_litres, 0)}{col(t.ts_fat_pct)}{col(t.ts_snf_pct)}{col(t.ts_qty_kgs)}{col(t.ts_kg_fat)}{col(t.ts_kg_snf)}<td className="px-2 py-1 text-right whitespace-nowrap" title="Lowest MBRT in the group">{t.ts_mbrt_min == null ? '—' : `min ${fx(t.ts_mbrt_min, 0)}`}</td>
       {col(t.lo_qty_litres, 0)}{col(t.lo_fat_pct)}{col(t.lo_snf_pct)}{col(t.lf_qty_litres, 0)}{col(t.lf_fat_pct)}{col(t.lf_snf_pct)}
       {col(t.rmrd_adj_qty_litres, 0)}{col(t.rmrd_adj_qty_kgs)}{col(t.rmrd_adj_fat_pct)}{col(t.rmrd_adj_snf_pct)}{col(t.rmrd_adj_kg_fat)}{col(t.rmrd_adj_kg_snf)}
-      {vcol(t.qty_var_litres)}<td/><td/>
+      {vcol(t.qty_var_litres)}{vcol(t.fat_var)}{vcol(t.snf_var)}
       {t.ack ? <>{col(t.ack.litres, 0)}{col(t.ack.kgs)}{col(t.ack.fat_pct)}{col(t.ack.snf_pct)}{col(t.ack.kg_fat)}{col(t.ack.kg_snf)}<td className="px-2 py-1 text-right whitespace-nowrap" title="Lowest QA acknowledgement MBRT in the group">{t.ack.mbrt_min == null ? '—' : `min ${fx(t.ack.mbrt_min, 0)}`}</td>
                  {vcol(t.ack_vs_ts_litres)}{vcol(t.ack_vs_ts_kgs)}{vcol(t.ack_vs_ts_fat)}{vcol(t.ack_vs_ts_snf)}{vcol(t.ack_vs_d_litres)}</>
              : <td colSpan={12} className="px-2 py-1 text-center text-gray-400 font-normal">no QA ack</td>}
+      <td/><td/>
+    </tr>);
+  // Chamber-wise QA acknowledgement under the tanker's last entry (owner, 2026-10-15):
+  // dispatch / RMRD adjusted split equally across an entry's compartments.
+  const chamberRow = (tg, ch) => (
+    <tr key={`${tg.key}|${ch.chamber}`} className="border-t border-gray-100 bg-violet-50/40 text-gray-700">
+      <td className="px-2 py-1 whitespace-nowrap font-semibold" colSpan={9}>{tg.tanker_number} · {ch.chamber}</td>
+      {col(ch.d_qty_litres, 0)}{col(ch.d_fat_pct)}<td/>{col(ch.d_snf_pct)}{col(ch.d_qty_kgs)}{col(ch.d_kg_fat)}{col(ch.d_kg_snf)}
+      <td colSpan={13}/>
+      {col(ch.rmrd_adj_qty_litres, 0)}{col(ch.rmrd_adj_qty_kgs)}{col(ch.rmrd_adj_fat_pct)}{col(ch.rmrd_adj_snf_pct)}{col(ch.rmrd_adj_kg_fat)}{col(ch.rmrd_adj_kg_snf)}
+      {vcol(ch.qty_var_litres)}{vcol(ch.fat_var)}{vcol(ch.snf_var)}
+      {ch.ack ? <>{col(ch.ack.litres, 0)}{col(ch.ack.kgs)}{col(ch.ack.fat_pct)}{col(ch.ack.snf_pct)}{col(ch.ack.kg_fat)}{col(ch.ack.kg_snf)}{col(ch.ack.mbrt_min, 0)}
+                  {vcol(ch.ack_vs_ts_litres)}{vcol(ch.ack_vs_ts_kgs)}{vcol(ch.ack_vs_ts_fat)}{vcol(ch.ack_vs_ts_snf)}{vcol(ch.ack_vs_d_litres)}</>
+              : <td colSpan={12} className="px-2 py-1 text-center text-gray-400">no QA ack</td>}
       <td/><td/>
     </tr>);
 
@@ -115,6 +129,7 @@ export default function QaDispatchList() {
                             {user?.role === 'admin' && <button className="text-gray-400 hover:text-red-600" onClick={() => window.confirm('Delete this QA entry?') && delMut.mutate(r.id)}><Trash2 size={12}/></button>}
                           </td>
                         </tr>))}
+                      {(tg.chambers || []).map(ch => chamberRow(tg, ch))}
                     </Fragment>
                   ))}
                   {totRow(`Route total · ${rg.route}`, rg.totals, 'bg-blue-100')}

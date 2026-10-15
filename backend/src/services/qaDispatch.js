@@ -85,4 +85,45 @@ function variations(row) {
   };
 }
 
-module.exports = { snfFromClr, computeDispatch, computeTruckSheet, adjustRmrd, variations, n };
+// Chamber-wise figures of one tanker × lifting date (owner, 2026-10-15). An entry
+// ticked for several compartments ('FC,MC') is split equally across them, for
+// dispatch and adjusted RMRD alike (same rule as the Dispatch & COA prefill).
+// `rows` are entries already through adjustRmrd; `ackByChamber` maps FC/MC/BC to
+// the QA acknowledgement row of that chamber. Returns rows in FC, MC, BC order
+// for every chamber present in either.
+const CHAMBERS = ['FC', 'MC', 'BC'];
+function chamberBreakup(rows, ackByChamber = {}) {
+  const acc = {};
+  const z = v => parseFloat(v) || 0;
+  for (const e of rows) {
+    const codes = String(e.compartment || 'FC').split(',').map(c => c.trim().toUpperCase()).filter(c => CHAMBERS.includes(c));
+    if (!codes.length) continue;
+    for (const c of codes) {
+      const a = acc[c] || (acc[c] = { d_qty_litres: 0, d_qty_kgs: 0, d_kg_fat: 0, d_kg_snf: 0, rmrd_adj_qty_litres: 0, rmrd_adj_qty_kgs: 0, rmrd_adj_kg_fat: 0, rmrd_adj_kg_snf: 0 });
+      for (const k of Object.keys(a)) a[k] += z(e[k]) / codes.length;
+    }
+  }
+  const pct = (kg, kgs) => (kgs > 0 ? r2(kg / kgs * 100) : null);
+  const diff = (x, y) => (x == null || y == null ? null : r2(x - y));
+  return CHAMBERS.filter(c => acc[c] || ackByChamber[c]).map(c => {
+    const a = acc[c] || null;
+    const t = { chamber: c };
+    if (a) {
+      for (const k of Object.keys(a)) t[k] = r2(a[k]);
+      t.d_fat_pct = pct(a.d_kg_fat, a.d_qty_kgs); t.d_snf_pct = pct(a.d_kg_snf, a.d_qty_kgs);
+      t.rmrd_adj_fat_pct = pct(a.rmrd_adj_kg_fat, a.rmrd_adj_qty_kgs); t.rmrd_adj_snf_pct = pct(a.rmrd_adj_kg_snf, a.rmrd_adj_qty_kgs);
+      t.qty_var_litres = diff(t.d_qty_litres, t.rmrd_adj_qty_litres);
+      t.fat_var = diff(t.d_fat_pct, t.rmrd_adj_fat_pct); t.snf_var = diff(t.d_snf_pct, t.rmrd_adj_snf_pct);
+    }
+    const ack = ackByChamber[c] || null;
+    t.ack = ack;
+    if (ack && ack.litres != null && a) {
+      t.ack_vs_ts_litres = diff(ack.litres, t.rmrd_adj_qty_litres); t.ack_vs_ts_kgs = diff(ack.kgs, t.rmrd_adj_qty_kgs);
+      t.ack_vs_ts_fat = diff(ack.fat_pct, t.rmrd_adj_fat_pct); t.ack_vs_ts_snf = diff(ack.snf_pct, t.rmrd_adj_snf_pct);
+      t.ack_vs_d_litres = diff(ack.litres, t.d_qty_litres);
+    }
+    return t;
+  });
+}
+
+module.exports = { snfFromClr, computeDispatch, computeTruckSheet, adjustRmrd, variations, chamberBreakup, n };
