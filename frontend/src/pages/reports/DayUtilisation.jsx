@@ -383,12 +383,14 @@ function DayWise() {
             <thead className="sticky top-0 bg-gray-50 z-10 border-b">
               <tr>
                 {selecting && <th className="table-th"><input type="checkbox" checked={allSel} onChange={toggleAll}/></th>}
-                {['S.NO','Started Point','Delivery Point',...(byRun ? ['Billing Date'] : []),'Ack date','Tanker Number','Route Name',
-                  'Ack Qty Ltrs','Ack Qty Kgs','Fat','SNF','KG Fat','Kg SNF','Tanker Capacity','Utilization %','Remarks','Approval remarks']
-                  .map((h, i, all) => (
-                    <th key={h} className={`table-th ${i >= all.length - 10 && i <= all.length - 3 ? 'text-right' : ''} ${i === all.length - 2 ? 'text-center' : ''}`}>{h}</th>
-                  ))}
+                {['S.NO','Started Point','Delivery Point',...(byRun ? ['Billing Date'] : []),'Ack date','Tanker Number','Route Name']
+                  .map(h => <th key={h} className="table-th">{h}</th>)}
+                <th className="table-th">Approval remarks</th>
+                <th className="table-th text-right">Utilization %</th>
+                <th className="table-th text-center">Remarks</th>
                 {byRun && <><th className="table-th">Reason</th><th className="table-th">Reason detail</th></>}
+                {['Ack Qty Ltrs','Ack Qty Kgs','Fat','SNF','KG Fat','Kg SNF','Tanker Capacity']
+                  .map(h => <th key={h} className="table-th text-right">{h}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -408,13 +410,7 @@ function DayWise() {
                     {r.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px] font-sans" title="Sale Tanker — milk sold, not delivered to a plant">SALE</span>}
                   </td>
                   <td className="table-td whitespace-nowrap">{r.route_name || '—'}</td>
-                  <td className="table-td text-right">{n2(r.ack_litres)}</td>
-                  <td className="table-td text-right">{n2(r.ack_kgs)}</td>
-                  <td className="table-td text-right">{n2(r.fat)}</td>
-                  <td className="table-td text-right">{n2(r.snf)}</td>
-                  <td className="table-td text-right">{n2(r.kg_fat)}</td>
-                  <td className="table-td text-right">{n2(r.kg_snf)}</td>
-                  <td className="table-td text-right">{n0(r.capacity)}</td>
+                  <td className="table-td"><RemarkCell row={r} canEdit={canEditRemarks} onSaved={refreshRows}/></td>
                   <td className={`table-td text-right font-bold ${r.utilization == null ? 'text-gray-300' : r.utilization >= threshold ? 'text-green-700' : 'text-red-600'}`}>
                     {n2(r.utilization)}
                   </td>
@@ -425,10 +421,16 @@ function DayWise() {
                       </span>
                     )}
                   </td>
-                  <td className="table-td"><RemarkCell row={r} canEdit={canEditRemarks} onSaved={refreshRows}/></td>
                   {byRun && (r.is_sale_tanker || r.utilization == null || r.utilization >= threshold
                     ? <><td className="table-td text-gray-400">{REASON_LABEL[r.reason] || ''}</td><td className="table-td text-gray-400">{r.reason_detail || ''}</td></>
                     : <ReasonCells row={r} canEdit={canEditRemarks} onSaved={refreshAll}/>)}
+                  <td className="table-td text-right">{n2(r.ack_litres)}</td>
+                  <td className="table-td text-right">{n2(r.ack_kgs)}</td>
+                  <td className="table-td text-right">{n2(r.fat)}</td>
+                  <td className="table-td text-right">{n2(r.snf)}</td>
+                  <td className="table-td text-right">{n2(r.kg_fat)}</td>
+                  <td className="table-td text-right">{n2(r.kg_snf)}</td>
+                  <td className="table-td text-right">{n0(r.capacity)}</td>
                 </tr>
               ))}
             </tbody>
@@ -437,14 +439,15 @@ function DayWise() {
                 <tr>
                   {selecting && <td className="table-td"></td>}
                   <td className="table-td text-[#003a6b]" colSpan={byRun ? 7 : 6}>TOTAL — {rows.length} trips{saleCount > 0 ? ` (utilisation on ${fleetRows.length} non-sale)` : ''}</td>
+                  <td className="table-td"></td>
+                  <td className={`table-td text-right font-bold ${avgUtil != null && avgUtil >= threshold ? 'text-green-700' : 'text-red-600'}`}>{n2(avgUtil)}</td>
+                  <td className="table-td" colSpan={byRun ? 3 : 1}></td>
                   <td className="table-td text-right text-[#003a6b]">{n2(totLitres)}</td>
                   <td className="table-td text-right text-[#003a6b]">{n2(rows.reduce((s, r) => s + (parseFloat(r.ack_kgs) || 0), 0))}</td>
                   <td className="table-td" colSpan={2}></td>
                   <td className="table-td text-right text-[#003a6b]">{n2(rows.reduce((s, r) => s + (parseFloat(r.kg_fat) || 0), 0))}</td>
                   <td className="table-td text-right text-[#003a6b]">{n2(rows.reduce((s, r) => s + (parseFloat(r.kg_snf) || 0), 0))}</td>
                   <td className="table-td text-right text-[#003a6b]">{n0(totCap)}</td>
-                  <td className={`table-td text-right font-bold ${avgUtil != null && avgUtil >= threshold ? 'text-green-700' : 'text-red-600'}`}>{n2(avgUtil)}</td>
-                  <td className="table-td" colSpan={byRun ? 4 : 2}></td>
                 </tr>
               </tfoot>
             )}
