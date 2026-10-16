@@ -93,8 +93,8 @@ router.get('/', authenticate, authorizeOrModule('execution', 'admin', 'planner',
       -- aggregate per row, no bytes, no extra request.
       LEFT JOIN LATERAL (
         SELECT COUNT(*)::int AS dc_total,
-               COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM trip_scans s WHERE s.teb_id=b.id AND s.kind='bmcu_dc' AND s.deleted_at IS NULL))::int AS dc_done,
-               (SELECT COUNT(*)::int FROM trip_scans s WHERE s.execution_id=te.id AND s.kind='ack' AND s.deleted_at IS NULL) AS ack_scans
+               COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM trip_scans s WHERE s.teb_id=b.id AND s.kind='bmcu_dc' AND s.deleted_at IS NULL AND s.is_proposed=FALSE))::int AS dc_done,
+               (SELECT COUNT(*)::int FROM trip_scans s WHERE s.execution_id=te.id AND s.kind='ack' AND s.deleted_at IS NULL AND s.is_proposed=FALSE) AS ack_scans
           FROM trip_execution_bmcus b WHERE b.execution_id=te.id AND b.is_deleted=FALSE
       ) sc ON TRUE
       WHERE 1=1`;
