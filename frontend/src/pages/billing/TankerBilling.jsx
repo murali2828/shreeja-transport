@@ -123,6 +123,10 @@ export default function TankerBilling() {
               { duration: 12000, icon: 'ℹ️' });
       else
         toast.success('Submitted — approval email sent to Mahesh K (Level 1)');
+      // Under-utilised trips without a reason: a warning, not a blocker (owner, 2026-10-16).
+      if (r.data.utilisation_untagged > 0)
+        toast(`${r.data.utilisation_untagged} under-utilised trip(s) have no reason tagged — tag them in Reports → Tanker Utilisation → By billing run`,
+              { duration: 12000, icon: '⚠' });
       qc.invalidateQueries(['billing-run', openRunId]);
       qc.invalidateQueries(['billing-runs']);
     },
@@ -443,6 +447,7 @@ export default function TankerBilling() {
       </div>
 
       <MissingCoordinates runId={openRunId} />
+      <UtilisationNoteCard runId={openRunId} />
 
       {/* new route combinations — approval-chain notice */}
       {newComboCount > 0 && (
@@ -1162,6 +1167,30 @@ function VendorAssignRow({ tankerNumber, vendorList, onAssign, pending }) {
 // Points (BMCU / starting / delivery) without coordinates among the trips of a
 // run, or of the fortnight about to be executed. Every leg touching one of
 // them gets 0 km ("missing") and no Google reference — fix the master first.
+// Tanker utilisation approval note (owner, 2026-10-16): the draft that goes with
+// the run's approval mails; hidden when the user cannot read reports or on error.
+function UtilisationNoteCard({ runId }) {
+  const [open, setOpen] = useState(false);
+  const { data, isError } = useQuery({
+    queryKey: ['utilisation-note', runId],
+    queryFn: () => api.get('/reports/day-utilisation/note', { params: { run_id: runId } }).then(r => r.data),
+    enabled: !!runId, retry: false,
+  });
+  if (!data || isError) return null;
+  return (
+    <div className="card p-3 text-xs">
+      <button className="w-full text-left flex items-center gap-2 flex-wrap" onClick={() => setOpen(o => !o)}>
+        {open ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
+        <span className="font-bold text-[#003a6b]">Tanker utilisation</span>
+        <span className="text-gray-600">{data.total} trips · above {data.threshold}%: {data.above} · under: {data.below}</span>
+        {data.untagged > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">{data.untagged} without a reason</span>}
+        <span className="text-gray-400">— sent with the approval mails; tag reasons in Reports → Tanker Utilisation</span>
+      </button>
+      {open && <pre className="mt-2 whitespace-pre-wrap font-sans text-xs text-gray-700">{data.text}</pre>}
+    </div>
+  );
+}
+
 function MissingCoordinates({ runId, from, to }) {
   const [open, setOpen] = useState(false);
   const enabled = !!runId || (!!from && !!to);

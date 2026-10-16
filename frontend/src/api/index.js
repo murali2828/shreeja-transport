@@ -185,6 +185,11 @@ export const downloadCumulativeExcel = (params) => api.get('/reports/cumulative/
 });
 export const getDayUtilisation = (p) => api.get('/reports/day-utilisation', { params: p });
 export const saveUtilisationRemark = (execution_id, remark) => api.put('/reports/day-utilisation/remark', { execution_id, remark });
+// Under-utilisation reasons + approval note (owner, 2026-10-16; migration 073).
+export const saveUtilisationReason = (execution_id, fields) => api.put('/reports/day-utilisation/remark', { execution_id, ...fields });
+export const tagUtilisationReasons = (execution_ids, reason, reason_detail) =>
+  api.put('/reports/day-utilisation/reasons', { execution_ids, reason, reason_detail });
+export const getUtilisationNote = (runId) => api.get('/reports/day-utilisation/note', { params: { run_id: runId } });
 export const getReportBillingRuns = (p) => api.get('/reports/billing-runs', { params: p });
 // runId optional (owner, 2026-10-16): "By billing run" mode, dates ignored.
 export const downloadDayUtilisationExcel = (from, to, threshold, runId) =>

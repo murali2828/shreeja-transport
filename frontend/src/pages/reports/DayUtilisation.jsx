@@ -13,7 +13,8 @@ import { hasRole } from '../../utils/roles';
 import toast from 'react-hot-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
-import { getDayUtilisation, downloadDayUtilisationExcel, getReportBillingRuns, saveUtilisationRemark } from '../../api/index';
+import { getDayUtilisation, downloadDayUtilisationExcel, getReportBillingRuns, saveUtilisationRemark,
+  saveUtilisationReason, tagUtilisationReasons, getUtilisationNote } from '../../api/index';
 import { fmtDate } from '../../utils/date';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -41,6 +42,68 @@ function RemarkCell({ row, canEdit, onSaved }) {
   );
 }
 
+// Under-utilisation reasons (migration 073, owner 2026-10-16).
+const REASONS = [
+  ['batch_preparation', 'Batch Preparation and Specific Plant Requirements'],
+  ['operational_delays', 'Operational Delays and Plant Maintenance'],
+];
+const REASON_LABEL = Object.fromEntries(REASONS);
+
+function ReasonCells({ row, canEdit, onSaved }) {
+  const [detail, setDetail] = useState(row.reason_detail || '');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setDetail(row.reason_detail || ''); }, [row.reason_detail]);
+  if (!canEdit) return (<>
+    <td className="table-td whitespace-nowrap">{REASON_LABEL[row.reason] || ''}</td>
+    <td className="table-td whitespace-pre-wrap">{row.reason_detail || ''}</td>
+  </>);
+  const save = fields => {
+    setSaving(true);
+    saveUtilisationReason(row.execution_id, fields)
+      .then(() => onSaved())
+      .catch(e => toast.error(e.response?.data?.error || e.message))
+      .finally(() => setSaving(false));
+  };
+  return (<>
+    <td className="table-td">
+      <select className={`input py-1 text-xs w-52 ${saving ? 'opacity-60' : ''}`} value={row.reason || ''}
+        onChange={e => save({ reason: e.target.value })}>
+        <option value="">—</option>
+        {REASONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+    </td>
+    <td className="table-td">
+      <input className={`input py-1 text-xs w-56 ${saving ? 'opacity-60' : ''}`} value={detail} maxLength={1000}
+        disabled={!row.reason} placeholder={row.reason ? 'optional detail' : 'pick a reason first'}
+        onChange={e => setDetail(e.target.value)}
+        onBlur={() => { if (detail.trim() !== (row.reason_detail || '').trim()) save({ reason_detail: detail }); }}/>
+    </td>
+  </>);
+}
+
+// Approval note drafted from the tagged reasons, with Copy.
+function NotePanel({ runId, version }) {
+  const { data, isError } = useQuery({
+    queryKey: ['utilisation-note', runId, version],
+    queryFn: () => getUtilisationNote(runId).then(r => r.data),
+    enabled: !!runId, retry: false,
+  });
+  if (!data || isError) return null;
+  const copy = () => navigator.clipboard?.writeText(data.text)
+    .then(() => toast.success('Approval note copied'))
+    .catch(() => toast.error('Copy failed — select the text and copy it'));
+  return (
+    <div className="card p-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="font-semibold text-sm text-[#003a6b]">Approval note</div>
+        <span className="text-xs text-gray-500">attached to this run's L1 / L2 / L3 approval mails — approving the run approves it</span>
+        <button onClick={copy} className="btn-secondary text-xs ml-auto">Copy</button>
+      </div>
+      <textarea readOnly className="input w-full text-xs font-mono" rows={Math.min(24, data.text.split('\n').length + 1)} value={data.text}/>
+    </div>
+  );
+}
+
 const MODE_KEY = 'dayUtil.mode';
 // Fortnight of a month (YYYY-MM): half 1 = 1–15, half 2 = 16–month end.
 const fortnightRange = (month, half) => {
@@ -56,6 +119,7 @@ function DayWise() {
   const canEditRemarks = user?.read_only !== true && (hasRole(user, 'admin') || user?.access?.reports === 'edit'
     || (hasRole(user, 'planner', 'biller') && user?.access?.reports !== 'view'));
   const refreshRows = () => qc.invalidateQueries({ queryKey: ['day-utilisation'] });
+  const refreshAll = () => { refreshRows(); qc.invalidateQueries({ queryKey: ['utilisation-note'] }); };
   const [from, setFrom] = useState(today());
   const [to, setTo]     = useState(today());
   const [threshold, setThreshold] = useState(95);
@@ -66,6 +130,11 @@ function DayWise() {
   const [month, setMonth] = useState(today().slice(0, 7));
   const [half, setHalf]   = useState(Number(today().slice(8, 10)) <= 15 ? '1' : '2');
   const byRun = mode === 'run';
+  const [filter, setFilter] = useState('all');
+  const [sel, setSel] = useState(() => new Set());
+  const [tagReason, setTagReason] = useState(REASONS[0][0]);
+  const [tagDetail, setTagDetail] = useState('');
+  const [tagging, setTagging] = useState(false);
   const fn = month ? fortnightRange(month, half) : null;
   const changeMode = m => { setMode(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* ignore */ } };
 
@@ -91,6 +160,23 @@ function DayWise() {
 
   const above = rows.filter(r => r.utilization != null && r.utilization >= threshold).length;
   const below = rows.filter(r => r.utilization != null && r.utilization < threshold).length;
+  const isBelow = r => r.utilization != null && r.utilization < threshold;
+  const untagged = byRun ? rows.filter(r => isBelow(r) && !r.reason).length : 0;
+  const shown = !byRun || filter === 'all' ? rows
+    : rows.filter(r => r.utilization != null && (filter === 'below' ? r.utilization < threshold : r.utilization >= threshold));
+  const selecting = byRun && filter === 'below' && canEditRemarks;
+  const toggle = id => setSel(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allSel = selecting && shown.length > 0 && shown.every(r => sel.has(r.execution_id));
+  const toggleAll = () => setSel(allSel ? new Set() : new Set(shown.map(r => r.execution_id)));
+  useEffect(() => { setSel(new Set()); }, [runId, filter, mode]);
+  const applyTag = () => {
+    if (!sel.size) return toast.error('Tick the trips to tag first');
+    setTagging(true);
+    tagUtilisationReasons([...sel], tagReason, tagDetail)
+      .then(r => { toast.success(`${r.data.updated} trip(s) tagged`); setSel(new Set()); refreshAll(); })
+      .catch(e => toast.error(e.response?.data?.error || e.message))
+      .finally(() => setTagging(false));
+  };
   const totLitres = rows.reduce((s, r) => s + (parseFloat(r.ack_litres) || 0), 0);
   // Fleet utilisation excludes sale tankers (milk sold, not a fleet fill).
   const fleetRows = rows.filter(r => !r.is_sale_tanker);
@@ -164,6 +250,9 @@ function DayWise() {
             fleet utilisation {n2(avgUtil)}%
           </span>
         )}
+        {untagged > 0 && (
+          <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-800 font-semibold">⚠ Untagged: {untagged} below {threshold}% without a reason</span>
+        )}
         {saleCount > 0 && (
           <span className="px-3 py-1 rounded-full bg-violet-100 text-violet-700 font-medium" title="Sale tankers are excluded from fleet utilisation">
             {saleCount} sale tanker{saleCount > 1 ? 's' : ''} (excluded)
@@ -171,24 +260,48 @@ function DayWise() {
         )}
       </div>
 
+      {byRun && runId && (
+        <div className="flex gap-2 flex-wrap items-center text-xs">
+          {[['all', `All (${rows.length})`], ['above', `Above ${threshold}% (${above})`], ['below', `Below ${threshold}% (${below})`]].map(([k, l]) => (
+            <button key={k} onClick={() => setFilter(k)} className="px-3 py-1 rounded-full font-semibold border"
+              style={filter === k ? { background: '#4a3aa7', color: '#fff', borderColor: '#4a3aa7' } : { background: '#fff', color: '#57534e' }}>{l}</button>
+          ))}
+          {selecting && (
+            <div className="flex gap-2 items-center flex-wrap ml-2 p-1.5 rounded-lg bg-gray-50 border">
+              <span className="font-semibold">Tag reason ({sel.size} selected)</span>
+              <select className="input py-1 text-xs" value={tagReason} onChange={e => setTagReason(e.target.value)}>
+                {REASONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                <option value="">— clear reason —</option>
+              </select>
+              <input className="input py-1 text-xs w-64" placeholder="detail (optional)" maxLength={1000}
+                value={tagDetail} onChange={e => setTagDetail(e.target.value)} disabled={!tagReason}/>
+              <button onClick={applyTag} disabled={tagging || !sel.size} className="btn-primary text-xs py-1">Apply</button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="card overflow-hidden">
         <div className="overflow-x-auto max-h-[68vh]">
           <table className="w-full text-xs" style={{ minWidth: 1300 }}>
             <thead className="sticky top-0 bg-gray-50 z-10 border-b">
               <tr>
+                {selecting && <th className="table-th"><input type="checkbox" checked={allSel} onChange={toggleAll}/></th>}
                 {['S.NO','Started Point','Delivery Point',...(byRun ? ['Billing Date'] : []),'Ack date','Tanker Number','Route Name',
                   'Ack Qty Ltrs','Ack Qty Kgs','Fat','SNF','KG Fat','Kg SNF','Tanker Capacity','Utilization %','Remarks','Approval remarks']
                   .map((h, i, all) => (
                     <th key={h} className={`table-th ${i >= all.length - 10 && i <= all.length - 3 ? 'text-right' : ''} ${i === all.length - 2 ? 'text-center' : ''}`}>{h}</th>
                   ))}
+                {byRun && <><th className="table-th">Reason</th><th className="table-th">Reason detail</th></>}
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={byRun ? 17 : 16}><div className="empty-state">{byRun ? (runId ? 'No trips in this billing run.' : 'No billing run for this fortnight yet.') : 'No acknowledged trips in this date range.'}</div></td></tr>
+                <tr><td colSpan={byRun ? 19 + (selecting ? 1 : 0) : 16}><div className="empty-state">{byRun ? (runId ? 'No trips in this billing run.' : 'No billing run for this fortnight yet.') : 'No acknowledged trips in this date range.'}</div></td></tr>
               )}
-              {rows.map(r => (
+              {shown.map(r => (
                 <tr key={r.execution_id || r.s_no} className="border-b border-gray-50 hover:bg-gray-50">
+                  {selecting && <td className="table-td"><input type="checkbox" checked={sel.has(r.execution_id)} onChange={() => toggle(r.execution_id)}/></td>}
                   <td className="table-td">{r.s_no}</td>
                   <td className="table-td whitespace-nowrap">{r.starting_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.delivery_point || '—'}</td>
@@ -217,12 +330,16 @@ function DayWise() {
                     )}
                   </td>
                   <td className="table-td"><RemarkCell row={r} canEdit={canEditRemarks} onSaved={refreshRows}/></td>
+                  {byRun && (r.is_sale_tanker || r.utilization == null || r.utilization >= threshold
+                    ? <><td className="table-td text-gray-400">{REASON_LABEL[r.reason] || ''}</td><td className="table-td text-gray-400">{r.reason_detail || ''}</td></>
+                    : <ReasonCells row={r} canEdit={canEditRemarks} onSaved={refreshAll}/>)}
                 </tr>
               ))}
             </tbody>
             {rows.length > 0 && (
               <tfoot className="bg-blue-50 border-t font-semibold sticky bottom-0">
                 <tr>
+                  {selecting && <td className="table-td"></td>}
                   <td className="table-td text-[#003a6b]" colSpan={byRun ? 7 : 6}>TOTAL — {rows.length} trips{saleCount > 0 ? ` (utilisation on ${fleetRows.length} non-sale)` : ''}</td>
                   <td className="table-td text-right text-[#003a6b]">{n2(totLitres)}</td>
                   <td className="table-td text-right text-[#003a6b]">{n2(rows.reduce((s, r) => s + (parseFloat(r.ack_kgs) || 0), 0))}</td>
@@ -231,13 +348,14 @@ function DayWise() {
                   <td className="table-td text-right text-[#003a6b]">{n2(rows.reduce((s, r) => s + (parseFloat(r.kg_snf) || 0), 0))}</td>
                   <td className="table-td text-right text-[#003a6b]">{n0(totCap)}</td>
                   <td className={`table-td text-right font-bold ${avgUtil != null && avgUtil >= threshold ? 'text-green-700' : 'text-red-600'}`}>{n2(avgUtil)}</td>
-                  <td className="table-td" colSpan={2}></td>
+                  <td className="table-td" colSpan={byRun ? 4 : 2}></td>
                 </tr>
               </tfoot>
             )}
           </table>
         </div>
       </div>
+      {byRun && runId && <NotePanel runId={runId}/>}
     </div>
   );
 }
