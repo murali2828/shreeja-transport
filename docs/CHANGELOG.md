@@ -7,6 +7,8 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+## 2026-10-16 — promoted to `main` 2026-10-16 (migrations 068–074)
+
 ### Changed
 - Billing run Excel: the **Tanker Utilisation** sheet is removed; utilisation travels with its own approval mail (attached workbook) and Reports → Tanker Utilisation (owner, 2026-10-16).
 
