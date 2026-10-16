@@ -57,6 +57,7 @@
 - @docs/DECISIONS.md
 
 ## Current state
+- 2026-10-16 (2): `main` fast-forwarded to fce07da: Execution-Edit users (logistics) may tag utilisation reasons / approval remarks. No migration, no env change.
 - 2026-10-16: `main` fast-forwarded to 1f61592 (migrations 068–074): QA balance milk / QA acknowledgement + MBRT / valve seal / chamber-wise ack, trip scans (DC per BMCU, ack slip, change requests; uploads volume ~2.5 GB/month), Tanker Utilisation by billing run with approval remarks, below-95 % reasons and its own L1–L3 utilisation approval (mail + Excel), billing date = lifting date (`BILLING_DATE_OFFSET_DAYS=0` — must be 0 in PROD `.env`), Cost Drivers diesel carry-forward. Optional env `UTILISATION_THRESHOLD` (default 95).
 - 2026-10-15: `main` fast-forwarded to 15531ee: FY-workbook plants shown under portal delivery point names (`services/plantNames.js`), operator alert mailbox in `.env.deploy.example`. PROD ops-kit live (backups, WAL, alerts; FTP mirror pending credentials), FY workbook and fixed costs loaded on PROD.
 - 2026-10-15: `main` fast-forwarded to cb7c143: Transport Cost Drivers By delivery point table and "vs a chosen month" comparison. No migration, no env change.
