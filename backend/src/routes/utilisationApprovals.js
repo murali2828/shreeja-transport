@@ -114,9 +114,9 @@ async function runExcel(a) {
 
   const ps = wb.addWorksheet('By plant');
   ps.addRow([`${title} — under ${T}% by plant and reason`]); ps.addRow([]);
-  ps.addRow(['Reason', 'Plant', 'Trips', 'Avg util %', 'BMCUs', 'Details']);
-  for (const g of note.groups) for (const p of g.plants) ps.addRow([g.label, p.plant, p.count, num(p.avg), p.bmcus.join(', '), p.details.join('; ')]);
-  if (note.untaggedGroup) for (const p of note.untaggedGroup.plants) ps.addRow(['Not yet categorised', p.plant, p.count, num(p.avg), p.bmcus.join(', '), '']);
+  ps.addRow(['Reason', 'Plant', 'Trips', 'Avg util %', 'Routes', 'Details']);
+  for (const g of note.groups) for (const p of g.plants) ps.addRow([g.label, p.plant, p.count, num(p.avg), p.routes.join(', '), p.details.join('; ')]);
+  if (note.untaggedGroup) for (const p of note.untaggedGroup.plants) ps.addRow(['Not yet categorised', p.plant, p.count, num(p.avg), p.routes.join(', '), '']);
 
   const at = wb.addWorksheet('All trips');
   at.addRow([`${title} — all trips of the run`]); at.addRow([]);

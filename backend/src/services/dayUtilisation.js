@@ -150,7 +150,7 @@ const REASON_TEXT = {
 // Approval note for a billing run's under-utilised trips (owner, 2026-10-16),
 // generated from data in exactly the structure of logistics' fortnightly mail
 // to the approvers. Sale tankers are left out; below = utilisation <
-// threshold. Plants are delivery points, BMCUs come from the trips' live
+// threshold. Plants are delivery points, routes are the trips' route names
 // execution BMCU lines. Logistics may edit the text before submitting it
 // (utilisation_approvals.note_text, migration 074).
 async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
@@ -164,25 +164,16 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
   const dTo = Number(String(run.to_date).slice(8, 10));
   const period = `${d <= 15 ? 'First' : 'Second'} fortnight of ${MONTHS[m - 1]} ${y} (${MONTHS[m - 1]} ${d}–${dTo})`;
 
-  const ids = below.map(r => r.execution_id);
-  const bm = ids.length ? (await query(`
-    SELECT teb.execution_id, b.bmcu_name
-    FROM trip_execution_bmcus teb JOIN bmcus b ON b.id=teb.bmcu_id
-    WHERE teb.execution_id = ANY($1) AND teb.is_deleted=FALSE
-    ORDER BY teb.execution_id, teb.id`, [ids])).rows : [];
-  const bmByExec = {};
-  for (const x of bm) (bmByExec[x.execution_id] ||= []).push(x.bmcu_name);
-
   const plantsOf = g => {
     const m2 = new Map();
     for (const r of g) {
       const p = r.delivery_point || '(no delivery point)';
-      if (!m2.has(p)) m2.set(p, { rows: [], bmcus: new Set() });
+      if (!m2.has(p)) m2.set(p, { rows: [], routes: new Set() });
       m2.get(p).rows.push(r);
-      for (const n of bmByExec[r.execution_id] || []) m2.get(p).bmcus.add(n);
+      if (r.route_name) m2.get(p).routes.add(r.route_name);
     }
     return [...m2].map(([plant, v]) => ({
-      plant, count: v.rows.length, avg: avgOf(v.rows), bmcus: [...v.bmcus].sort(),
+      plant, count: v.rows.length, avg: avgOf(v.rows), routes: [...v.routes].sort(),
       details: [...new Set(v.rows.map(r => r.reason_detail).filter(Boolean))],
     })).sort((a, b) => b.count - a.count || a.plant.localeCompare(b.plant));
   };
@@ -200,7 +191,7 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
   const untaggedGroup = untagged ? { count: untagged, min: minOf(untaggedRows), avg: avgOf(untaggedRows), plants: plantsOf(untaggedRows) } : null;
   const plantSummary = plantsOf(below).map(p => ({ plant: p.plant, count: p.count, avg: p.avg }));
 
-  const plantLine = (p, at) => `   - ${p.plant}: ${at} ${andList(p.bmcus) || '—'} (${p.count} trip${p.count === 1 ? '' : 's'}, avg util ${p.avg}%).`;
+  const plantLine = (p, at) => `   - ${p.plant}: ${at} ${andList(p.routes) || '—'} (${p.count} trip${p.count === 1 ? '' : 's'}, avg util ${p.avg}%).`;
   const lines = [
     'Dear Madam,',
     `Please find below the tanker utilization details for the ${period} for approval by the competent authorities.`,
