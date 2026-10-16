@@ -334,8 +334,8 @@ router.post('/submit', authenticate, requireInitiator, async (req, res) => {
     for (const ap of APPROVERS) {
       const u = await client.query('SELECT id FROM users WHERE LOWER(email)=LOWER($1) AND is_active=TRUE ORDER BY id LIMIT 1', [ap.email]);
       await client.query(`INSERT INTO utilisation_approval_steps (approval_id, level, approver_user_id, approver_email, approver_name, token_hash, token_expires_at)
-                          VALUES ($1,$2,$3,$4,$5,$6, CASE WHEN $6::text IS NULL THEN NULL ELSE NOW() + INTERVAL '${TOKEN_DAYS} days' END)`,
-        [id, ap.level, u.rows[0]?.id || null, ap.email, ap.name, ap.level === 1 ? hashToken(token) : null]);
+                          VALUES ($1,$2,$3,$4,$5,$6, CASE WHEN $7::boolean THEN NOW() + INTERVAL '${TOKEN_DAYS} days' END)`,
+        [id, ap.level, u.rows[0]?.id || null, ap.email, ap.name, ap.level === 1 ? hashToken(token) : null, ap.level === 1]);
     }
     await client.query('COMMIT');
   } catch (err) {
