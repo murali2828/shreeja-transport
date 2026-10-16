@@ -21,11 +21,7 @@ const { computeExecutionDistance } = require('../services/executionData');
 const { fmtDateDisplay } = require('../utils/date');
 const { loadMasterDistanceCache } = require('../services/distanceLookup');
 
-const APPROVERS = [
-  { level: 1, email: process.env.BILLING_APPROVER_1 || 'Mahesh.k@shreejamilk.com',      name: 'Mahesh K' },
-  { level: 2, email: process.env.BILLING_APPROVER_2 || 'krithiga.a@shreejamilk.com',    name: 'Krithiga A' },
-  { level: 3, email: process.env.BILLING_APPROVER_3 || 'Thimmappa.sura@shreejamilk.com', name: 'Thimmappa Sura' },
-];
+const { APPROVERS } = require('../services/billingApprovers'); // shared with utilisation approvals (074)
 const BASE_URL = () => process.env.APP_BASE_URL || 'https://tms.shreejamilk.com';
 const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
 
@@ -1238,7 +1234,16 @@ async function sendApprovalEmail(runId, level) {
   // Under-utilisation approval note (owner, 2026-10-16): approving the run
   // approves it; a failure here must never stop the approval mail.
   let utilHtml = '';
-  try { utilHtml = utilisationNoteHtml(await utilisationNote(runId)); }
+  try {
+    // Utilisation approval is its own L1–L3 chain raised by logistics (074);
+    // the run mail carries the note (as edited) and one status line.
+    const ua = require('./utilisationApprovals');
+    const cur = await ua.currentForRun(runId);
+    utilHtml = utilisationNoteHtml(await utilisationNote(runId), {
+      text: cur && cur.status !== 'rejected' ? cur.note_text : null,
+      status: await ua.statusLineForRun(runId),
+    });
+  }
   catch (e) { console.warn('[billing] utilisation note skipped:', e.message); }
   await createTransport().sendMail({
     from: process.env.SMTP_FROM,

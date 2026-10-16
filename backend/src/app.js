@@ -116,6 +116,7 @@ app.use('/api/audit',      require('./routes/audit'));
 app.use('/api/change-requests', require('./routes/changeRequests'));
 app.use('/api/trip-docs', require('./routes/tripDocs'));
 app.use('/api/trip-scans', require('./routes/tripScans')); // BMCU DC + ack slip scans (migration 071)
+app.use('/api/utilisation-approvals', require('./routes/utilisationApprovals')); // L1–L3 utilisation approval (migration 074)
 app.use('/api/roles',      require('./routes/roles'));
 app.use('/api/tracking',   require('./routes/tracking'));
 // Shreeja Assure read-only integration API (X-Assure-Key auth, own per-IP
