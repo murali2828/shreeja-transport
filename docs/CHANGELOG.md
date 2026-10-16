@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- Tanker Utilisation: reasons, reason detail and approval remarks can be keyed by whoever may raise the utilisation approval — Reports **or Execution** at Edit (logistics, e.g. Mahesh K), besides admin and planner / biller with Reports Edit (owner, 2026-10-16).
+
 ## 2026-10-16 — promoted to `main` 2026-10-16 (migrations 068–074)
 
 ### Changed

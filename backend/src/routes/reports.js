@@ -5,6 +5,18 @@ const ExcelJS    = require('exceljs');
 const nodemailer = require('nodemailer');
 const { query }  = require('../config/db');
 const { authenticate, authorizeOrModule } = require('../middleware/auth');
+// Reasons / approval remarks on Tanker Utilisation (owner, 2026-10-16): whoever
+// may raise the utilisation approval may tag its trips — Reports Edit or
+// Execution Edit (logistics), as in routes/utilisationApprovals.js; otherwise
+// the usual reports gate (planner / biller with Edit).
+const reportsGate = authorizeOrModule('reports', 'admin', 'planner', 'biller');
+const canTagUtilisation = async (req, res, next) => {
+  try {
+    const { canInitiate } = require('./utilisationApprovals');
+    if (await canInitiate(req.user)) return next();
+  } catch (e) { console.error('[reports] canInitiate', e.message); }
+  return reportsGate(req, res, next);
+};
 
 // ─── Mailer factory ───────────────────────────────────────────────────────────
 const { createTransport } = require('../config/mailer');
@@ -1795,7 +1807,7 @@ async function upsertUtilisation(ids, fields, user) {
   return r.rows.map(x => ({ ...x, remark: x.remark || '', reason: x.reason || '', reason_detail: x.reason_detail || '' }));
 }
 
-router.put('/day-utilisation/remark', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
+router.put('/day-utilisation/remark', authenticate, canTagUtilisation, async (req, res) => {
   const execId = req.body?.execution_id;
   if (!/^\d+$/.test(String(execId ?? '')) || parseInt(execId, 10) <= 0) return res.status(400).json({ error: 'execution_id must be a positive integer' });
   const { fields, error } = parseReason(req.body);
@@ -1812,7 +1824,7 @@ router.put('/day-utilisation/remark', authenticate, authorizeOrModule('reports',
 
 // PUT /api/reports/day-utilisation/reasons {execution_ids[], reason, reason_detail}
 // Bulk tag (owner, 2026-10-16); blank reason clears reason and detail.
-router.put('/day-utilisation/reasons', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
+router.put('/day-utilisation/reasons', authenticate, canTagUtilisation, async (req, res) => {
   const raw = req.body?.execution_ids;
   if (!Array.isArray(raw) || !raw.length || raw.length > 5000 || !raw.every(v => /^\d+$/.test(String(v)) && parseInt(v, 10) > 0))
     return res.status(400).json({ error: 'execution_ids must be a non-empty list of positive integers' });

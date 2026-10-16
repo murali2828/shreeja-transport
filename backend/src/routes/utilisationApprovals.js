@@ -399,3 +399,4 @@ async function statusLineForRun(runId) {
 module.exports = router;
 module.exports.statusLineForRun = statusLineForRun;
 module.exports.currentForRun = currentForRun;
+module.exports.canInitiate = canInitiate;

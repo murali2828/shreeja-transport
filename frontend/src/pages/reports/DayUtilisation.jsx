@@ -212,8 +212,9 @@ const readMode = () => { try { return localStorage.getItem(MODE_KEY) === 'run' ?
 function DayWise() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  // Same rule as raising the utilisation approval: Reports or Execution at Edit (logistics).
   const canEditRemarks = user?.read_only !== true && (hasRole(user, 'admin') || user?.access?.reports === 'edit'
-    || (hasRole(user, 'planner', 'biller') && user?.access?.reports !== 'view'));
+    || user?.access?.execution === 'edit' || (hasRole(user, 'planner', 'biller') && user?.access?.reports !== 'view'));
   const refreshRows = () => qc.invalidateQueries({ queryKey: ['day-utilisation'] });
   const refreshAll = () => { refreshRows(); qc.invalidateQueries({ queryKey: ['utilisation-note'] }); };
   const [from, setFrom] = useState(today());
