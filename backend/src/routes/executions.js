@@ -80,7 +80,8 @@ router.get('/', authenticate, authorizeOrModule('execution', 'admin', 'planner',
         ${saleTankerSql('tp', 't')} AS is_sale_tanker,
         sp.name AS start_point_name, dp.name AS delivery_point_name,
         u.full_name AS executor_name,
-        COALESCE(u2.user_id, u.user_id) AS entered_by_user_id
+        COALESCE(u2.user_id, u.user_id) AS entered_by_user_id,
+        COALESCE(sc.dc_total,0) AS dc_total, COALESCE(sc.dc_done,0) AS dc_done, COALESCE(sc.ack_scans,0) AS ack_scans
       FROM trip_executions te
       JOIN trip_plans tp      ON tp.id=te.trip_plan_id
       LEFT JOIN tankers t     ON t.id=tp.tanker_id
@@ -88,6 +89,14 @@ router.get('/', authenticate, authorizeOrModule('execution', 'admin', 'planner',
       LEFT JOIN delivery_points dp ON dp.id=tp.delivery_point_id
       LEFT JOIN users u       ON u.id=te.executed_by
       LEFT JOIN users u2      ON u2.id=te.updated_by
+      -- Scan counts for the list chip (migration 071): one index-backed lateral
+      -- aggregate per row, no bytes, no extra request.
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS dc_total,
+               COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM trip_scans s WHERE s.teb_id=b.id AND s.kind='bmcu_dc' AND s.deleted_at IS NULL))::int AS dc_done,
+               (SELECT COUNT(*)::int FROM trip_scans s WHERE s.execution_id=te.id AND s.kind='ack' AND s.deleted_at IS NULL) AS ack_scans
+          FROM trip_execution_bmcus b WHERE b.execution_id=te.id AND b.is_deleted=FALSE
+      ) sc ON TRUE
       WHERE 1=1`;
     const params = [];
     if (status)         { params.push(status);         sql += ` AND te.status=$${params.length}`; }
