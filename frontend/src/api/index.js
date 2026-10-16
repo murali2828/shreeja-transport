@@ -184,7 +184,7 @@ export const downloadCumulativeExcel = (params) => api.get('/reports/cumulative/
   a.href = url; a.download = `tanker_utilisation_cumulative_${params.from}.xlsx`; a.click(); URL.revokeObjectURL(url);
 });
 export const getDayUtilisation = (p) => api.get('/reports/day-utilisation', { params: p });
-export const getReportBillingRuns = () => api.get('/reports/billing-runs');
+export const getReportBillingRuns = (p) => api.get('/reports/billing-runs', { params: p });
 // runId optional (owner, 2026-10-16): "By billing run" mode, dates ignored.
 export const downloadDayUtilisationExcel = (from, to, threshold, runId) =>
   api.get('/reports/day-utilisation/excel', {

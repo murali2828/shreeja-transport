@@ -21,6 +21,12 @@ const n2 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { mini
 const n0 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
 const MODE_KEY = 'dayUtil.mode';
+// Fortnight of a month (YYYY-MM): half 1 = 1–15, half 2 = 16–month end.
+const fortnightRange = (month, half) => {
+  const [y, m] = month.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return half === '1' ? { from: `${month}-01`, to: `${month}-15` } : { from: `${month}-16`, to: `${month}-${String(last).padStart(2, '0')}` };
+};
 const readMode = () => { try { return localStorage.getItem(MODE_KEY) === 'run' ? 'run' : 'ack'; } catch { return 'ack'; } };
 
 function DayWise() {
@@ -31,16 +37,22 @@ function DayWise() {
   // CE approval of trips below the threshold after each run.
   const [mode, setMode]   = useState(readMode);
   const [runId, setRunId] = useState('');
+  const [month, setMonth] = useState(today().slice(0, 7));
+  const [half, setHalf]   = useState(Number(today().slice(8, 10)) <= 15 ? '1' : '2');
   const byRun = mode === 'run';
+  const fn = month ? fortnightRange(month, half) : null;
   const changeMode = m => { setMode(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* ignore */ } };
 
-  const { data: runs = [] } = useQuery({
-    queryKey: ['report-billing-runs'],
-    queryFn:  () => getReportBillingRuns().then(r => r.data),
-    enabled:  byRun,
+  const { data: runs = [], isFetched: runsFetched } = useQuery({
+    queryKey: ['report-billing-runs', fn?.from, fn?.to],
+    queryFn:  () => getReportBillingRuns({ from: fn.from, to: fn.to }).then(r => r.data),
+    enabled:  byRun && !!fn,
   });
+  // Runs of the fortnight, latest id first: pick the latest whenever the
+  // current choice is not one of them (none → clear).
   useEffect(() => {
-    if (byRun && !runId && runs.length) setRunId(String(runs[0].id));
+    if (!byRun) return;
+    if (!runs.some(r => String(r.id) === runId)) setRunId(runs.length ? String(runs[0].id) : '');
   }, [byRun, runId, runs]);
 
   const { data: rows = [], isFetching } = useQuery({
@@ -74,14 +86,30 @@ function DayWise() {
             <option value="run">By billing run</option>
           </select>
           {byRun ? (
-            <select className="input py-1.5 text-sm" value={runId} onChange={e => setRunId(e.target.value)}>
-              {runs.length === 0 && <option value="">No billing runs</option>}
-              {runs.map(r => (
-                <option key={r.id} value={r.id}>
-                  #{r.id} · {fmtDate(r.from_date)} → {fmtDate(r.to_date)} · {r.status} · {r.trip_count} trips
-                </option>
-              ))}
-            </select>
+            <>
+              <input type="month" className="input py-1.5 text-sm" value={month} onChange={e => setMonth(e.target.value)}/>
+              <select className="input py-1.5 text-sm" value={half} onChange={e => setHalf(e.target.value)}>
+                <option value="1">1–15</option>
+                <option value="2">16–month end</option>
+              </select>
+              {runs.length > 1 && (
+                <select className="input py-1.5 text-sm" value={runId} onChange={e => setRunId(e.target.value)}>
+                  {runs.map(r => (
+                    <option key={r.id} value={r.id}>
+                      #{r.id} · {fmtDate(r.from_date)} → {fmtDate(r.to_date)} · {r.status} · {r.trip_count} trips
+                    </option>
+                  ))}
+                </select>
+              )}
+              {runs.length === 1 && (
+                <span className="text-xs text-gray-600">
+                  Run #{runs[0].id} · {runs[0].status} · {runs[0].trip_count} trips
+                </span>
+              )}
+              {runsFetched && runs.length === 0 && (
+                <span className="text-xs text-amber-700">No billing run for this fortnight yet</span>
+              )}
+            </>
           ) : (
             <>
               <input type="date" className="input py-1.5 text-sm" value={from} onChange={e => setFrom(e.target.value)}/>
@@ -131,7 +159,7 @@ function DayWise() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={byRun ? 16 : 15}><div className="empty-state">{byRun ? 'No trips in this billing run.' : 'No acknowledged trips in this date range.'}</div></td></tr>
+                <tr><td colSpan={byRun ? 16 : 15}><div className="empty-state">{byRun ? (runId ? 'No trips in this billing run.' : 'No billing run for this fortnight yet.') : 'No acknowledged trips in this date range.'}</div></td></tr>
               )}
               {rows.map(r => (
                 <tr key={r.s_no} className="border-b border-gray-50 hover:bg-gray-50">

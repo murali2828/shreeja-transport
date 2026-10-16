@@ -1851,13 +1851,21 @@ router.get('/day-utilisation/excel', authenticate, authorizeOrModule('reports', 
 // Reads the tables directly so it works even when BILLING_ENABLED is off.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/billing-runs', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
+  // Optional from / to (YYYY-MM-DD): runs of exactly that fortnight (owner, 2026-10-16).
+  const { from, to } = req.query;
+  const isD = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v));
+  if ((from && !isD(from)) || (to && !isD(to))) return res.status(400).json({ error: 'from / to must be YYYY-MM-DD' });
+  const where = [], params = [];
+  if (from) { params.push(from); where.push(`br.from_date=$${params.length}`); }
+  if (to)   { params.push(to);   where.push(`br.to_date=$${params.length}`); }
   try {
     const r = await query(`
       SELECT br.id, br.from_date, br.to_date, br.status,
              (SELECT COUNT(*)::int FROM billing_run_trips brt WHERE brt.run_id=br.id) AS trip_count
       FROM billing_runs br
+      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY br.id DESC
-      LIMIT 50`);
+      LIMIT 50`, params);
     res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
