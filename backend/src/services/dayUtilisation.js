@@ -29,7 +29,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold, { runId, vendorI
   // the fallback Analytics → Utilisation already uses.
   const r = await query(`
     SELECT tp.trip_no, t.tanker_number, t.capacity_litres,
-           ${saleTankerSql('tp', 't')} AS is_sale_tanker,
+           ${saleTankerSql('tp', 't')} AS is_sale_tanker, (tp.trip_kind = 'material') AS is_material,
            rm.route_name, sp.name AS starting_point, dp.name AS delivery_point,
            COALESCE(MIN(ta.ack_date), te.execution_date) AS ack_date,
            COUNT(ta.id) AS ack_count,
@@ -56,7 +56,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold, { runId, vendorI
     LEFT JOIN utilisation_remarks ur ON ur.execution_id=te.id
     ${byRun ? `JOIN billing_run_trips brt ON brt.execution_id=te.id AND brt.run_id=$1
     WHERE ${scoped ? 'brt.vendor_id = ANY($2)' : 'TRUE'}` : `WHERE te.status != 'cancelled' AND tp.status NOT IN ('cancelled','deleted')`}
-    GROUP BY tp.id, tp.trip_no, tp.plan_for_date, t.tanker_number, t.capacity_litres, tp.is_sale_tanker,
+    GROUP BY tp.id, tp.trip_kind, tp.trip_no, tp.plan_for_date, t.tanker_number, t.capacity_litres, tp.is_sale_tanker,
              rm.route_name, sp.name, dp.name, te.id, disp.litres, disp.kgs, disp.kg_fat, disp.kg_snf, ur.remark, ur.reason, ur.reason_detail${byRun ? ', brt.id' : ''}
     ${byRun
       ? 'ORDER BY tp.plan_for_date, t.tanker_number, tp.trip_no'
@@ -69,10 +69,13 @@ async function buildDayUtilisation(fromDate, toDate, threshold, { runId, vendorI
     const kgs    = parseFloat(x.ack_kgs) || 0;
     const cap    = parseFloat(x.capacity_litres) || 0;
     const isSale = !!x.is_sale_tanker;
+    // Material (bought-and-sold milk) trips carry no BMCU milk either, so
+    // they stay out of utilisation like sale tankers (owner, 2026-10-16).
+    const isMaterial = !!x.is_material;
     // Sale tankers (milk sold, not delivered) carry no utilisation figure —
     // the row stays for the litres, the % is blank and it is kept out of
     // the fleet total on the page.
-    const util   = cap && !isSale ? rN(litres / cap * 100) : null;
+    const util   = cap && !isSale && !isMaterial ? rN(litres / cap * 100) : null;
     return {
       s_no: i + 1,
       execution_id: x.execution_id,
@@ -80,7 +83,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold, { runId, vendorI
       reason: x.reason || '',
       reason_label: REASON_LABELS[x.reason] || '',
       reason_detail: x.reason_detail || '',
-      is_sale_tanker: isSale,
+      is_sale_tanker: isSale, is_material: isMaterial,
       starting_point: x.starting_point, delivery_point: x.delivery_point,
       ack_date: fmtDateDisplay(x.ack_date),
       billing_date: fmtDateDisplay(x.billing_date),
@@ -93,8 +96,9 @@ async function buildDayUtilisation(fromDate, toDate, threshold, { runId, vendorI
       utilization: util,
       remarks: [
         isSale ? 'SALE tanker — not in utilisation' : '',
+        isMaterial ? 'MATERIAL trip — not in utilisation' : '',
         util == null ? '' : util >= threshold ? `ABOVE ${threshold}` : `BELOW ${threshold}`,
-        !isSale && parseInt(x.ack_count) === 0 ? '(dispatch qty — no ack, e.g. sold at BMCU)' : '',
+        !isSale && !isMaterial && parseInt(x.ack_count) === 0 ? '(dispatch qty — no ack, e.g. sold at BMCU)' : '',
         byRun && x.run_carried_forward ? '· Carried forward' : '',
         byRun && x.run_excluded ? '· Excluded in run' : '',
         byRun && x.run_remarks ? `· ${x.run_remarks}` : '',
@@ -157,7 +161,7 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
   const rr = await query('SELECT id, from_date, to_date, status FROM billing_runs WHERE id=$1', [runId]);
   const run = rr.rows[0];
   if (!run) return null;
-  const rows = (await buildDayUtilisation(null, null, threshold, { runId })).filter(r => !r.is_sale_tanker);
+  const rows = (await buildDayUtilisation(null, null, threshold, { runId })).filter(r => !r.is_sale_tanker && !r.is_material);
   const below = rows.filter(r => r.utilization != null && r.utilization < threshold);
   const above = rows.filter(r => r.utilization != null && r.utilization >= threshold);
   const [y, m, d] = String(run.from_date).split('-').map(Number);

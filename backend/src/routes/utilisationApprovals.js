@@ -86,8 +86,10 @@ const periodOf = a => `${fmtDateDisplay(a.from_date)} → ${fmtDateDisplay(a.to_
 async function runExcel(a) {
   const T = UTILISATION_THRESHOLD;
   const note = await utilisationNote(a.run_id, T);
-  const all = await buildDayUtilisation(null, null, T, { runId: a.run_id });
-  const fleet = all.filter(r => !r.is_sale_tanker);
+  // Sale tankers and material (buy-and-sell) trips are left out everywhere.
+  const all = (await buildDayUtilisation(null, null, T, { runId: a.run_id }))
+    .filter(r => !r.is_sale_tanker && !r.is_material).map((r, i) => ({ ...r, s_no: i + 1 }));
+  const fleet = all;
   const below = fleet.filter(r => r.utilization != null && r.utilization < T)
     .sort((x, y) => (x.reason_label || 'zz').localeCompare(y.reason_label || 'zz')
       || String(x.delivery_point || '').localeCompare(String(y.delivery_point || '')) || x.utilization - y.utilization);
@@ -98,7 +100,7 @@ async function runExcel(a) {
   const sum = wb.addWorksheet('Summary');
   sum.addRow([title]); sum.addRow([]);
   sum.addRow(['Item', 'Trips', 'Lowest util %', 'Average util %', 'Over 94 %', 'Plants']);
-  sum.addRow(['Total movements (sale tankers excluded)', note.total]);
+  sum.addRow(['Total movements (sale tankers and material trips excluded)', note.total]);
   sum.addRow([`Above ${T}% utilisation`, note.above]);
   sum.addRow([`Under ${T}% utilisation`, note.below]);
   for (const g of note.groups) sum.addRow([`  ${g.label}`, g.count, num(g.min), num(g.avg), g.over94, g.plants.map(p => p.plant).join(', ')]);

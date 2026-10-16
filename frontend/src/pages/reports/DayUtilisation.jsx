@@ -280,7 +280,7 @@ function DayWise() {
   };
   const totLitres = rows.reduce((s, r) => s + (parseFloat(r.ack_litres) || 0), 0);
   // Fleet utilisation excludes sale tankers (milk sold, not a fleet fill).
-  const fleetRows = rows.filter(r => !r.is_sale_tanker);
+  const fleetRows = rows.filter(r => !r.is_sale_tanker && !r.is_material);
   const saleCount = rows.length - fleetRows.length;
   const fleetLitres = fleetRows.reduce((s, r) => s + (parseFloat(r.ack_litres) || 0), 0);
   const totCap    = fleetRows.reduce((s, r) => s + (parseFloat(r.capacity) || 0), 0);
@@ -356,7 +356,7 @@ function DayWise() {
         )}
         {saleCount > 0 && (
           <span className="px-3 py-1 rounded-full bg-violet-100 text-violet-700 font-medium" title="Sale tankers are excluded from fleet utilisation">
-            {saleCount} sale tanker{saleCount > 1 ? 's' : ''} (excluded)
+            {saleCount} sale tanker / material trip{saleCount > 1 ? "s" : ""} (excluded)
           </span>
         )}
       </div>
@@ -422,6 +422,7 @@ function DayWise() {
                   <td className="table-td font-mono font-semibold text-[#005ba3] whitespace-nowrap">
                     {r.tanker_number || '—'}
                     {r.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px] font-sans" title="Sale Tanker — milk sold, not delivered to a plant">SALE</span>}
+                    {r.is_material && <span className="ml-1 px-1 rounded bg-teal-600 text-white text-[10px] font-sans" title="Material (buy and sell) trip — not in utilisation">MATERIAL</span>}
                   </td>
                   <td className="table-td whitespace-nowrap">{r.route_name || '—'}</td>
                   <td className="table-td"><RemarkCell row={r} canEdit={canEditRemarks} onSaved={refreshRows}/></td>
@@ -430,12 +431,12 @@ function DayWise() {
                   </td>
                   <td className="table-td text-center">
                     {r.remarks && (
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${r.remarks.startsWith('ABOVE') ? 'bg-green-100 text-green-700' : r.is_sale_tanker ? 'bg-violet-100 text-violet-700' : 'bg-red-100 text-red-600'}`}>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${r.remarks.startsWith('ABOVE') ? 'bg-green-100 text-green-700' : r.is_sale_tanker || r.is_material ? 'bg-violet-100 text-violet-700' : 'bg-red-100 text-red-600'}`}>
                         {r.remarks}
                       </span>
                     )}
                   </td>
-                  {byRun && (r.is_sale_tanker || r.utilization == null || r.utilization >= threshold
+                  {byRun && (r.is_sale_tanker || r.is_material || r.utilization == null || r.utilization >= threshold
                     ? <><td className="table-td text-gray-400">{REASON_LABEL[r.reason] || ''}</td><td className="table-td text-gray-400">{r.reason_detail || ''}</td></>
                     : <ReasonCells row={r} canEdit={canEditRemarks} onSaved={refreshAll}/>)}
                   <td className="table-td text-right">{n2(r.ack_litres)}</td>
@@ -452,7 +453,7 @@ function DayWise() {
               <tfoot className="bg-blue-50 border-t font-semibold sticky bottom-0">
                 <tr>
                   {selecting && <td className="table-td"></td>}
-                  <td className="table-td text-[#003a6b]" colSpan={byRun ? 7 : 6}>TOTAL — {rows.length} trips{saleCount > 0 ? ` (utilisation on ${fleetRows.length} non-sale)` : ''}</td>
+                  <td className="table-td text-[#003a6b]" colSpan={byRun ? 7 : 6}>TOTAL — {rows.length} trips{saleCount > 0 ? ` (utilisation on ${fleetRows.length} non-sale, non-material)` : ''}</td>
                   <td className="table-td"></td>
                   <td className={`table-td text-right font-bold ${avgUtil != null && avgUtil >= threshold ? 'text-green-700' : 'text-red-600'}`}>{n2(avgUtil)}</td>
                   <td className="table-td" colSpan={byRun ? 3 : 1}></td>
