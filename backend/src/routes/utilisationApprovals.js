@@ -17,6 +17,7 @@ const { authenticate, hasRole, rolesOf, accessFor, isReadOnlyUser } = require('.
 const { APPROVERS, approverFor, approverUser, billingTransport } = require('../services/billingApprovers');
 const { utilisationNote, plantSummaryHtml, noteTextHtml, buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD } = require('../services/dayUtilisation');
 const { fmtDateDisplay } = require('../utils/date');
+const { stylePortalWorkbook } = require('../services/portalExcel');
 
 const BASE_URL = () => (process.env.APP_BASE_URL || 'https://tms.shreejamilk.com').replace(/\/$/, '');
 const TOKEN_DAYS = 14;
@@ -77,13 +78,58 @@ async function currentForRun(runId) {
 const periodOf = a => `${fmtDateDisplay(a.from_date)} → ${fmtDateDisplay(a.to_date)}`;
 
 // ── Mail ─────────────────────────────────────────────────────────────────────
-async function runExcel(runId) {
-  const rows = await buildDayUtilisation(null, null, UTILISATION_THRESHOLD, { runId });
+// Approval workbook attached to every level's mail (owner, 2026-10-16): the
+// summary in the note's structure, the under-utilised trips with their
+// reason, the plant summary, every trip of the run, and the note text.
+async function runExcel(a) {
+  const T = UTILISATION_THRESHOLD;
+  const note = await utilisationNote(a.run_id, T);
+  const all = await buildDayUtilisation(null, null, T, { runId: a.run_id });
+  const fleet = all.filter(r => !r.is_sale_tanker);
+  const below = fleet.filter(r => r.utilization != null && r.utilization < T)
+    .sort((x, y) => (x.reason_label || 'zz').localeCompare(y.reason_label || 'zz')
+      || String(x.delivery_point || '').localeCompare(String(y.delivery_point || '')) || x.utilization - y.utilization);
+  const title = `Tanker utilisation approval — Billing run #${a.run_id} (${periodOf(a)})`;
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('Tanker Utilisation');
-  ws.columns = UTIL_HEADERS.map(h => ({ header: h.title, key: h.key, width: h.width }));
-  rows.forEach(r => ws.addRow(r));
-  ws.getRow(1).font = { bold: true };
+  const num = v => (v == null || v === '' ? null : parseFloat(v));
+
+  const sum = wb.addWorksheet('Summary');
+  sum.addRow([title]); sum.addRow([]);
+  sum.addRow(['Item', 'Trips', 'Lowest util %', 'Average util %', 'Over 94 %', 'Plants']);
+  sum.addRow(['Total movements (sale tankers excluded)', note.total]);
+  sum.addRow([`Above ${T}% utilisation`, note.above]);
+  sum.addRow([`Under ${T}% utilisation`, note.below]);
+  for (const g of note.groups) sum.addRow([`  ${g.label}`, g.count, num(g.min), num(g.avg), g.over94, g.plants.map(p => p.plant).join(', ')]);
+  if (note.untaggedGroup) sum.addRow(['  Not yet categorised', note.untagged, num(note.untaggedGroup.min), num(note.untaggedGroup.avg), null, note.untaggedGroup.plants.map(p => p.plant).join(', ')]);
+  sum.addRow(['Approval status', STATUS_LABEL[a.status] || a.status]);
+  sum.addRow(['Submitted by', a.submitted_by_name || '']);
+
+  const rh = wb.addWorksheet(`Below ${T}%`);
+  rh.addRow([`${title} — trips under ${T}%`]); rh.addRow([]);
+  rh.addRow(['S.No', 'Reason', 'Reason detail', 'Delivery Point', 'Started Point', 'Billing Date', 'Ack date', 'Tanker Number',
+    'Route Name', 'Tanker Capacity', 'Ack Qty Ltrs', 'Ack Qty Kgs', 'Utilization %', 'Approval Remarks']);
+  below.forEach((r, i) => rh.addRow([i + 1, r.reason_label || 'Not yet categorised', r.reason_detail || '', r.delivery_point || '',
+    r.starting_point || '', r.billing_date ? fmtDateDisplay(r.billing_date) : '', r.ack_date || '', r.tanker_number || '',
+    r.route_name || '', num(r.capacity), num(r.ack_litres), num(r.ack_kgs), num(r.utilization), r.user_remark || '']));
+
+  const ps = wb.addWorksheet('By plant');
+  ps.addRow([`${title} — under ${T}% by plant and reason`]); ps.addRow([]);
+  ps.addRow(['Reason', 'Plant', 'Trips', 'Avg util %', 'BMCUs', 'Details']);
+  for (const g of note.groups) for (const p of g.plants) ps.addRow([g.label, p.plant, p.count, num(p.avg), p.bmcus.join(', '), p.details.join('; ')]);
+  if (note.untaggedGroup) for (const p of note.untaggedGroup.plants) ps.addRow(['Not yet categorised', p.plant, p.count, num(p.avg), p.bmcus.join(', '), '']);
+
+  const at = wb.addWorksheet('All trips');
+  at.addRow([`${title} — all trips of the run`]); at.addRow([]);
+  const H = [...UTIL_HEADERS.slice(0, 3), { title: 'Billing Date', key: 'billing_date' }, ...UTIL_HEADERS.slice(3)];
+  at.addRow(H.map(h => h.title));
+  all.forEach(r => at.addRow(H.map(h => h.num ? num(r[h.key]) : (h.key === 'billing_date' && r[h.key] ? fmtDateDisplay(r[h.key]) : (r[h.key] ?? '')))));
+
+  stylePortalWorkbook(wb, title);
+  wb.eachSheet(ws => ws.eachRow((row, ri) => { if (ri > 3) row.eachCell(c => { if (typeof c.value === 'number' && !Number.isInteger(c.value)) c.numFmt = '#,##0.00'; }); }));
+
+  const nt = wb.addWorksheet('Approval note');
+  nt.getColumn(1).width = 140;
+  String(a.note_text || note.text || '').split('\n').forEach(l => { const row = nt.addRow([l]); row.getCell(1).alignment = { wrapText: true }; });
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -100,7 +146,7 @@ function approvalMailHtml(a, level, token) {
     ${noteTextHtml(a.note_text || '')}
     ${plantSummaryHtml(a.note_snapshot)}
     <div style="margin:18px 0;">${btn('approve', 'Approve', '#16a34a')}${btn('reject', 'Reject', '#dc2626')}</div>
-    <p style="font-size:11px;color:#9ca3af;">No login needed — the button opens a confirmation page; confirm there. The link works once and expires in ${TOKEN_DAYS} days. The Day wise utilisation of the run is attached.</p>
+    <p style="font-size:11px;color:#9ca3af;">No login needed — the button opens a confirmation page; confirm there. The link works once and expires in ${TOKEN_DAYS} days. The attached Excel holds the summary, the under-utilised trips with their reasons, the plant summary, all trips of the run and the note.</p>
   </div>`;
 }
 
@@ -109,7 +155,7 @@ async function mailLevel(approvalId, level, token) {
   const ap = a.steps.find(s => s.level === level);
   if (!ap?.approver_email) throw new Error(`No approver for L${level}`);
   let attachments = [];
-  try { attachments = [{ filename: `tanker_utilisation_run_${a.run_id}.xlsx`, content: await runExcel(a.run_id) }]; }
+  try { attachments = [{ filename: `tanker_utilisation_run_${a.run_id}.xlsx`, content: await runExcel(a) }]; }
   catch (e) { console.warn('[utilisation-approval] excel skipped:', e.message); }
   await billingTransport().sendMail({
     from: process.env.SMTP_FROM, to: ap.approver_email,
