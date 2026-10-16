@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- Billing: billing date = **lifting date** (`BILLING_DATE_OFFSET_DAYS=0` on both tiers, was 1 = delivery date): a 1–15 run covers trips lifted 1st–15th and a 16–end run 16th–month end; the acknowledgement cutoff (06:00 on the 16th / 1st) is unchanged. Env change only; trips lifted on the last day of the previous month that a run already holds stay where they are, nothing is billed twice (owner, 2026-10-16).
+
 ### Added
 - QA Dispatch Report: a chamber filled by a single entry shows its QA acknowledgement and Ack − RMRD on that entry's row (no repeated chamber line); separate chamber rows remain only for chambers shared by several entries, split entries or acked without an entry (owner, 2026-10-15).
 - QA Dispatch Report: route and grand totals (screen and Excel) fill "Dispatch − RMRD (adjusted)" Var Fat and Var SNF from kg-weighted fat % / SNF %; under each tanker × lifting date a tinted row per chamber (FC, MC, BC) shows the QA acknowledgement of that chamber beside its dispatch and RMRD adjusted figures (an entry on several compartments split equally, as in the Dispatch & COA prefill) with Ack − RMRD Lts / Kgs / Fat / SNF and Ack − Dispatch Lts (owner, 2026-10-15).
