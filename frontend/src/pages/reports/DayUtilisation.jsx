@@ -227,6 +227,7 @@ function DayWise() {
   const [half, setHalf]   = useState(Number(today().slice(8, 10)) <= 15 ? '1' : '2');
   const byRun = mode === 'run';
   const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
   const [sel, setSel] = useState(() => new Set());
   const [tagReason, setTagReason] = useState(REASONS[0][0]);
   const [tagDetail, setTagDetail] = useState('');
@@ -258,8 +259,12 @@ function DayWise() {
   const below = rows.filter(r => r.utilization != null && r.utilization < threshold).length;
   const isBelow = r => r.utilization != null && r.utilization < threshold;
   const untagged = byRun ? rows.filter(r => isBelow(r) && !r.reason).length : 0;
-  const shown = !byRun || filter === 'all' ? rows
-    : rows.filter(r => r.utilization != null && (filter === 'below' ? r.utilization < threshold : r.utilization >= threshold));
+  const q = search.trim().toLowerCase();
+  const matches = r => !q || [r.route_name, r.tanker_number, r.starting_point, r.delivery_point, r.billing_date, r.ack_date,
+    fmtDate(r.ack_date), r.remarks, r.user_remark, REASON_LABEL[r.reason], r.reason_detail, r.capacity, r.utilization, r.s_no]
+    .some(v => v != null && String(v).toLowerCase().includes(q));
+  const shown = (!byRun || filter === 'all' ? rows
+    : rows.filter(r => r.utilization != null && (filter === 'below' ? r.utilization < threshold : r.utilization >= threshold))).filter(matches);
   const selecting = byRun && filter === 'below' && canEditRemarks;
   const toggle = id => setSel(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const allSel = selecting && shown.length > 0 && shown.every(r => sel.has(r.execution_id));
@@ -355,6 +360,15 @@ function DayWise() {
           </span>
         )}
       </div>
+
+      {rows.length > 0 && (
+        <div className="flex gap-2 items-center text-xs">
+          <input className="input py-1 text-xs w-full max-w-sm" placeholder="Search route, tanker, plant, date, remarks, reason…"
+            value={search} onChange={e => setSearch(e.target.value)}/>
+          {q && <span className="text-gray-500">{shown.length} match{shown.length === 1 ? '' : 'es'}</span>}
+          {q && <button className="text-[#005ba3] underline" onClick={() => setSearch('')}>clear</button>}
+        </div>
+      )}
 
       {byRun && runId && (
         <div className="flex gap-2 flex-wrap items-center text-xs">
