@@ -19,7 +19,7 @@ const { createTransport } = require('../config/mailer');
 const { calcKgs, calcKgFat, calcKgSnf } = require('../services/executionData');
 const { fmtDateDisplay } = require('../utils/date');
 const { saleTankerSql } = require('../utils/saleTanker');
-const { buildDayUtilisation, UTIL_HEADERS } = require('../services/dayUtilisation');
+const { buildDayUtilisation, UTIL_HEADERS, REASON_LABELS, utilisationNote } = require('../services/dayUtilisation');
 
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 
@@ -1752,31 +1752,90 @@ router.get('/day-utilisation/excel', authenticate, authorizeOrModule('reports', 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PUT /api/reports/day-utilisation/remark {execution_id, remark} — approval
-// remark per trip (migration 072); blank deletes. View-only users are refused
-// by authorizeOrModule (writes need Edit on reports).
+// PUT /api/reports/day-utilisation/remark {execution_id, remark?, reason?, reason_detail?}
+// Approval remark (072) and under-utilisation reason / detail (073) per trip;
+// only the fields sent change, a blank value clears it (blank reason also
+// clears its detail), and the row goes once everything is blank. View-only
+// users are refused by authorizeOrModule (writes need Edit on reports).
 // ─────────────────────────────────────────────────────────────────────────────
+function parseReason(body) {
+  const has = k => Object.prototype.hasOwnProperty.call(body || {}, k);
+  const out = {};
+  if (has('remark')) {
+    out.remark = String(body.remark ?? '').trim();
+    if (out.remark.length > 1000) return { error: 'remark too long (max 1000 characters)' };
+  }
+  if (has('reason')) {
+    out.reason = String(body.reason ?? '').trim();
+    if (out.reason && !REASON_LABELS[out.reason]) return { error: `reason must be one of ${Object.keys(REASON_LABELS).join(', ')} or blank` };
+    if (!out.reason) out.reason_detail = '';
+  }
+  if (has('reason_detail') && out.reason_detail == null) {
+    out.reason_detail = String(body.reason_detail ?? '').trim();
+    if (out.reason_detail.length > 1000) return { error: 'reason_detail too long (max 1000 characters)' };
+  }
+  return { fields: out };
+}
+
+// Upsert the given fields for each execution, then drop rows left empty.
+async function upsertUtilisation(ids, fields, user) {
+  const cols = Object.keys(fields);
+  const vals = cols.map(c => fields[c] || null);
+  const set = cols.map(c => `${c}=EXCLUDED.${c}`).join(', ');
+  const r = await query(`
+    INSERT INTO utilisation_remarks (execution_id, ${cols.join(', ')}, updated_by, updated_by_name, updated_at)
+    SELECT x, ${cols.map((_, i) => `$${i + 2}`).join(', ')}, $${cols.length + 2}, $${cols.length + 3}, NOW()
+    FROM UNNEST($1::int[]) x
+    ON CONFLICT (execution_id) DO UPDATE SET ${set}, updated_by=EXCLUDED.updated_by,
+      updated_by_name=EXCLUDED.updated_by_name, updated_at=NOW()
+    RETURNING execution_id, remark, reason, reason_detail, updated_by_name, updated_at`,
+    [ids, ...vals, user.id, user.full_name || user.user_id || null]);
+  await query(`DELETE FROM utilisation_remarks WHERE execution_id = ANY($1)
+    AND COALESCE(remark,'')='' AND reason IS NULL AND COALESCE(reason_detail,'')=''`, [ids]);
+  return r.rows.map(x => ({ ...x, remark: x.remark || '', reason: x.reason || '', reason_detail: x.reason_detail || '' }));
+}
+
 router.put('/day-utilisation/remark', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const execId = req.body?.execution_id;
   if (!/^\d+$/.test(String(execId ?? '')) || parseInt(execId, 10) <= 0) return res.status(400).json({ error: 'execution_id must be a positive integer' });
-  const remark = String(req.body?.remark ?? '').trim();
-  if (remark.length > 1000) return res.status(400).json({ error: 'remark too long (max 1000 characters)' });
+  const { fields, error } = parseReason(req.body);
+  if (error) return res.status(400).json({ error });
+  if (!Object.keys(fields).length) return res.status(400).json({ error: 'remark, reason or reason_detail required' });
   try {
     const id = parseInt(execId, 10);
-    if (!remark) {
-      await query('DELETE FROM utilisation_remarks WHERE execution_id=$1', [id]);
-      return res.json({ execution_id: id, remark: '' });
-    }
     const ex = await query('SELECT 1 FROM trip_executions WHERE id=$1', [id]);
     if (!ex.rows.length) return res.status(404).json({ error: 'Execution not found' });
-    const r = await query(`
-      INSERT INTO utilisation_remarks (execution_id, remark, updated_by, updated_by_name, updated_at)
-      VALUES ($1, $2, $3, $4, NOW())
-      ON CONFLICT (execution_id) DO UPDATE SET remark=EXCLUDED.remark, updated_by=EXCLUDED.updated_by,
-        updated_by_name=EXCLUDED.updated_by_name, updated_at=NOW()
-      RETURNING execution_id, remark, updated_by_name, updated_at`,
-      [id, remark, req.user.id, req.user.full_name || req.user.user_id || null]);
-    res.json(r.rows[0]);
+    const rows = await upsertUtilisation([id], fields, req.user);
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/reports/day-utilisation/reasons {execution_ids[], reason, reason_detail}
+// Bulk tag (owner, 2026-10-16); blank reason clears reason and detail.
+router.put('/day-utilisation/reasons', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
+  const raw = req.body?.execution_ids;
+  if (!Array.isArray(raw) || !raw.length || raw.length > 5000 || !raw.every(v => /^\d+$/.test(String(v)) && parseInt(v, 10) > 0))
+    return res.status(400).json({ error: 'execution_ids must be a non-empty list of positive integers' });
+  const { fields, error } = parseReason({ reason: req.body?.reason, reason_detail: req.body?.reason_detail });
+  if (error) return res.status(400).json({ error });
+  try {
+    const ids = [...new Set(raw.map(v => parseInt(v, 10)))];
+    const ex = await query('SELECT COUNT(*)::int AS n FROM trip_executions WHERE id = ANY($1)', [ids]);
+    if (ex.rows[0].n !== ids.length) return res.status(404).json({ error: 'Some executions were not found' });
+    const rows = await upsertUtilisation(ids, fields, req.user);
+    res.json({ updated: ids.length, rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/reports/day-utilisation/note?run_id=N — approval note draft for the
+// run's under-utilised trips (also appended to the run's approval mails).
+router.get('/day-utilisation/note', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
+  const { runId, error } = parseRunId(req.query.run_id);
+  if (error || !runId) return res.status(400).json({ error: error || 'run_id required' });
+  try {
+    const note = await utilisationNote(runId);
+    if (!note) return res.status(404).json({ error: 'Billing run not found' });
+    res.json(note);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
