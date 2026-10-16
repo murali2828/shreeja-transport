@@ -46,6 +46,7 @@ A longer, older narrative lives in the root [`ARCHITECTURE.md`](../ARCHITECTURE.
 | `/api/billing/toll-changes` | `routes/billingTollChanges.js` | toll challan change requests on submitted / approved runs: create with proposed file, PP01 email approval (single-use token) or portal decision (migration 051) | billing; token for decide |
 | `/api/quality` | `routes/quality.js` | Quality team's tanker dispatch vs truck-sheet (RMRD) entries: lookups, CRUD, list, Excel in the team's format (migration 052; formulas in `services/qaDispatch.js`) | `authorizeModule('quality')` |
 | `/api/tracking` | `routes/tracking.js` | WheelsEye live positions, poll-now, trip playback analysis, fleet report | execution/admin |
+| `/api/utilisation-approvals` | `routes/utilisationApprovals.js` | tanker utilisation approval of a billing run's under-utilised trips: editable note (`services/dayUtilisation.js`), L1 → L2 → L3 with the billing approvers (`services/billingApprovers.js`), single-use email token `decision-info` / `decide` (migration 074) | reports / execution Edit to initiate; level approver or admin to decide; token for decide |
 | `/api/audit` | `routes/audit.js` | request + field-level audit logs, Excel | admin |
 | `/api/integrations/assure` | `routes/integrations.js` | read-only trips/loadings/receipts feed for Shreeja Assure | `X-Assure-Key` header, not JWT |
 
