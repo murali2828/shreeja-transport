@@ -109,7 +109,7 @@ function TripScansModal({ executionId, onClose }) {
 // List chip: "DC 3/5 · Ack ✓" from the executions list aggregate (no extra request).
 export function ScanChip({ exec }) {
   if (!exec) return null;
-  const total = Number(exec.dc_total || 0), done = Number(exec.dc_done || 0), ack = Number(exec.ack_scans || 0) > 0;
+  const total = Number(exec.dc_total || 0), done = Number(exec.dc_done || 0), ack = Number(exec.ack_scans || 0) > 0, acked = isAcked(exec);
   const dcOk = total > 0 && done >= total;
   return (
     <span className="inline-flex items-center gap-1 text-[10px] font-semibold whitespace-nowrap" title="Scanned dispatch challans · acknowledgement slip">
