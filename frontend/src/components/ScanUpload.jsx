@@ -9,6 +9,7 @@
 // All scans of one execution come from one cached query; images load only
 // when the viewer opens.
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Paperclip, X, ChevronLeft, ChevronRight, Trash2, RefreshCw, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -81,8 +82,8 @@ function TripScansModal({ executionId, onClose }) {
   }
   const ack = all.filter(x => x.kind === 'ack');
   if (ack.length) groups.push({ title: 'Ack slip', scans: ack });
-  return (
-    <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-3" onClick={onClose}>
+  return createPortal(
+    <div className="fixed inset-0 z-[1000] bg-black/50 flex items-center justify-center p-3" onClick={onClose}>
       <div className="bg-white rounded-lg w-full max-w-lg max-h-[85vh] overflow-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-3 py-2 border-b text-sm font-semibold text-gray-700">
           Trip scans
@@ -103,7 +104,7 @@ function TripScansModal({ executionId, onClose }) {
       </div>
       {view && <ScanViewer scans={view.scans} title={view.title} readOnly hideAdmin onClose={() => setView(null)} onChanged={() => {}}/>}
     </div>
-  );
+  , document.body);
 }
 
 // List chip: "DC 3/5 · Ack ✓" from the executions list aggregate (no extra request).
@@ -273,8 +274,8 @@ export function ScanViewer({ scans, title, readOnly, hideAdmin = false, onClose,
   };
 
   const when = s.uploaded_at ? new Date(s.uploaded_at).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-  return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2 sm:p-6" onClick={onClose}>
+  return createPortal(
+    <div className="fixed inset-0 z-[1001] bg-black/70 flex items-center justify-center p-2 sm:p-6" onClick={onClose}>
       <div className="bg-white rounded-lg w-full max-w-5xl max-h-full flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-3 py-2 border-b text-sm">
           <div className="font-semibold text-gray-700">{title} · {i + 1} / {scans.length}
@@ -320,5 +321,5 @@ export function ScanViewer({ scans, title, readOnly, hideAdmin = false, onClose,
         )}
       </div>
     </div>
-  );
+  , document.body);
 }
