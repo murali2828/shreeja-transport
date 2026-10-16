@@ -10,6 +10,7 @@ import {
   ChevronDown, ChevronRight, Zap, Navigation, Trash2, Building2, FileText, ShieldCheck, Fuel,
   Printer,
   ClipboardCheck,
+  Paperclip,
 } from 'lucide-react';
 
 function NavItem({ to, icon, label, end = false, collapsed = false }) {
@@ -138,6 +139,7 @@ export default function Sidebar({ collapsed = false }) {
           {ni('/reports/cost-drivers', <Fuel size={15}/>, 'Transport Cost Drivers')}
           {ni('/reports/trip-durations', <BarChart2 size={15}/>, 'Trip Durations')}
           {ni('/reports/day-utilisation', <BarChart2 size={15}/>, 'Tanker Utilisation')}
+          {ni('/reports/scan-status', <Paperclip size={15}/>, 'Scan Status')}
           {isAdmin && ni('/reports/audit', <Users size={15}/>, 'User Activity')}
         </NavSection>
       )}

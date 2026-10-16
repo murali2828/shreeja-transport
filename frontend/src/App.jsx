@@ -60,6 +60,8 @@ import AuditLog        from './pages/reports/AuditLog';
 import BmcuBreakup     from './pages/reports/BmcuBreakup';
 import TripDurations   from './pages/reports/TripDurations';
 import DayUtilisation  from './pages/reports/DayUtilisation';
+import ScanStatus      from './pages/reports/ScanStatus';
+import ScanChangeDecision from './pages/execution/ScanChangeDecision';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } }
@@ -97,6 +99,7 @@ function AppRoutes() {
       <Route path="/billing-decision" element={<BillingDecision/>}/>
       <Route path="/change-request-decision" element={<ChangeRequestDecision/>}/>
       <Route path="/toll-change-decision" element={<TollChangeDecision/>}/>
+      <Route path="/scan-change-decision" element={<ScanChangeDecision/>}/>
       <Route path="/change-password" element={
         <ProtectedRoute allowMustChange><ChangePassword/></ProtectedRoute>
       }/>
@@ -197,6 +200,7 @@ function AppRoutes() {
         <Route path="reports/bmcu-breakup" element={<ProtectedRoute module="reports"><BmcuBreakup/></ProtectedRoute>}/>
         <Route path="reports/trip-durations" element={<ProtectedRoute module="reports"><TripDurations/></ProtectedRoute>}/>
         <Route path="reports/day-utilisation" element={<ProtectedRoute module="reports"><DayUtilisation/></ProtectedRoute>}/>
+        <Route path="reports/scan-status" element={<ProtectedRoute module="reports" roles={['admin','planner','executor','biller','viewer']}><ScanStatus/></ProtectedRoute>}/>
         <Route path="reports/audit" element={
           <ProtectedRoute roles={['admin']}><AuditLog/></ProtectedRoute>
         }/>

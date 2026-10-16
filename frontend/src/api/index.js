@@ -369,4 +369,38 @@ export const downloadCostDriversExcel = (p) =>
     URL.revokeObjectURL(url);
   });
 
+// ── Trip scans: BMCU dispatch challans + plant acknowledgement slips (migration 071) ──
+export const getTripScans = (executionId) => api.get('/trip-scans', { params: { execution_id: executionId } });
+// items: [{ file, thumb, name }] (compressed); onProgress(0..1)
+export const uploadTripScans = ({ executionId, kind, tebId, items }, onProgress) => {
+  const fd = new FormData();
+  fd.append('execution_id', executionId);
+  fd.append('kind', kind);
+  if (tebId) fd.append('teb_id', tebId);
+  items.forEach(it => fd.append('files', it.file, it.name));
+  // thumbs are matched by index; an item without one gets a 0-byte placeholder skipped server-side
+  if (items.some(it => it.thumb)) items.forEach(it => fd.append('thumbs', it.thumb || new Blob([]), 'thumb.jpg'));
+  return api.post('/trip-scans', fd, { onUploadProgress: e => onProgress && e.total && onProgress(e.loaded / e.total) });
+};
+export const getTripScanBlob = (id, which = 'file') => api.get(`/trip-scans/${id}/${which}`, { responseType: 'blob' });
+export const deleteTripScan = (id) => api.delete(`/trip-scans/${id}`);
+export const requestTripScanChange = ({ scanId, action, reason, items = [] }) => {
+  const fd = new FormData();
+  fd.append('scan_id', scanId); fd.append('action', action); fd.append('reason', reason);
+  items.forEach(it => fd.append('files', it.file, it.name));
+  if (items.some(it => it.thumb)) items.forEach(it => fd.append('thumbs', it.thumb || new Blob([]), 'thumb.jpg'));
+  return api.post('/trip-scans/change-requests', fd);
+};
+export const getTripScanChanges = (p) => api.get('/trip-scans/change-requests', { params: p });
+export const approveTripScanChange = (id, remarks) => api.post(`/trip-scans/change-requests/${id}/approve`, { remarks });
+export const rejectTripScanChange  = (id, remarks) => api.post(`/trip-scans/change-requests/${id}/reject`, { remarks });
+export const getScanStatus = (p) => api.get('/trip-scans/pending', { params: p });
+export const downloadScanStatusExcel = (p) =>
+  api.get('/trip-scans/pending/excel', { params: p, responseType: 'blob' }).then(r => {
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `Scan_Status_${p.from}_${p.to}.xlsx`; a.click();
+    URL.revokeObjectURL(url);
+  });
+
 export default api;

@@ -6,6 +6,7 @@ import { Check, ChevronLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getExecution, saveAcknowledgements } from '../../api/index';
 import { compartmentCodes } from '../../utils/compartments';
+import ScanUpload from '../../components/ScanUpload';
 
 const KG = 1.0285;
 
@@ -117,6 +118,13 @@ export default function AcknowledgementForm() {
           <input type="date" className="input w-48" value={ackDate}
             onChange={e => setAckDate(e.target.value)}/>
         </div>
+
+        {exec && exec.status !== 'cancelled' && (
+          <div>
+            <label className="label">Plant acknowledgement slip (scan / photo, several pages allowed)</label>
+            <ScanUpload executionId={exec.id} kind="ack" label="Ack slip"/>
+          </div>
+        )}
 
         {exec && (
           <div className="bg-gray-50 rounded-lg p-3 text-sm flex gap-6">

@@ -9,6 +9,7 @@ import { getExecution, updateExecution, submitForAck, getBmcus, getDeliveryPoint
 import { printGatePass, printCoa } from '../../utils/printDocs';
 import { useAuth } from '../../hooks/useAuth';
 import { fmtDate } from '../../utils/date';
+import ScanUpload from '../../components/ScanUpload';
 
 const KG = 1.0285;
 const calc = {
@@ -203,7 +204,7 @@ function SourcePlantSelect({ bmcuList, code, onSelect, disabled }) {
   );
 }
 
-function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClosed,
+function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClosed, executionId, scanReadOnly,
                    shiftRowsForBmcu, onAddShiftRow, onUpdateShiftRow, onDeleteShiftRow, execDate,
                    entriesForBmcu, onAddEntry, onUpdateEntry, onDeleteEntry, chamberCodes,
                    salesForBmcu, onAddSale, onUpdateSale, onDeleteSale,
@@ -287,6 +288,10 @@ function BmcuRow({ row, idx, bmcuList, onUpdate, onDelete, onInsertAfter, isClos
             <button onClick={() => onDelete(idx)} className="btn-danger btn-sm p-1" disabled={isClosed}>
               <Trash2 size={10}/>
             </button>
+            {/* BMCU dispatch challan scan — never disabled by isClosed (migration 071) */}
+            {row.id
+              ? <ScanUpload executionId={executionId} kind="bmcu_dc" tebId={row.id} readOnly={scanReadOnly} compact/>
+              : <span className="text-[10px] text-gray-400 self-center" title="Save the trip to attach the DC scan">DC: save first</span>}
           </div>
         </td>
       </tr>
@@ -1114,6 +1119,10 @@ export default function ExecutionForm() {
   // Staging mode: closed trip fields become editable, but changes go to a
   // change request for PP01 approval instead of saving directly.
   const isClosed    = isTrulyClosed && !staging;
+  // Scans (migration 071) may be added on any non-cancelled trip, closed ones too;
+  // only view-only users and cancelled trips get a read-only control.
+  const scanReadOnly = exec.status === 'cancelled' || user?.read_only === true
+    || (!(user?.roles || [user?.role]).includes('admin') && user?.access?.execution === 'view');
   const canSubmit   = exec.status === 'saved';
   const pendingCR   = (crList?.rows || []).find(c => c.status === 'pending');
 
@@ -1379,6 +1388,8 @@ export default function ExecutionForm() {
                     onDelete={isClosed ? () => {} : deleteRow}
                     onInsertAfter={isClosed ? () => {} : insertRowAfter}
                     isClosed={isClosed}
+                    executionId={exec?.id}
+                    scanReadOnly={scanReadOnly}
                     shiftRowsForBmcu={shiftRows.filter(sr => sr.bmcu_seq_no === row.seq_no)}
                     onAddShiftRow={addShiftRow}
                     onUpdateShiftRow={updateShiftRow}
@@ -1459,6 +1470,7 @@ export default function ExecutionForm() {
         <div className="card p-4 space-y-3">
           <h3 className="text-sm font-semibold text-gray-700 border-b pb-2">
             Acknowledgement {staging && <span className="text-sky-600 font-normal text-xs">(editing — staged for approval)</span>}
+            <span className="float-right font-normal"><ScanUpload executionId={exec.id} kind="ack" label="Ack slip" readOnly={scanReadOnly}/></span>
           </h3>
           <div className="text-xs text-gray-500 mb-1">
             Date: <strong className="text-gray-700">{fmtDate(exec.acknowledgements[0]?.ack_date)}</strong>

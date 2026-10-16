@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { ScanChip } from '../../components/ScanUpload';
 import { getPlans, getExecutions, createExecution, cancelExecution, getExecutionCoverage, setMissedBmcuRemark } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
 import { isOnlyRole, isReadOnly, canEdit } from '../../utils/roles';
@@ -275,7 +276,10 @@ export default function ExecutionList() {
                         <span className="text-xs text-gray-400">Not started</span>
                       )}
                     </td>
-                    <td className="table-td font-mono text-[11px] text-gray-600">{exec?.entered_by_user_id || '—'}</td>
+                    <td className="table-td font-mono text-[11px] text-gray-600">
+                      {exec?.entered_by_user_id || '—'}
+                      {exec && exec.status !== 'cancelled' && <div className="mt-0.5"><ScanChip exec={exec}/></div>}
+                    </td>
                     <td className="table-td">
                       <div className="flex items-center gap-1.5">
                         {exec ? (
