@@ -138,7 +138,7 @@ function approvalMailHtml(a, level, token) {
   const btn = (d, label, color) => `<a href="${link(d)}" style="display:inline-block;background:${color};color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;font-weight:700;font-size:14px;margin-right:8px;">${label}</a>`;
   const done = a.steps.filter(s => s.decision).map(s =>
     `<li>L${s.level} ${esc(s.approver_name || s.approver_email)} — ${esc(s.decision)}${s.remarks ? `: ${esc(s.remarks)}` : ''}</li>`).join('');
-  return `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:760px;">
+  return `<div style="font-family:Verdana,Geneva,sans-serif;max-width:780px;color:#1f2937;">
     <h2 style="color:#003a6b;font-size:17px;margin:0 0 6px;">Tanker utilisation approval — L${level}</h2>
     <p style="font-size:12px;color:#4b5563;margin:0 0 10px;">Billing run #${a.run_id} (${esc(periodOf(a))}) · submitted by ${esc(a.submitted_by_name || '—')}</p>
     ${done ? `<ul style="font-size:12px;margin:0 0 10px 18px;padding:0;">${done}</ul>` : ''}
@@ -170,7 +170,7 @@ async function mailInitiator(approvalId) {
   if (!u?.email) return;
   const rej = a.steps.find(s => s.decision === 'rejected');
   const subject = `Tanker utilisation ${a.status === 'approved' ? 'approved' : 'rejected'} — Billing run #${a.run_id} (${periodOf(a)})`;
-  const html = `<div style="font-family:Segoe UI,Arial,sans-serif;">
+  const html = `<div style="font-family:Verdana,Geneva,sans-serif;font-size:13px;color:#1f2937;">
     <p style="font-size:13px;">The tanker utilisation approval of billing run #${a.run_id} (${esc(periodOf(a))}) was
       <b>${a.status === 'approved' ? 'approved at L3' : `rejected at L${rej?.level} by ${esc(rej?.decided_by || rej?.approver_name || '')}`}</b>.</p>
     ${rej?.remarks ? `<p style="font-size:13px;"><b>Remarks:</b> ${esc(rej.remarks)}</p>` : ''}

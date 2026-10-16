@@ -236,14 +236,55 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
 // Plant summary table (plant, trips below threshold, avg utilisation).
 function plantSummaryHtml(n) {
   if (!n?.plantSummary?.length) return '';
-  const td = 'style="border:1px solid #d1d5db;padding:3px 8px;font-size:12px;"';
-  return `<table style="border-collapse:collapse;margin:8px 0;">
+  const td = 'style="border:1px solid #d1d5db;padding:4px 10px;font-family:Verdana,Geneva,sans-serif;font-size:12px;"';
+  return `<p style="font-family:Verdana,Geneva,sans-serif;font-size:13px;font-weight:bold;color:#003a6b;margin:14px 0 4px;">Plant summary (under ${n.threshold}%)</p>
+  <table style="border-collapse:collapse;margin:0 0 8px;">
     <tr style="background:#f3f4f6;"><th ${td}>Plant</th><th ${td}>Trips below ${n.threshold}%</th><th ${td}>Avg util %</th></tr>
     ${n.plantSummary.map(p => `<tr><td ${td}>${esc(p.plant)}</td><td ${td} align="right">${p.count}</td><td ${td} align="right">${p.avg ?? '—'}</td></tr>`).join('')}
   </table>`;
 }
 // The note text (generated or as edited by logistics) with line breaks.
-const noteTextHtml = text => `<div style="font-size:12px;line-height:1.5;white-space:pre-wrap;">${esc(text)}</div>`;
+// Lines are laid out like logistics' mail: "N. Heading (x Trips): text" as a
+// numbered paragraph with a bold heading, " - " as bullets, "   - " as indented
+// bullets, deeper-indented lines as italic detail; Verdana throughout.
+const FONT = 'font-family:Verdana,Geneva,sans-serif;font-size:13px;line-height:1.6;color:#1f2937;';
+function noteTextHtml(text) {
+  const out = [];
+  let list = null; // 1 = top bullets, 2 = indented bullets
+  const close = () => { if (list) { out.push('</ul>'); list = null; } };
+  const open = lvl => {
+    if (list === lvl) return;
+    close();
+    out.push(`<ul style="margin:4px 0 8px ${lvl === 1 ? 18 : 40}px;padding:0;">`);
+    list = lvl;
+  };
+  const boldCounts = s => esc(s).replace(/(\d[\d,]*\s*(?:trips|Trips|total movements))/g, '<b>$1</b>');
+  for (const raw of String(text || '').split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line.trim()) { close(); continue; }
+    let m;
+    if ((m = /^(\d+)\.\s+([^:]*?\(\d+ Trips?\)):?\s*(.*)$/i.exec(line))) {
+      close();
+      out.push(`<p style="margin:12px 0 4px;"><b>${m[1]}. ${esc(m[2])}:</b> ${esc(m[3])}</p>`);
+    } else if ((m = /^\s{3,}-\s+(.*)$/.exec(line))) {
+      open(2);
+      const t = m[1];
+      const k = /^([^:]{2,60}):\s(.*)$/.exec(t);
+      out.push(`<li style="margin:2px 0;">${k && !/^(Note|Of these|Utilization)/i.test(t) ? `<b>${esc(k[1])}:</b> ${esc(k[2])}` : /^Note:/i.test(t) ? `<b>Note:</b> ${esc(t.slice(5).trim())}` : esc(t)}</li>`);
+    } else if ((m = /^\s{1,2}-\s+(.*)$/.exec(line))) {
+      open(1);
+      out.push(`<li style="margin:2px 0;">${boldCounts(m[1]).replace(/^([^:]+):/, '<b>$1</b>:')}</li>`);
+    } else if (/^\s{4,}\S/.test(line)) {
+      if (list === 2) out.push(`<li style="list-style:none;margin:0 0 2px;color:#4b5563;"><i>${esc(line.trim())}</i></li>`);
+      else { close(); out.push(`<p style="margin:0 0 4px 40px;color:#4b5563;"><i>${esc(line.trim())}</i></p>`); }
+    } else {
+      close();
+      out.push(`<p style="margin:0 0 8px;">${boldCounts(line)}</p>`);
+    }
+  }
+  close();
+  return `<div style="${FONT}">${out.join('\n')}</div>`;
+}
 
 // HTML section for the billing run approval mails; opts.text = the edited
 // note when logistics saved one, opts.status = utilisation approval status line.
