@@ -33,7 +33,7 @@ const { autoWidth, stylePortalWorkbook } = require('../services/portalExcel');
 const { HISTORY_UNTIL, MONTH_NAMES } = require('../services/transportCumulative');
 const { fixedCostsInPeriod, normTanker } = require('../services/fixedCosts');
 const { portalPlantMap } = require('../services/plantNames');
-const { buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD } = require('../services/dayUtilisation');
+const { buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD, utilisationNote, utilisationNoteHtml } = require('../services/dayUtilisation');
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -1178,7 +1178,7 @@ function tollPeriodLabel(toll, run) {
     : `${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}`;
 }
 
-function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = [], tollsPending = []) {
+function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = [], tollsPending = [], utilHtml = '') {
   const base = BASE_URL();
   // Both links land on the no-login frontend decision page, which shows the
   // run details and only fires the actual state-changing POST /decide when
@@ -1218,6 +1218,7 @@ function approvalEmailHtml(run, tankers, vendors, approver, token, newCombos = [
       <p style="font-size:12px;margin:0;">${tollsPending.map(esc).join(', ')}</p>
       <p style="font-size:11px;color:#6b7280;margin:4px 0 0;">Trip payment for these tankers is included above; only the toll
         reimbursement is carried forward and will be paid in the next fortnight once the challan is uploaded against this period.</p>` : ''}
+      ${utilHtml}
       <div style="margin:22px 0;text-align:center;">
         <a href="${approveUrl}" style="background:#16a34a;color:#fff;padding:11px 30px;border-radius:8px;text-decoration:none;font-weight:700;margin-right:14px;">✓ APPROVE</a>
         <a href="${rejectUrl}"  style="background:#dc2626;color:#fff;padding:11px 30px;border-radius:8px;text-decoration:none;font-weight:700;">✗ REJECT</a>
@@ -1234,11 +1235,16 @@ async function sendApprovalEmail(runId, level) {
   if (!ap.rows.length) throw new Error(`No approval row for run ${runId} level ${level}`);
   const { wb, run, trips, tankers, vendors } = await buildRunWorkbook(runId);
   const buf = Buffer.from(await wb.xlsx.writeBuffer());
+  // Under-utilisation approval note (owner, 2026-10-16): approving the run
+  // approves it; a failure here must never stop the approval mail.
+  let utilHtml = '';
+  try { utilHtml = utilisationNoteHtml(await utilisationNote(runId)); }
+  catch (e) { console.warn('[billing] utilisation note skipped:', e.message); }
   await createTransport().sendMail({
     from: process.env.SMTP_FROM,
     to: approver.email,
     subject: `Tanker Payment Approval L${level} — Run #${runId} (${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}) · ₹ ${nf(run.total_amount)}`,
-    html: approvalEmailHtml(run, tankers, vendors, approver, ap.rows[0].token, collectNewCombos(trips), await pendingTollTankers(runId)),
+    html: approvalEmailHtml(run, tankers, vendors, approver, ap.rows[0].token, collectNewCombos(trips), await pendingTollTankers(runId), utilHtml),
     attachments: [{ filename: `tanker_billing_${run.from_date}_${run.to_date}.xlsx`, content: buf }],
   });
   await query(`UPDATE billing_run_approvals SET status='pending' WHERE run_id=$1 AND level=$2`, [runId, level]);
@@ -1520,7 +1526,11 @@ router.post('/runs/:id/submit', authenticate, authorizeOrModule('billing', ...ca
     }
     await query(`UPDATE billing_runs SET status='pending_l1', submitted_at=NOW(), updated_at=NOW() WHERE id=$1`, [runId]);
     await sendApprovalEmail(runId, 1);
-    res.json({ ok: true, status: 'pending_l1', tolls_pending: tollsPending });
+    // Under-utilised trips without a reason — a warning only (owner, 2026-10-16).
+    let utilUntagged = 0;
+    try { utilUntagged = (await utilisationNote(runId))?.untagged || 0; }
+    catch (e) { console.warn('[billing] utilisation note skipped:', e.message); }
+    res.json({ ok: true, status: 'pending_l1', tolls_pending: tollsPending, utilisation_untagged: utilUntagged });
   } catch (err) {
     console.error('Billing submit error:', err);
     res.status(500).json({ error: 'Failed to submit for approval' });
