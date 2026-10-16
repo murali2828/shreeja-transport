@@ -62,6 +62,7 @@ import TripDurations   from './pages/reports/TripDurations';
 import DayUtilisation  from './pages/reports/DayUtilisation';
 import ScanStatus      from './pages/reports/ScanStatus';
 import ScanChangeDecision from './pages/execution/ScanChangeDecision';
+import UtilisationDecision from './pages/reports/UtilisationDecision';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } }
@@ -100,6 +101,7 @@ function AppRoutes() {
       <Route path="/change-request-decision" element={<ChangeRequestDecision/>}/>
       <Route path="/toll-change-decision" element={<TollChangeDecision/>}/>
       <Route path="/scan-change-decision" element={<ScanChangeDecision/>}/>
+      <Route path="/utilisation-decision" element={<UtilisationDecision/>}/>
       <Route path="/change-password" element={
         <ProtectedRoute allowMustChange><ChangePassword/></ProtectedRoute>
       }/>

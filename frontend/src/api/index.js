@@ -190,6 +190,12 @@ export const saveUtilisationReason = (execution_id, fields) => api.put('/reports
 export const tagUtilisationReasons = (execution_ids, reason, reason_detail) =>
   api.put('/reports/day-utilisation/reasons', { execution_ids, reason, reason_detail });
 export const getUtilisationNote = (runId) => api.get('/reports/day-utilisation/note', { params: { run_id: runId } });
+// Utilisation approval L1–L3 raised by logistics (migration 074).
+export const getUtilisationApproval = (runId) => api.get('/utilisation-approvals', { params: { run_id: runId } });
+export const saveUtilisationDraft = (run_id, note_text) => api.put('/utilisation-approvals/draft', { run_id, note_text });
+export const submitUtilisationApproval = (run_id) => api.post('/utilisation-approvals/submit', { run_id });
+export const withdrawUtilisationApproval = (id) => api.post(`/utilisation-approvals/${id}/withdraw`);
+export const decideUtilisationApproval = (id, decision, remarks) => api.post(`/utilisation-approvals/${id}/${decision}`, { remarks });
 export const getReportBillingRuns = (p) => api.get('/reports/billing-runs', { params: p });
 // runId optional (owner, 2026-10-16): "By billing run" mode, dates ignored.
 export const downloadDayUtilisationExcel = (from, to, threshold, runId) =>

@@ -14,7 +14,8 @@ import toast from 'react-hot-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
 import { getDayUtilisation, downloadDayUtilisationExcel, getReportBillingRuns, saveUtilisationRemark,
-  saveUtilisationReason, tagUtilisationReasons, getUtilisationNote } from '../../api/index';
+  saveUtilisationReason, tagUtilisationReasons, getUtilisationNote, getUtilisationApproval, saveUtilisationDraft,
+  submitUtilisationApproval, withdrawUtilisationApproval, decideUtilisationApproval } from '../../api/index';
 import { fmtDate } from '../../utils/date';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -81,25 +82,120 @@ function ReasonCells({ row, canEdit, onSaved }) {
   </>);
 }
 
-// Approval note drafted from the tagged reasons, with Copy.
-function NotePanel({ runId, version }) {
-  const { data, isError } = useQuery({
-    queryKey: ['utilisation-note', runId, version],
+// Approval note drafted from the tagged reasons (editable by logistics) and
+// its own L1 → L2 → L3 approval (migration 074, owner 2026-10-16).
+const UA_BADGE = {
+  draft: 'bg-gray-100 text-gray-700', pending_l1: 'bg-amber-100 text-amber-800', pending_l2: 'bg-amber-100 text-amber-800',
+  pending_l3: 'bg-amber-100 text-amber-800', approved: 'bg-green-100 text-green-800', rejected: 'bg-red-100 text-red-800',
+};
+export function UtilisationApprovalBadge({ approval, label }) {
+  if (!approval) return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-500">Not submitted</span>;
+  return <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${UA_BADGE[approval.status] || ''}`}>{label || approval.status}</span>;
+}
+const fmtTs = t => t ? new Date(t).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+
+function NotePanel({ runId }) {
+  const qc = useQueryClient();
+  const { data: note, isError } = useQuery({
+    queryKey: ['utilisation-note', runId],
     queryFn: () => getUtilisationNote(runId).then(r => r.data),
     enabled: !!runId, retry: false,
   });
-  if (!data || isError) return null;
-  const copy = () => navigator.clipboard?.writeText(data.text)
+  const { data: ua } = useQuery({
+    queryKey: ['utilisation-approval', runId],
+    queryFn: () => getUtilisationApproval(runId).then(r => r.data),
+    enabled: !!runId, retry: false,
+  });
+  const [text, setText] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [remarks, setRemarks] = useState('');
+  const approval = ua?.approval;
+  const live = approval && approval.status !== 'rejected' ? approval : null;
+  const editable = !!ua?.can_initiate && (!live || live.status === 'draft');
+  useEffect(() => {
+    if (dirty) return;
+    setText(live?.note_text || note?.text || '');
+  }, [live?.note_text, note?.text]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setDirty(false); }, [runId]);
+  if (!note || isError) return null;
+  const refresh = () => { qc.invalidateQueries({ queryKey: ['utilisation-approval', runId] }); qc.invalidateQueries({ queryKey: ['utilisation-note', runId] }); };
+  const act = (fn, ok) => { setBusy(true); return fn().then(r => { toast.success(ok); setDirty(false); refresh(); return r; })
+    .catch(e => toast.error(e.response?.data?.error || e.message)).finally(() => setBusy(false)); };
+  const save = () => act(() => saveUtilisationDraft(runId, text), 'Draft saved');
+  const regenerate = () => { setText(note.text); setDirty(true); toast('Regenerated from data — Save draft to keep it'); };
+  const submit = async () => {
+    if (!window.confirm(`Submit the utilisation note of run #${runId} for L1 → L2 → L3 approval?${note.untagged ? `\n\n${note.untagged} under-utilised trip(s) have no reason yet.` : ''}`)) return;
+    setBusy(true);
+    try {
+      if (dirty || !live || live.note_text !== text) await saveUtilisationDraft(runId, text);
+      const r = await submitUtilisationApproval(runId);
+      if (r.data.mail_error) toast.error(`Submitted, but the L1 mail failed: ${r.data.mail_error}`);
+      else toast.success('Submitted — L1 has been mailed');
+      setDirty(false); refresh();
+    } catch (e) { toast.error(e.response?.data?.error || e.message); }
+    finally { setBusy(false); }
+  };
+  const withdraw = () => window.confirm('Withdraw from L1 approval? The mailed link stops working.')
+    && act(() => withdrawUtilisationApproval(live.id), 'Withdrawn to draft');
+  const decide = d => {
+    if (d === 'reject' && !remarks.trim()) return toast.error('Remarks are required to reject');
+    act(() => decideUtilisationApproval(live.id, d, remarks.trim()), d === 'approve' ? 'Approved' : 'Rejected').then(() => setRemarks(''));
+  };
+  const copy = () => navigator.clipboard?.writeText(text)
     .then(() => toast.success('Approval note copied'))
     .catch(() => toast.error('Copy failed — select the text and copy it'));
   return (
     <div className="card p-3 space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
         <div className="font-semibold text-sm text-[#003a6b]">Approval note</div>
-        <span className="text-xs text-gray-500">attached to this run's L1 / L2 / L3 approval mails — approving the run approves it</span>
-        <button onClick={copy} className="btn-secondary text-xs ml-auto">Copy</button>
+        <UtilisationApprovalBadge approval={approval} label={ua?.status_label}/>
+        {note.untagged > 0 && <span className="px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800">{note.untagged} without a reason</span>}
+        <span className="text-xs text-gray-500">approved in its own L1 → L2 → L3 chain ({(ua?.approvers || []).map(a => `L${a.level} ${a.name}`).join(' · ')})</span>
+        <div className="ml-auto flex gap-2 flex-wrap">
+          <button onClick={copy} className="btn-secondary text-xs">Copy</button>
+          {editable && <>
+            <button disabled={busy} onClick={regenerate} className="btn-secondary text-xs">Regenerate from data</button>
+            <button disabled={busy} onClick={save} className="btn-secondary text-xs">Save draft</button>
+            <button disabled={busy} onClick={submit} className="btn-primary text-xs">Submit for approval</button>
+          </>}
+          {ua?.can_initiate && live?.status === 'pending_l1' && !live.steps?.some(s => s.decision) &&
+            <button disabled={busy} onClick={withdraw} className="btn-secondary text-xs">Withdraw</button>}
+        </div>
       </div>
-      <textarea readOnly className="input w-full text-xs font-mono" rows={Math.min(24, data.text.split('\n').length + 1)} value={data.text}/>
+      {approval?.status === 'rejected' && (
+        <div className="text-xs text-red-700">Rejected{(() => { const r = approval.steps?.find(s => s.decision === 'rejected'); return r ? ` at L${r.level} by ${r.decided_by || r.approver_name}${r.remarks ? ` — ${r.remarks}` : ''}` : ''; })()}. Edit the note and submit again.</div>
+      )}
+      <textarea readOnly={!editable} className="input w-full text-xs font-mono" rows={Math.min(30, text.split('\n').length + 2)}
+        value={text} onChange={e => { setText(e.target.value); setDirty(true); }}/>
+      {note.plantSummary?.length > 0 && (
+        <table className="text-xs border-collapse">
+          <thead><tr className="bg-gray-50"><th className="border px-2 py-1 text-left">Plant</th><th className="border px-2 py-1">Trips below {note.threshold}%</th><th className="border px-2 py-1">Avg util %</th></tr></thead>
+          <tbody>{note.plantSummary.map(p => <tr key={p.plant}><td className="border px-2 py-1">{p.plant}</td><td className="border px-2 py-1 text-right">{p.count}</td><td className="border px-2 py-1 text-right">{p.avg ?? '—'}</td></tr>)}</tbody>
+        </table>
+      )}
+      {live?.steps?.length > 0 && (
+        <ol className="text-xs space-y-1">
+          {live.steps.map(s => (
+            <li key={s.level} className="flex gap-2 flex-wrap">
+              <span className="font-semibold">L{s.level}</span>
+              <span>{s.approver_name || s.approver_email}</span>
+              <span className={s.decision === 'approved' ? 'text-green-700' : s.decision === 'rejected' ? 'text-red-700' : 'text-gray-400'}>
+                {s.decision || (live.status === `pending_l${s.level}` ? 'awaiting' : '—')}</span>
+              {s.decided_at && <span className="text-gray-500">{fmtTs(s.decided_at)}{s.decided_by ? ` · ${s.decided_by}` : ''}</span>}
+              {s.remarks && <span className="text-gray-700">“{s.remarks}”</span>}
+            </li>))}
+          {approval?.submitted_at && <li className="text-gray-500">Submitted by {approval.submitted_by_name} · {fmtTs(approval.submitted_at)}</li>}
+        </ol>
+      )}
+      {ua?.can_decide && live && (
+        <div className="flex gap-2 items-center flex-wrap border-t pt-2">
+          <span className="text-xs font-semibold">Your decision (L{ua.pending_level}):</span>
+          <input className="input text-xs flex-1 min-w-[200px]" placeholder="Remarks (required to reject)" value={remarks} onChange={e => setRemarks(e.target.value)}/>
+          <button disabled={busy} onClick={() => decide('approve')} className="btn-primary text-xs">Approve</button>
+          <button disabled={busy} onClick={() => decide('reject')} className="btn-secondary text-xs text-red-700">Reject</button>
+        </div>
+      )}
     </div>
   );
 }

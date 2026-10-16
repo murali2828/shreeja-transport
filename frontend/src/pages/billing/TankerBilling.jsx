@@ -1176,7 +1176,16 @@ function UtilisationNoteCard({ runId }) {
     queryFn: () => api.get('/reports/day-utilisation/note', { params: { run_id: runId } }).then(r => r.data),
     enabled: !!runId, retry: false,
   });
+  // Its own L1–L3 approval raised by logistics (migration 074).
+  const { data: ua } = useQuery({
+    queryKey: ['utilisation-approval', runId],
+    queryFn: () => api.get('/utilisation-approvals', { params: { run_id: runId } }).then(r => r.data),
+    enabled: !!runId, retry: false,
+  });
   if (!data || isError) return null;
+  const st = ua?.approval?.status;
+  const badge = !ua ? null : !st ? 'bg-gray-100 text-gray-600' : st === 'approved' ? 'bg-green-100 text-green-800'
+    : st === 'rejected' ? 'bg-red-100 text-red-800' : st === 'draft' ? 'bg-gray-100 text-gray-700' : 'bg-amber-100 text-amber-800';
   return (
     <div className="card p-3 text-xs">
       <button className="w-full text-left flex items-center gap-2 flex-wrap" onClick={() => setOpen(o => !o)}>
@@ -1184,9 +1193,10 @@ function UtilisationNoteCard({ runId }) {
         <span className="font-bold text-[#003a6b]">Tanker utilisation</span>
         <span className="text-gray-600">{data.total} trips · above {data.threshold}%: {data.above} · under: {data.below}</span>
         {data.untagged > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">{data.untagged} without a reason</span>}
-        <span className="text-gray-400">— sent with the approval mails; tag reasons in Reports → Tanker Utilisation</span>
+        {badge && <span className={`px-2 py-0.5 rounded-full font-semibold ${badge}`}>Utilisation approval: {ua.status_label || 'not submitted'}</span>}
+        <span className="text-gray-400">— logistics submits it for L1–L3 in Reports → Tanker Utilisation → By billing run</span>
       </button>
-      {open && <pre className="mt-2 whitespace-pre-wrap font-sans text-xs text-gray-700">{data.text}</pre>}
+      {open && <pre className="mt-2 whitespace-pre-wrap font-sans text-xs text-gray-700">{ua?.approval && ua.approval.status !== 'rejected' && ua.approval.note_text ? ua.approval.note_text : data.text}</pre>}
     </div>
   );
 }
