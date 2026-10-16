@@ -19,7 +19,9 @@ const { utilisationNote, plantSummaryHtml, noteTextHtml, buildDayUtilisation, UT
 const { fmtDateDisplay } = require('../utils/date');
 const { stylePortalWorkbook } = require('../services/portalExcel');
 
-const BASE_URL = () => (process.env.APP_BASE_URL || 'https://tms.shreejamilk.com').replace(/\/$/, '');
+// Same base as the scan-change links: FRONTEND_URL is set on every tier
+// (required in production), so QA mails never point at the PROD portal.
+const BASE_URL = () => (process.env.FRONTEND_URL || process.env.APP_BASE_URL || 'https://tms.shreejamilk.com').replace(/\/$/, '');
 const TOKEN_DAYS = 14;
 const hashToken = t => crypto.createHash('sha256').update(String(t)).digest('hex');
 const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -202,8 +204,8 @@ async function decide(approvalId, level, decision, deciderName, remarks) {
                            WHERE approval_id=$1 AND level=$2`, [approvalId, level + 1, hashToken(nextToken)]);
     } else status = 'approved';
     await client.query(`UPDATE utilisation_approvals SET status=$2, updated_at=NOW(),
-                               decided_at=CASE WHEN $2 IN ('approved','rejected') THEN NOW() ELSE decided_at END
-                         WHERE id=$1`, [approvalId, status]);
+                               decided_at=CASE WHEN $3::boolean THEN NOW() ELSE decided_at END
+                         WHERE id=$1`, [approvalId, status, status === 'approved' || status === 'rejected']);
     await client.query('COMMIT');
   } catch (err) { await client.query('ROLLBACK').catch(() => {}); throw err; }
   finally { client.release(); }
