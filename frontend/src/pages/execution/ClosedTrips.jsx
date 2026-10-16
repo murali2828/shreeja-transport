@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getExecutions } from '../../api/index';
-import { ScanChip } from '../../components/ScanUpload';
+import { ScanChip, scansPending, usePendingToggle, ScansPendingButton } from '../../components/ScanUpload';
 
 export default function ClosedTrips() {
   const today = new Date().toISOString().slice(0,10);
@@ -18,6 +18,10 @@ export default function ClosedTrips() {
     queryFn:  () => getExecutions({ status: 'closed', from_date: from, to_date: to }).then(r => r.data)
   });
 
+  const [pendingOnly, setPendingOnly] = usePendingToggle('closedTrips.scansPending');
+  const pendingCount = execs.filter(scansPending).length;
+  const rows = pendingOnly ? execs.filter(scansPending) : execs;
+
   const totalLitres = execs.reduce((s,e) => s + parseFloat(e.total_qty_litres||0), 0);
   const totalKgs    = execs.reduce((s,e) => s + parseFloat(e.total_qty_kgs||0), 0);
 
@@ -26,6 +30,7 @@ export default function ClosedTrips() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="page-title">Closed Trips</h2>
         <div className="flex gap-2 items-center">
+          <ScansPendingButton on={pendingOnly} onToggle={setPendingOnly} count={pendingCount}/>
           <input type="date" className="input py-1.5 text-sm" value={from}
             onChange={e => setFrom(e.target.value)}/>
           <span className="text-gray-400 text-sm">to</span>
@@ -72,12 +77,12 @@ export default function ClosedTrips() {
               {isLoading && (
                 <tr><td colSpan={12} className="table-td text-center py-10 text-gray-400">Loading…</td></tr>
               )}
-              {!isLoading && execs.length === 0 && (
+              {!isLoading && rows.length === 0 && (
                 <tr><td colSpan={12} className="table-td text-center py-10 text-gray-400">
-                  No closed trips in this date range
+                  {pendingOnly && execs.length ? 'No trips with scans pending' : 'No closed trips in this date range'}
                 </td></tr>
               )}
-              {execs.map(e => (
+              {rows.map(e => (
                 <tr key={e.id}
                   className="hover:bg-blue-50 border-b border-gray-50 cursor-pointer"
                   onClick={() => navigate(`/execution/${e.id}`)}>

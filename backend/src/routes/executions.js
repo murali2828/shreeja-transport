@@ -81,7 +81,8 @@ router.get('/', authenticate, authorizeOrModule('execution', 'admin', 'planner',
         sp.name AS start_point_name, dp.name AS delivery_point_name,
         u.full_name AS executor_name,
         COALESCE(u2.user_id, u.user_id) AS entered_by_user_id,
-        COALESCE(sc.dc_total,0) AS dc_total, COALESCE(sc.dc_done,0) AS dc_done, COALESCE(sc.ack_scans,0) AS ack_scans
+        COALESCE(sc.dc_total,0) AS dc_total, COALESCE(sc.dc_done,0) AS dc_done, COALESCE(sc.ack_scans,0) AS ack_scans,
+        EXISTS (SELECT 1 FROM trip_acknowledgements a WHERE a.execution_id = te.id) AS acknowledged
       FROM trip_executions te
       JOIN trip_plans tp      ON tp.id=te.trip_plan_id
       LEFT JOIN tankers t     ON t.id=tp.tanker_id

@@ -27,6 +27,85 @@ export function useTripScans(executionId) {
   });
 }
 
+// Same rule as Scan Status (routes/tripScans.js): acknowledged = has
+// trip_acknowledgements rows (list flag `acknowledged`; closed implies it).
+export const isAcked = (exec) => !!exec && (exec.acknowledged === true || exec.status === 'closed');
+// Scans pending: a live BMCU line without a DC scan, or an acknowledged trip without an ack slip.
+export const scansPending = (exec) => !!exec && exec.status !== 'cancelled'
+  && (Number(exec.dc_done || 0) < Number(exec.dc_total || 0) || (isAcked(exec) && Number(exec.ack_scans || 0) === 0));
+
+// Toggle state for the "Scans pending" filter, per viewer (localStorage may throw).
+export function usePendingToggle(key) {
+  const [on, setOn] = useState(() => { try { return localStorage.getItem(key) === '1'; } catch { return false; } });
+  const set = (v) => { setOn(v); try { localStorage.setItem(key, v ? '1' : '0'); } catch { /* ignore */ } };
+  return [on, set];
+}
+
+export function ScansPendingButton({ on, onToggle, count }) {
+  return (
+    <button type="button" onClick={() => onToggle(!on)}
+      className={`btn-sm inline-flex items-center gap-1 ${on ? 'btn-primary' : 'btn-secondary'}`}
+      title="Show only trips with a missing DC or acknowledgement scan">
+      <Paperclip size={12}/> Scans pending ({count})
+    </button>
+  );
+}
+
+// "📎 Scans" link: read-only modal of every scan of one trip, grouped DC per BMCU
+// and Ack slip. Scans are fetched only when the modal opens.
+export function ViewScansLink({ executionId, className = '' }) {
+  const [open, setOpen] = useState(false);
+  if (!executionId) return null;
+  return (
+    <>
+      <button type="button" onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        className={`text-[11px] text-[#0078d4] hover:underline whitespace-nowrap ${className}`} title="View this trip's scans">📎 Scans</button>
+      {open && <TripScansModal executionId={executionId} onClose={() => setOpen(false)}/>}
+    </>
+  );
+}
+
+function TripScansModal({ executionId, onClose }) {
+  const { data: all = [], isLoading, error } = useTripScans(executionId);
+  const [view, setView] = useState(null); // { scans, title }
+  const groups = [];
+  const byTeb = new Map();
+  for (const s of all.filter(x => x.kind === 'bmcu_dc')) {
+    const k = s.teb_id;
+    if (!byTeb.has(k)) {
+      const name = [s.bmcu_code, s.bmcu_name].filter(Boolean).join(' · ') || `BMCU line ${k}`;
+      byTeb.set(k, { title: `DC — ${name}`, scans: [] });
+      groups.push(byTeb.get(k));
+    }
+    byTeb.get(k).scans.push(s);
+  }
+  const ack = all.filter(x => x.kind === 'ack');
+  if (ack.length) groups.push({ title: 'Ack slip', scans: ack });
+  return (
+    <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-3" onClick={onClose}>
+      <div className="bg-white rounded-lg w-full max-w-lg max-h-[85vh] overflow-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-3 py-2 border-b text-sm font-semibold text-gray-700">
+          Trip scans
+          <button type="button" className="p-1 text-gray-500 hover:text-gray-800" onClick={onClose}><X size={16}/></button>
+        </div>
+        <div className="p-3 space-y-2 text-sm">
+          {isLoading && <div className="text-gray-400">Loading…</div>}
+          {error && <div className="text-red-600">{errMsg(error)}</div>}
+          {!isLoading && !error && !groups.length && <div className="text-gray-400">No scans uploaded for this trip.</div>}
+          {groups.map(g => (
+            <div key={g.title} className="flex items-center justify-between gap-2 border-b border-gray-100 pb-1.5">
+              <span className="text-gray-700">{g.title}</span>
+              <button type="button" className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700 hover:bg-green-200"
+                onClick={() => setView(g)}>View {g.scans.length}</button>
+            </div>
+          ))}
+        </div>
+      </div>
+      {view && <ScanViewer scans={view.scans} title={view.title} readOnly hideAdmin onClose={() => setView(null)} onChanged={() => {}}/>}
+    </div>
+  );
+}
+
 // List chip: "DC 3/5 · Ack ✓" from the executions list aggregate (no extra request).
 export function ScanChip({ exec }) {
   if (!exec) return null;
@@ -35,7 +114,7 @@ export function ScanChip({ exec }) {
   return (
     <span className="inline-flex items-center gap-1 text-[10px] font-semibold whitespace-nowrap" title="Scanned dispatch challans · acknowledgement slip">
       <span className={`px-1.5 py-0.5 rounded ${dcOk ? 'bg-green-100 text-green-700' : total ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-500'}`}>DC {done}/{total}</span>
-      <span className={`px-1.5 py-0.5 rounded ${ack ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>Ack {ack ? '✓' : '✗'}</span>
+      <span className={`px-1.5 py-0.5 rounded ${ack ? 'bg-green-100 text-green-700' : acked ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-500'}`}>Ack {ack ? '✓' : '✗'}</span>
     </span>
   );
 }
@@ -144,7 +223,7 @@ function Thumb({ scan, active, onClick }) {
   );
 }
 
-export function ScanViewer({ scans, title, readOnly, onClose, onChanged }) {
+export function ScanViewer({ scans, title, readOnly, hideAdmin = false, onClose, onChanged }) {
   const { user } = useAuth();
   const isAdmin = (user?.roles || [user?.role]).includes('admin');
   const [i, setI] = useState(0);
@@ -213,7 +292,7 @@ export function ScanViewer({ scans, title, readOnly, onClose, onChanged }) {
                 </button>
               </>
             )}
-            {isAdmin && (
+            {isAdmin && !hideAdmin && (
               <button type="button" disabled={busy} className="btn-danger btn-sm inline-flex items-center gap-1" onClick={adminDelete}><Trash2 size={12}/> Delete</button>
             )}
             <button type="button" className="p-1 text-gray-500 hover:text-gray-800" onClick={onClose}><X size={18}/></button>

@@ -7,6 +7,7 @@ import { RefreshCw, Check, X, ChevronDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getChangeRequests, getChangeRequest, decideChangeRequest } from '../../api/index';
 import { fmtDate } from '../../utils/date';
+import { ViewScansLink } from '../../components/ScanUpload';
 
 const STATUS_STYLE = {
   pending:  'bg-amber-100 text-amber-700',
@@ -100,6 +101,7 @@ function RequestCard({ cr, isApprover, onDecided }) {
         <span className="text-sm text-gray-700">
           Trip #{cr.trip_no} — {cr.tanker_number} · {fmtDate(cr.execution_date)}
         </span>
+        <ViewScansLink executionId={cr.execution_id}/>
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_STYLE[cr.status]}`}>{cr.status}</span>
         <span className="text-xs text-gray-500 ml-auto">
           by {cr.requested_by_name} · {new Date(cr.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}

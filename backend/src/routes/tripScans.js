@@ -36,6 +36,16 @@ async function REPORT_READ(req, res, next) {
     res.status(403).json({ error: 'Insufficient permissions' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 }
+// Viewing one trip's scans (GET only): the execution scope, or the billing
+// module so custom finance / billing roles can open "📎 Scans" on a run's Trip Wise line.
+async function VIEW_READ(req, res, next) {
+  try {
+    if (hasRole(req.user, 'admin', 'planner', 'executor', 'biller', 'viewer')) return next();
+    const lv = await accessFor(rolesOf(req.user));
+    if ((lv.execution && lv.execution !== 'none') || (lv.billing && lv.billing !== 'none')) return next();
+    res.status(403).json({ error: 'Insufficient permissions' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+}
 const MAX_MB = 10, MAX_FILES = 10;
 const DELETE_WINDOW_MS = 24 * 3600 * 1000;
 
@@ -59,6 +69,8 @@ function cleanup(req) {
 }
 
 const COLS = `s.id, s.execution_id, s.kind, s.teb_id, s.bmcu_id, s.mime, s.bytes, s.original_name,
+  (SELECT bm.bmcu_code FROM bmcus bm WHERE bm.id = s.bmcu_id) AS bmcu_code,
+  (SELECT bm.bmcu_name FROM bmcus bm WHERE bm.id = s.bmcu_id) AS bmcu_name,
   (s.thumb_path IS NOT NULL) AS has_thumb, s.uploaded_by, s.uploaded_by_name, s.uploaded_at,
   (SELECT json_build_object('id', cr.id, 'action', cr.action, 'reason', cr.reason, 'requested_by_name', cr.requested_by_name, 'requested_at', cr.requested_at)
      FROM trip_scan_change_requests cr WHERE cr.scan_id = s.id AND cr.status = 'pending') AS pending_change`;
@@ -75,7 +87,7 @@ const SUMMARY_SQL = `
   FROM trip_executions te`;
 
 // GET /api/trip-scans?execution_id=  — metadata only
-router.get('/', authenticate, READ, async (req, res) => {
+router.get('/', authenticate, VIEW_READ, async (req, res) => {
   const id = parseInt(req.query.execution_id, 10);
   if (!id) return res.status(400).json({ error: 'execution_id required' });
   try {
@@ -483,8 +495,8 @@ async function serve(req, res, which) {
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 }
-router.get('/:id/file',  authenticate, READ, (req, res) => serve(req, res, 'file'));
-router.get('/:id/thumb', authenticate, READ, (req, res) => serve(req, res, 'thumb'));
+router.get('/:id/file',  authenticate, VIEW_READ, (req, res) => serve(req, res, 'file'));
+router.get('/:id/thumb', authenticate, VIEW_READ, (req, res) => serve(req, res, 'thumb'));
 
 // DELETE /api/trip-scans/:id — admin only, soft delete. Everyone else asks
 // through POST /change-requests (approver decides).

@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Play, Eye, RefreshCw, XCircle, ChevronDown, ChevronRight, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { ScanChip } from '../../components/ScanUpload';
+import { ScanChip, scansPending, usePendingToggle, ScansPendingButton } from '../../components/ScanUpload';
 import { getPlans, getExecutions, createExecution, cancelExecution, getExecutionCoverage, setMissedBmcuRemark } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
 import { isOnlyRole, isReadOnly, canEdit } from '../../utils/roles';
@@ -200,9 +200,13 @@ export default function ExecutionList() {
 
   const execMap = Object.fromEntries(execs.map(e => [e.trip_plan_id, e]));
 
+  const [pendingOnly, setPendingOnly] = usePendingToggle('activeTrips.scansPending');
+  const pendingCount = plans.filter(p => scansPending(execMap[p.id])).length;
+
   const visiblePlans = plans.filter(p => {
     const exec = execMap[p.id];
     if (exec?.status === 'cancelled') return false;
+    if (pendingOnly && !scansPending(exec)) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return p.tanker_number?.toLowerCase().includes(q) || p.route_name?.toLowerCase().includes(q);
@@ -213,6 +217,7 @@ export default function ExecutionList() {
       <div className="flex flex-wrap items-center gap-3 justify-between">
         <h2 className="page-title">Active Trips</h2>
         <div className="flex items-center gap-2">
+          <ScansPendingButton on={pendingOnly} onToggle={setPendingOnly} count={pendingCount}/>
           <input type="text" placeholder="Search route or tanker…"
             className="input py-1.5 text-sm w-52"
             value={search} onChange={e => setSearch(e.target.value)}/>

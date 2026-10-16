@@ -12,6 +12,7 @@ import api from '../../api';
 import { useAuth } from '../../hooks/useAuth';
 import { hasRole } from '../../utils/roles';
 import { fmtDate } from '../../utils/date';
+import { ViewScansLink } from '../../components/ScanUpload';
 
 const STATES = ['Andhra Pradesh', 'Tamil Nadu', 'Karnataka', 'Telangana'];
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -1234,6 +1235,7 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
       <td className="px-2 py-1.5 font-semibold text-[#005ba3] whitespace-nowrap">
         {t.tanker_number}
         {t.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px]" title="Sale Tanker — milk sold directly at the BMCU, not billed to any vendor. Milk still counts in TS/Analytics reports.">Sale</span>}
+        {t.execution_id && <ViewScansLink executionId={t.execution_id} className="ml-1.5 font-normal"/>}
       </td>
       <td className="px-2 py-1.5 text-right">{t.capacity_litres ? (t.capacity_litres / 1000).toFixed(1) : '—'}</td>
       <td className="px-2 py-1.5">{t.vendor_name || <span className="text-red-600">no vendor</span>}</td>
