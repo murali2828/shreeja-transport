@@ -1642,7 +1642,11 @@ router.get('/bmcu-breakup/excel', authenticate, authorizeOrModule('reports', 'ad
 // DAY WISE TANKER UTILISATION — per acknowledged trip, by ack date.
 // Utilization % = Ack Qty Ltrs / tanker capacity × 100; remark ABOVE/BELOW threshold.
 // ═════════════════════════════════════════════════════════════════════════════
-async function buildDayUtilisation(fromDate, toDate, threshold) {
+// opts.runId (owner, 2026-10-16): "By billing run" — exactly the lines of that
+// run (excluded and sale-tanker lines too), no date filter, ordered by billing
+// date (plan_for_date) then tanker; run-line facts go into the remarks.
+async function buildDayUtilisation(fromDate, toDate, threshold, { runId } = {}) {
+  const byRun = runId != null;
   // LEFT JOIN acknowledgements — trips sold directly at the BMCU (e.g. Milma
   // tankers) never get a delivery-point acknowledgement, so an INNER JOIN
   // dropped them from utilisation entirely. Dispatch quantity (already
@@ -1657,7 +1661,10 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
            COALESCE(SUM(ta.qty_litres), disp.litres) AS ack_litres,
            COALESCE(SUM(ta.qty_kgs),    disp.kgs)    AS ack_kgs,
            COALESCE(SUM(ta.kg_fat),     disp.kg_fat) AS ack_kg_fat,
-           COALESCE(SUM(ta.kg_snf),     disp.kg_snf) AS ack_kg_snf
+           COALESCE(SUM(ta.kg_snf),     disp.kg_snf) AS ack_kg_snf,
+           tp.plan_for_date AS billing_date${byRun ? `,
+           brt.carried_forward AS run_carried_forward, brt.excluded AS run_excluded,
+           brt.remarks AS run_remarks` : ''}
     FROM trip_executions te
     JOIN trip_plans tp           ON tp.id=te.trip_plan_id
     LEFT JOIN trip_acknowledgements ta ON ta.execution_id=te.id
@@ -1670,11 +1677,15 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
              SUM(teb.kg_fat) AS kg_fat, SUM(teb.kg_snf) AS kg_snf
       FROM trip_execution_bmcus teb WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE
     ) disp ON TRUE
-    WHERE te.status != 'cancelled' AND tp.status NOT IN ('cancelled','deleted')
-    GROUP BY tp.id, tp.trip_no, t.tanker_number, t.capacity_litres, tp.is_sale_tanker,
-             rm.route_name, sp.name, dp.name, te.id, disp.litres, disp.kgs, disp.kg_fat, disp.kg_snf
-    HAVING COALESCE(MIN(ta.ack_date), te.execution_date) BETWEEN $1 AND $2
-    ORDER BY COALESCE(MIN(ta.ack_date), te.execution_date), tp.trip_no`, [fromDate, toDate]);
+    ${byRun ? `JOIN billing_run_trips brt ON brt.execution_id=te.id AND brt.run_id=$1
+    WHERE TRUE` : `WHERE te.status != 'cancelled' AND tp.status NOT IN ('cancelled','deleted')`}
+    GROUP BY tp.id, tp.trip_no, tp.plan_for_date, t.tanker_number, t.capacity_litres, tp.is_sale_tanker,
+             rm.route_name, sp.name, dp.name, te.id, disp.litres, disp.kgs, disp.kg_fat, disp.kg_snf${byRun ? ', brt.id' : ''}
+    ${byRun
+      ? 'ORDER BY tp.plan_for_date, t.tanker_number, tp.trip_no'
+      : `HAVING COALESCE(MIN(ta.ack_date), te.execution_date) BETWEEN $1 AND $2
+    ORDER BY COALESCE(MIN(ta.ack_date), te.execution_date), tp.trip_no`}`,
+    byRun ? [runId] : [fromDate, toDate]);
 
   return r.rows.map((x, i) => {
     const litres = parseFloat(x.ack_litres) || 0;
@@ -1690,6 +1701,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
       is_sale_tanker: isSale,
       starting_point: x.starting_point, delivery_point: x.delivery_point,
       ack_date: fmtDateDisplay(x.ack_date),
+      billing_date: fmtDateDisplay(x.billing_date),
       tanker_number: x.tanker_number, route_name: x.route_name, trip_no: x.trip_no,
       ack_litres: rN(litres), ack_kgs: rN(kgs),
       fat: kgs ? rN(parseFloat(x.ack_kg_fat) / kgs * 100) : null,
@@ -1701,6 +1713,9 @@ async function buildDayUtilisation(fromDate, toDate, threshold) {
         isSale ? 'SALE tanker — not in utilisation' : '',
         util == null ? '' : util >= threshold ? `ABOVE ${threshold}` : `BELOW ${threshold}`,
         !isSale && parseInt(x.ack_count) === 0 ? '(dispatch qty — no ack, e.g. sold at BMCU)' : '',
+        byRun && x.run_carried_forward ? '· Carried forward' : '',
+        byRun && x.run_excluded ? '· Excluded in run' : '',
+        byRun && x.run_remarks ? `· ${x.run_remarks}` : '',
       ].filter(Boolean).join(' '),
     };
   });
@@ -1724,18 +1739,23 @@ const UTIL_HEADERS = [
   { title: 'Remarks', key: 'remarks', width: 12 },
 ];
 
-function buildDayUtilisationWorkbook(rows, fromDate, toDate, threshold) {
+function buildDayUtilisationWorkbook(rows, fromDate, toDate, threshold, run = null) {
+  const UTIL_HEADERS_X = run
+    ? [...UTIL_HEADERS.slice(0, 3), { title: 'Billing Date', key: 'billing_date', width: 12 }, ...UTIL_HEADERS.slice(3)]
+    : UTIL_HEADERS;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Day wise Utilisation', { views: [{ state: 'frozen', ySplit: 2 }] });
-  ws.columns = UTIL_HEADERS.map(h => ({ width: h.width }));
+  ws.columns = UTIL_HEADERS_X.map(h => ({ width: h.width }));
 
-  ws.mergeCells(1, 1, 1, UTIL_HEADERS.length);
+  ws.mergeCells(1, 1, 1, UTIL_HEADERS_X.length);
   const title = ws.getCell(1, 1);
-  title.value = `Day wise Tanker Utilisation — ${fromDate}${toDate !== fromDate ? ` to ${toDate}` : ''} (threshold ${threshold}%)`;
+  title.value = run
+    ? `Day wise Tanker Utilisation — Billing run #${run.id} (${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}) (threshold ${threshold}%)`
+    : `Day wise Tanker Utilisation — ${fromDate}${toDate !== fromDate ? ` to ${toDate}` : ''} (threshold ${threshold}%)`;
   title.font = { bold: true, size: 14, color: { argb: 'FF003A6B' } };
   ws.getRow(1).height = 24;
 
-  UTIL_HEADERS.forEach((h, i) => {
+  UTIL_HEADERS_X.forEach((h, i) => {
     const c = ws.getCell(2, i + 1);
     c.value = h.title;
     c.font = { bold: true, color: { argb: HEADER_TEXT } };
@@ -1746,7 +1766,7 @@ function buildDayUtilisationWorkbook(rows, fromDate, toDate, threshold) {
 
   rows.forEach((x, ri) => {
     const row = ws.getRow(3 + ri);
-    UTIL_HEADERS.forEach((h, i) => {
+    UTIL_HEADERS_X.forEach((h, i) => {
       const c = row.getCell(i + 1);
       const v = x[h.key];
       c.border = BORDER;
@@ -1768,32 +1788,77 @@ function buildDayUtilisationWorkbook(rows, fromDate, toDate, threshold) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/reports/day-utilisation?from_date=&to_date=&threshold=95
+// GET /api/reports/day-utilisation?from_date=&to_date=&threshold=95[&run_id=N]
+// run_id (owner, 2026-10-16): exactly the trips of that billing run, no dates.
 // ─────────────────────────────────────────────────────────────────────────────
+function parseRunId(v) {
+  if (v == null || v === '') return { runId: null };
+  if (!/^\d+$/.test(String(v)) || parseInt(v, 10) <= 0) return { error: 'run_id must be a positive integer' };
+  return { runId: parseInt(v, 10) };
+}
+async function loadRun(runId) {
+  const r = await query('SELECT id, from_date, to_date, status FROM billing_runs WHERE id=$1', [runId]);
+  return r.rows[0] || null;
+}
+
 router.get('/day-utilisation', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from_date, to_date } = req.query;
   const threshold = parseFloat(req.query.threshold) || 95;
-  if (!from_date) return res.status(400).json({ error: 'from_date required' });
+  const { runId, error } = parseRunId(req.query.run_id);
+  if (error) return res.status(400).json({ error });
+  if (!runId && !from_date) return res.status(400).json({ error: 'from_date or run_id required' });
   try {
+    if (runId) {
+      if (!(await loadRun(runId))) return res.status(404).json({ error: 'Billing run not found' });
+      return res.json(await buildDayUtilisation(null, null, threshold, { runId }));
+    }
     res.json(await buildDayUtilisation(from_date, to_date || from_date, threshold));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/reports/day-utilisation/excel?from_date=&to_date=&threshold=95
+// GET /api/reports/day-utilisation/excel?from_date=&to_date=&threshold=95[&run_id=N]
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/day-utilisation/excel', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from_date, to_date } = req.query;
   const threshold = parseFloat(req.query.threshold) || 95;
-  if (!from_date) return res.status(400).json({ error: 'from_date required' });
+  const { runId, error } = parseRunId(req.query.run_id);
+  if (error) return res.status(400).json({ error });
+  if (!runId && !from_date) return res.status(400).json({ error: 'from_date or run_id required' });
   try {
-    const to = to_date || from_date;
-    const rows = await buildDayUtilisation(from_date, to, threshold);
-    const wb   = buildDayUtilisationWorkbook(rows, from_date, to, threshold);
+    let wb, fname;
+    if (runId) {
+      const run = await loadRun(runId);
+      if (!run) return res.status(404).json({ error: 'Billing run not found' });
+      const rows = await buildDayUtilisation(null, null, threshold, { runId });
+      wb    = buildDayUtilisationWorkbook(rows, run.from_date, run.to_date, threshold, run);
+      fname = `day_utilisation_billing_run_${run.id}_${run.from_date}_${run.to_date}.xlsx`;
+    } else {
+      const to = to_date || from_date;
+      const rows = await buildDayUtilisation(from_date, to, threshold);
+      wb    = buildDayUtilisationWorkbook(rows, from_date, to, threshold);
+      fname = `day_utilisation_${from_date}_${to}.xlsx`;
+    }
     const buf  = Buffer.from(await wb.xlsx.writeBuffer());
-    res.setHeader('Content-Disposition', `attachment; filename=day_utilisation_${from_date}_${to}.xlsx`);
+    res.setHeader('Content-Disposition', `attachment; filename=${fname}`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/reports/billing-runs — run picker for Day wise "By billing run".
+// Reads the tables directly so it works even when BILLING_ENABLED is off.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/billing-runs', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
+  try {
+    const r = await query(`
+      SELECT br.id, br.from_date, br.to_date, br.status,
+             (SELECT COUNT(*)::int FROM billing_run_trips brt WHERE brt.run_id=br.id) AS trip_count
+      FROM billing_runs br
+      ORDER BY br.id DESC
+      LIMIT 50`);
+    res.json(r.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

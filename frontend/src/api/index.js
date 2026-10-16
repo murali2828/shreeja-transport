@@ -184,11 +184,16 @@ export const downloadCumulativeExcel = (params) => api.get('/reports/cumulative/
   a.href = url; a.download = `tanker_utilisation_cumulative_${params.from}.xlsx`; a.click(); URL.revokeObjectURL(url);
 });
 export const getDayUtilisation = (p) => api.get('/reports/day-utilisation', { params: p });
-export const downloadDayUtilisationExcel = (from, to, threshold) =>
-  api.get(`/reports/day-utilisation/excel?from_date=${from}&to_date=${to}&threshold=${threshold}`, { responseType: 'blob' }).then(r => {
+export const getReportBillingRuns = () => api.get('/reports/billing-runs');
+// runId optional (owner, 2026-10-16): "By billing run" mode, dates ignored.
+export const downloadDayUtilisationExcel = (from, to, threshold, runId) =>
+  api.get('/reports/day-utilisation/excel', {
+    params: runId ? { run_id: runId, threshold } : { from_date: from, to_date: to, threshold },
+    responseType: 'blob',
+  }).then(r => {
     const url = URL.createObjectURL(r.data);
     const a = document.createElement('a');
-    a.href = url; a.download = `day_utilisation_${from}_${to}.xlsx`; a.click();
+    a.href = url; a.download = runId ? `day_utilisation_billing_run_${runId}.xlsx` : `day_utilisation_${from}_${to}.xlsx`; a.click();
     URL.revokeObjectURL(url);
   });
 

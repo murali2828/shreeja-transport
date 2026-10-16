@@ -5,7 +5,7 @@
 // Day wise Tanker Utilisation (per sample Day_wise_Utilisation.xlsx):
 // one row per acknowledged trip by ack date — ack totals, tanker capacity,
 // Utilization % = Ack Qty Ltrs / capacity × 100, remark ABOVE/BELOW threshold.
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CumulativeMonths, CumulativeYears, FixedCostPanel } from '../../components/TransportCumulative';
 import { getCumulative, downloadCumulativeExcel } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
@@ -13,23 +13,43 @@ import { hasRole } from '../../utils/roles';
 import toast from 'react-hot-toast';
 import { useQuery } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
-import { getDayUtilisation, downloadDayUtilisationExcel } from '../../api/index';
+import { getDayUtilisation, downloadDayUtilisationExcel, getReportBillingRuns } from '../../api/index';
 import { fmtDate } from '../../utils/date';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const n2 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const n0 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
+const MODE_KEY = 'dayUtil.mode';
+const readMode = () => { try { return localStorage.getItem(MODE_KEY) === 'run' ? 'run' : 'ack'; } catch { return 'ack'; } };
+
 function DayWise() {
   const [from, setFrom] = useState(today());
   const [to, setTo]     = useState(today());
   const [threshold, setThreshold] = useState(95);
+  // "By billing run" (owner, 2026-10-16): exactly the trips of one run, for the
+  // CE approval of trips below the threshold after each run.
+  const [mode, setMode]   = useState(readMode);
+  const [runId, setRunId] = useState('');
+  const byRun = mode === 'run';
+  const changeMode = m => { setMode(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* ignore */ } };
+
+  const { data: runs = [] } = useQuery({
+    queryKey: ['report-billing-runs'],
+    queryFn:  () => getReportBillingRuns().then(r => r.data),
+    enabled:  byRun,
+  });
+  useEffect(() => {
+    if (byRun && !runId && runs.length) setRunId(String(runs[0].id));
+  }, [byRun, runId, runs]);
 
   const { data: rows = [], isFetching } = useQuery({
-    queryKey: ['day-utilisation', from, to, threshold],
-    queryFn:  () => getDayUtilisation({ from_date: from, to_date: to, threshold }).then(r => r.data),
-    enabled:  !!from && !!to,
+    queryKey: ['day-utilisation', mode, byRun ? runId : from, byRun ? '' : to, threshold],
+    queryFn:  () => getDayUtilisation(byRun ? { run_id: runId, threshold } : { from_date: from, to_date: to, threshold }).then(r => r.data),
+    enabled:  byRun ? !!runId : (!!from && !!to),
   });
+  const exportExcel = () => downloadDayUtilisationExcel(from, to, threshold, byRun ? runId : null)
+    .catch(e => toast.error(e.response?.data?.error || e.message));
 
   const above = rows.filter(r => r.utilization != null && r.utilization >= threshold).length;
   const below = rows.filter(r => r.utilization != null && r.utilization < threshold).length;
@@ -46,18 +66,35 @@ function DayWise() {
       <div className="page-header">
         <div>
           <div className="page-title text-base">Day wise</div>
-          <div className="page-sub">Acknowledged quantity vs tanker capacity — by acknowledgement date</div>
+          <div className="page-sub">Acknowledged quantity vs tanker capacity — {byRun ? 'trips of one billing run' : 'by acknowledgement date'}</div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <input type="date" className="input py-1.5 text-sm" value={from} onChange={e => setFrom(e.target.value)}/>
-          <span className="text-gray-400 text-sm">to</span>
-          <input type="date" className="input py-1.5 text-sm" value={to} onChange={e => setTo(e.target.value)}/>
+          <select className="input py-1.5 text-sm" value={mode} onChange={e => changeMode(e.target.value)}>
+            <option value="ack">By acknowledgement date</option>
+            <option value="run">By billing run</option>
+          </select>
+          {byRun ? (
+            <select className="input py-1.5 text-sm" value={runId} onChange={e => setRunId(e.target.value)}>
+              {runs.length === 0 && <option value="">No billing runs</option>}
+              {runs.map(r => (
+                <option key={r.id} value={r.id}>
+                  #{r.id} · {fmtDate(r.from_date)} → {fmtDate(r.to_date)} · {r.status} · {r.trip_count} trips
+                </option>
+              ))}
+            </select>
+          ) : (
+            <>
+              <input type="date" className="input py-1.5 text-sm" value={from} onChange={e => setFrom(e.target.value)}/>
+              <span className="text-gray-400 text-sm">to</span>
+              <input type="date" className="input py-1.5 text-sm" value={to} onChange={e => setTo(e.target.value)}/>
+            </>
+          )}
           <label className="text-xs text-gray-500 flex items-center gap-1">
             Threshold %
             <input type="number" min="1" max="100" className="input py-1.5 text-sm w-16"
               value={threshold} onChange={e => setThreshold(parseFloat(e.target.value) || 95)}/>
           </label>
-          <button onClick={() => downloadDayUtilisationExcel(from, to, threshold)} className="btn-secondary flex items-center gap-1.5 text-sm">
+          <button onClick={exportExcel} disabled={byRun && !runId} className="btn-secondary flex items-center gap-1.5 text-sm">
             <Download size={14}/> Export Excel
           </button>
           {isFetching && <RefreshCw size={14} className="animate-spin text-gray-400"/>}
@@ -65,7 +102,7 @@ function DayWise() {
       </div>
 
       <div className="flex gap-3 text-xs flex-wrap">
-        <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-700 font-medium">{rows.length} acknowledged trips</span>
+        <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-700 font-medium">{rows.length} {byRun ? 'trips in run' : 'acknowledged trips'}</span>
         <span className="px-3 py-1 rounded-full bg-green-100 text-green-700 font-medium">{above} above {threshold}%</span>
         <span className="px-3 py-1 rounded-full bg-red-100 text-red-600 font-medium">{below} below {threshold}%</span>
         {avgUtil != null && (
@@ -85,22 +122,23 @@ function DayWise() {
           <table className="w-full text-xs" style={{ minWidth: 1300 }}>
             <thead className="sticky top-0 bg-gray-50 z-10 border-b">
               <tr>
-                {['S.NO','Started Point','Delivery Point','Ack date','Tanker Number','Route Name',
+                {['S.NO','Started Point','Delivery Point',...(byRun ? ['Billing Date'] : []),'Ack date','Tanker Number','Route Name',
                   'Ack Qty Ltrs','Ack Qty Kgs','Fat','SNF','KG Fat','Kg SNF','Tanker Capacity','Utilization %','Remarks']
-                  .map((h, i) => (
-                    <th key={h} className={`table-th ${i >= 6 && i <= 13 ? 'text-right' : ''} ${i === 14 ? 'text-center' : ''}`}>{h}</th>
+                  .map((h, i, all) => (
+                    <th key={h} className={`table-th ${i >= all.length - 9 && i <= all.length - 2 ? 'text-right' : ''} ${i === all.length - 1 ? 'text-center' : ''}`}>{h}</th>
                   ))}
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={15}><div className="empty-state">No acknowledged trips in this date range.</div></td></tr>
+                <tr><td colSpan={byRun ? 16 : 15}><div className="empty-state">{byRun ? 'No trips in this billing run.' : 'No acknowledged trips in this date range.'}</div></td></tr>
               )}
               {rows.map(r => (
                 <tr key={r.s_no} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="table-td">{r.s_no}</td>
                   <td className="table-td whitespace-nowrap">{r.starting_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.delivery_point || '—'}</td>
+                  {byRun && <td className="table-td whitespace-nowrap">{r.billing_date || '—'}</td>}
                   <td className="table-td whitespace-nowrap">{fmtDate(r.ack_date)}</td>
                   <td className="table-td font-mono font-semibold text-[#005ba3] whitespace-nowrap">
                     {r.tanker_number || '—'}
@@ -130,7 +168,7 @@ function DayWise() {
             {rows.length > 0 && (
               <tfoot className="bg-blue-50 border-t font-semibold sticky bottom-0">
                 <tr>
-                  <td className="table-td text-[#003a6b]" colSpan={6}>TOTAL — {rows.length} trips{saleCount > 0 ? ` (utilisation on ${fleetRows.length} non-sale)` : ''}</td>
+                  <td className="table-td text-[#003a6b]" colSpan={byRun ? 7 : 6}>TOTAL — {rows.length} trips{saleCount > 0 ? ` (utilisation on ${fleetRows.length} non-sale)` : ''}</td>
                   <td className="table-td text-right text-[#003a6b]">{n2(totLitres)}</td>
                   <td className="table-td text-right text-[#003a6b]">{n2(rows.reduce((s, r) => s + (parseFloat(r.ack_kgs) || 0), 0))}</td>
                   <td className="table-td" colSpan={2}></td>
