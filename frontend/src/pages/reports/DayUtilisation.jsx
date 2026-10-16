@@ -11,14 +11,35 @@ import { getCumulative, downloadCumulativeExcel } from '../../api/index';
 import { useAuth } from '../../hooks/useAuth';
 import { hasRole } from '../../utils/roles';
 import toast from 'react-hot-toast';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
-import { getDayUtilisation, downloadDayUtilisationExcel, getReportBillingRuns } from '../../api/index';
+import { getDayUtilisation, downloadDayUtilisationExcel, getReportBillingRuns, saveUtilisationRemark } from '../../api/index';
 import { fmtDate } from '../../utils/date';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const n2 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const n0 = v => v == null ? '—' : parseFloat(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+
+// Approval remark cell (migration 072): logistics notes CE approval etc.;
+// saved on blur, blank deletes; read-only for view-only users.
+function RemarkCell({ row, canEdit, onSaved }) {
+  const [val, setVal] = useState(row.user_remark || '');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setVal(row.user_remark || ''); }, [row.user_remark]);
+  if (!canEdit) return <span className="whitespace-pre-wrap">{row.user_remark || ''}</span>;
+  const save = () => {
+    if (val.trim() === (row.user_remark || '').trim()) return;
+    setSaving(true);
+    saveUtilisationRemark(row.execution_id, val)
+      .then(() => onSaved())
+      .catch(e => toast.error(e.response?.data?.error || e.message))
+      .finally(() => setSaving(false));
+  };
+  return (
+    <input className={`input py-1 text-xs w-56 ${saving ? 'opacity-60' : ''}`} value={val} maxLength={1000}
+      placeholder="e.g. CE approved" onChange={e => setVal(e.target.value)} onBlur={save}/>
+  );
+}
 
 const MODE_KEY = 'dayUtil.mode';
 // Fortnight of a month (YYYY-MM): half 1 = 1–15, half 2 = 16–month end.
@@ -30,6 +51,11 @@ const fortnightRange = (month, half) => {
 const readMode = () => { try { return localStorage.getItem(MODE_KEY) === 'run' ? 'run' : 'ack'; } catch { return 'ack'; } };
 
 function DayWise() {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const canEditRemarks = user?.read_only !== true && (hasRole(user, 'admin') || user?.access?.reports === 'edit'
+    || (hasRole(user, 'planner', 'biller') && user?.access?.reports !== 'view'));
+  const refreshRows = () => qc.invalidateQueries({ queryKey: ['day-utilisation'] });
   const [from, setFrom] = useState(today());
   const [to, setTo]     = useState(today());
   const [threshold, setThreshold] = useState(95);
@@ -151,18 +177,18 @@ function DayWise() {
             <thead className="sticky top-0 bg-gray-50 z-10 border-b">
               <tr>
                 {['S.NO','Started Point','Delivery Point',...(byRun ? ['Billing Date'] : []),'Ack date','Tanker Number','Route Name',
-                  'Ack Qty Ltrs','Ack Qty Kgs','Fat','SNF','KG Fat','Kg SNF','Tanker Capacity','Utilization %','Remarks']
+                  'Ack Qty Ltrs','Ack Qty Kgs','Fat','SNF','KG Fat','Kg SNF','Tanker Capacity','Utilization %','Remarks','Approval remarks']
                   .map((h, i, all) => (
-                    <th key={h} className={`table-th ${i >= all.length - 9 && i <= all.length - 2 ? 'text-right' : ''} ${i === all.length - 1 ? 'text-center' : ''}`}>{h}</th>
+                    <th key={h} className={`table-th ${i >= all.length - 10 && i <= all.length - 3 ? 'text-right' : ''} ${i === all.length - 2 ? 'text-center' : ''}`}>{h}</th>
                   ))}
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={byRun ? 16 : 15}><div className="empty-state">{byRun ? (runId ? 'No trips in this billing run.' : 'No billing run for this fortnight yet.') : 'No acknowledged trips in this date range.'}</div></td></tr>
+                <tr><td colSpan={byRun ? 17 : 16}><div className="empty-state">{byRun ? (runId ? 'No trips in this billing run.' : 'No billing run for this fortnight yet.') : 'No acknowledged trips in this date range.'}</div></td></tr>
               )}
               {rows.map(r => (
-                <tr key={r.s_no} className="border-b border-gray-50 hover:bg-gray-50">
+                <tr key={r.execution_id || r.s_no} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="table-td">{r.s_no}</td>
                   <td className="table-td whitespace-nowrap">{r.starting_point || '—'}</td>
                   <td className="table-td whitespace-nowrap">{r.delivery_point || '—'}</td>
@@ -190,6 +216,7 @@ function DayWise() {
                       </span>
                     )}
                   </td>
+                  <td className="table-td"><RemarkCell row={r} canEdit={canEditRemarks} onSaved={refreshRows}/></td>
                 </tr>
               ))}
             </tbody>
@@ -204,7 +231,7 @@ function DayWise() {
                   <td className="table-td text-right text-[#003a6b]">{n2(rows.reduce((s, r) => s + (parseFloat(r.kg_snf) || 0), 0))}</td>
                   <td className="table-td text-right text-[#003a6b]">{n0(totCap)}</td>
                   <td className={`table-td text-right font-bold ${avgUtil != null && avgUtil >= threshold ? 'text-green-700' : 'text-red-600'}`}>{n2(avgUtil)}</td>
-                  <td className="table-td"></td>
+                  <td className="table-td" colSpan={2}></td>
                 </tr>
               </tfoot>
             )}
