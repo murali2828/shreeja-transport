@@ -1115,7 +1115,7 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
 
   // Tanker Utilisation — the Day wise "By billing run" rows (owner, 2026-10-16),
   // scoped to the vendors of a vendor workbook; ABOVE / BELOW the threshold.
-  const utilRows = await buildDayUtilisation(null, null, UTILISATION_THRESHOLD, { runId: run.id, vendorIds: scoped ? vendorIds : undefined });
+  const utilRows = (await buildDayUtilisation(null, null, UTILISATION_THRESHOLD, { runId: run.id, vendorIds: scoped ? vendorIds : undefined })).filter(r => !r.is_sale_tanker).map((r, i) => ({ ...r, s_no: i + 1 }));
   const utilHeads = [...UTIL_HEADERS.slice(0, 3), { title: 'Billing Date', key: 'billing_date', num: false }, ...UTIL_HEADERS.slice(3)];
   const wsU = wb.addWorksheet('Tanker Utilisation');
   wsU.addRow([`Tanker Payment Billing — Run #${runId} · Tanker Utilisation (threshold ${UTILISATION_THRESHOLD}%)`]).font = { bold: true, size: 13 };
