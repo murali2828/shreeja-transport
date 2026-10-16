@@ -128,10 +128,31 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December'];
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// Natural list "A, B, and C" (logistics' mail style).
+const andList = a => a.length <= 1 ? (a[0] || '') : a.length === 2 ? `${a[0]} and ${a[1]}`
+  : `${a.slice(0, -1).join(', ')}, and ${a[a.length - 1]}`;
+const avgOf = a => a.length ? rN(a.reduce((s, r) => s + r.utilization, 0) / a.length, 1) : null;
+const minOf = a => a.length ? rN(Math.min(...a.map(r => r.utilization)), 1) : null;
+// Fixed reason sentences of logistics' fortnightly mail; plants are filled in.
+const REASON_TEXT = {
+  batch_preparation: {
+    sentence: p => `Tankers were used for batch preparation and lifting buffalo, mixed, or cow milk for the ${p} plants.`,
+    at: 'Batch preparation at',
+    note: 'Note: Due to batch preparation (cow/buffalo separation), selected cow milk routes were underutilized based on available tanker capacity.',
+  },
+  operational_delays: {
+    sentence: p => `Higher-capacity vehicles were deployed to ensure timely milk lifting from BMCUs to avoid milk accumulation across shifts, despite facing slow unloading, RMT movement issues, or unscheduled maintenance at ${p} plants.`,
+    at: 'Trips at',
+    note: '',
+  },
+};
+
 // Approval note for a billing run's under-utilised trips (owner, 2026-10-16),
-// in the style of logistics' fortnightly mail to the approver. Sale tankers
-// are left out; below = utilisation < threshold. Plants are delivery points,
-// BMCUs come from the trips' live execution BMCU lines.
+// generated from data in exactly the structure of logistics' fortnightly mail
+// to the approvers. Sale tankers are left out; below = utilisation <
+// threshold. Plants are delivery points, BMCUs come from the trips' live
+// execution BMCU lines. Logistics may edit the text before submitting it
+// (utilisation_approvals.note_text, migration 074).
 async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
   const rr = await query('SELECT id, from_date, to_date, status FROM billing_runs WHERE id=$1', [runId]);
   const run = rr.rows[0];
@@ -140,7 +161,8 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
   const below = rows.filter(r => r.utilization != null && r.utilization < threshold);
   const above = rows.filter(r => r.utilization != null && r.utilization >= threshold);
   const [y, m, d] = String(run.from_date).split('-').map(Number);
-  const period = `${d <= 15 ? 'First' : 'Second'} fortnight of ${MONTHS[m - 1]} ${y} (${fmtDateDisplay(run.from_date)} to ${fmtDateDisplay(run.to_date)})`;
+  const dTo = Number(String(run.to_date).slice(8, 10));
+  const period = `${d <= 15 ? 'First' : 'Second'} fortnight of ${MONTHS[m - 1]} ${y} (${MONTHS[m - 1]} ${d}–${dTo})`;
 
   const ids = below.map(r => r.execution_id);
   const bm = ids.length ? (await query(`
@@ -151,60 +173,89 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
   const bmByExec = {};
   for (const x of bm) (bmByExec[x.execution_id] ||= []).push(x.bmcu_name);
 
-  const groups = Object.keys(REASON_LABELS).map(reason => {
-    const g = below.filter(r => r.reason === reason);
-    const plants = new Map();
+  const plantsOf = g => {
+    const m2 = new Map();
     for (const r of g) {
       const p = r.delivery_point || '(no delivery point)';
-      if (!plants.has(p)) plants.set(p, new Set());
-      for (const n of bmByExec[r.execution_id] || []) plants.get(p).add(n);
+      if (!m2.has(p)) m2.set(p, { rows: [], bmcus: new Set() });
+      m2.get(p).rows.push(r);
+      for (const n of bmByExec[r.execution_id] || []) m2.get(p).bmcus.add(n);
     }
+    return [...m2].map(([plant, v]) => ({
+      plant, count: v.rows.length, avg: avgOf(v.rows), bmcus: [...v.bmcus].sort(),
+      details: [...new Set(v.rows.map(r => r.reason_detail).filter(Boolean))],
+    })).sort((a, b) => b.count - a.count || a.plant.localeCompare(b.plant));
+  };
+  const groups = Object.keys(REASON_LABELS).map(reason => {
+    const g = below.filter(r => r.reason === reason);
     return {
       reason, label: REASON_LABELS[reason], count: g.length,
-      over94: g.filter(r => r.utilization > 94).length,
+      min: minOf(g), avg: avgOf(g), over94: g.filter(r => r.utilization > 94).length,
       details: [...new Set(g.map(r => r.reason_detail).filter(Boolean))],
-      plants: [...plants].map(([plant, s]) => ({ plant, bmcus: [...s].sort() })),
+      plants: plantsOf(g),
     };
   }).filter(g => g.count > 0);
-  const untagged = below.filter(r => !REASON_LABELS[r.reason]).length;
+  const untaggedRows = below.filter(r => !REASON_LABELS[r.reason]);
+  const untagged = untaggedRows.length;
+  const untaggedGroup = untagged ? { count: untagged, min: minOf(untaggedRows), avg: avgOf(untaggedRows), plants: plantsOf(untaggedRows) } : null;
+  const plantSummary = plantsOf(below).map(p => ({ plant: p.plant, count: p.count, avg: p.avg }));
 
+  const plantLine = (p, at) => `   - ${p.plant}: ${at} ${andList(p.bmcus) || '—'} (${p.count} trip${p.count === 1 ? '' : 's'}, avg util ${p.avg}%).`;
   const lines = [
-    'Dear Madam,', '',
-    `Please find below the tanker utilization details for the ${period}.`, '',
-    `During this period we executed ${rows.length} total movements.`,
-    `Above ${threshold}%: ${above.length} trips.`,
-    `Under ${threshold}%: ${below.length} trips.`,
+    'Dear Madam,',
+    `Please find below the tanker utilization details for the ${period} for approval by the competent authorities.`,
+    `During this period, we executed ${rows.length} total movements, categorized by capacity utilization:`,
+    ` - Above ${threshold}% Utilization: ${above.length} trips`,
+    ` - Under ${threshold}% Utilization: ${below.length} trips`,
   ];
-  if (groups.length) {
-    lines.push('', 'The reasons for under-utilization are:');
-    groups.forEach((g, i) => {
-      lines.push('', `${i + 1}. ${g.label} (${g.count} trips):`);
-      g.plants.forEach(p => lines.push(`   ${p.plant} – ${p.bmcus.join(', ') || '—'}`));
-      g.details.forEach(dt => lines.push(`   ${dt}`));
-      if (g.reason === 'operational_delays') lines.push(`   Of these ${g.count} trips, ${g.over94} route tankers achieved over 94% utilization.`);
-    });
+  if (groups.length || untaggedGroup) lines.push('The underutilized trips are attributed to the following operational factors:');
+  groups.forEach((g, i) => {
+    const t = REASON_TEXT[g.reason];
+    lines.push(`${i + 1}. ${g.label} (${g.count} Trips): ${t.sentence(andList(g.plants.map(p => p.plant)))}`);
+    for (const p of g.plants) {
+      lines.push(plantLine(p, t.at));
+      p.details.forEach(dt => lines.push(`     ${dt}`));
+    }
+    lines.push(`   - Utilization of these trips: lowest ${g.min}%, average ${g.avg}%.`);
+    if (g.reason === 'operational_delays') lines.push(`   - Of these ${g.count} trips, ${g.over94} route tankers achieved over 94% utilization.`);
+    if (t.note) lines.push(`   - ${t.note}`);
+  });
+  if (untaggedGroup) {
+    lines.push(`${groups.length + 1}. Not yet categorised (${untagged} Trips):`);
+    for (const p of untaggedGroup.plants) lines.push(plantLine(p, 'Trips at'));
+    lines.push(`   - Utilization of these trips: lowest ${untaggedGroup.min}%, average ${untaggedGroup.avg}%.`);
   }
-  if (untagged) lines.push('', `Note: ${untagged} under-utilized trip(s) have no reason tagged yet.`);
-  lines.push('', 'Please review and approve the under-utilized trips.');
-  return { run, period, threshold, total: rows.length, above: above.length, below: below.length, untagged, groups, text: lines.join('\n') };
+  lines.push('We are actively working to reduce the number of underutilized tankers due to operational reasons.',
+    'Please review and approve the underutilized tanker movements as detailed above.');
+  return {
+    run, period, threshold, total: rows.length, above: above.length, below: below.length,
+    untagged, groups, untaggedGroup, plantSummary, text: lines.join('\n'),
+  };
 }
 
-// HTML section for the billing run approval mails.
-function utilisationNoteHtml(n) {
+// Plant summary table (plant, trips below threshold, avg utilisation).
+function plantSummaryHtml(n) {
+  if (!n?.plantSummary?.length) return '';
+  const td = 'style="border:1px solid #d1d5db;padding:3px 8px;font-size:12px;"';
+  return `<table style="border-collapse:collapse;margin:8px 0;">
+    <tr style="background:#f3f4f6;"><th ${td}>Plant</th><th ${td}>Trips below ${n.threshold}%</th><th ${td}>Avg util %</th></tr>
+    ${n.plantSummary.map(p => `<tr><td ${td}>${esc(p.plant)}</td><td ${td} align="right">${p.count}</td><td ${td} align="right">${p.avg ?? '—'}</td></tr>`).join('')}
+  </table>`;
+}
+// The note text (generated or as edited by logistics) with line breaks.
+const noteTextHtml = text => `<div style="font-size:12px;line-height:1.5;white-space:pre-wrap;">${esc(text)}</div>`;
+
+// HTML section for the billing run approval mails; opts.text = the edited
+// note when logistics saved one, opts.status = utilisation approval status line.
+function utilisationNoteHtml(n, { text, status } = {}) {
   if (!n) return '';
-  const groups = n.groups.map((g, i) => `
-    <p style="font-size:12px;margin:8px 0 2px;"><b>${i + 1}. ${esc(g.label)} (${g.count} trips)</b></p>
-    <ul style="font-size:12px;margin:0 0 0 18px;padding:0;">
-      ${g.plants.map(p => `<li><b>${esc(p.plant)}</b> – ${esc(p.bmcus.join(', ') || '—')}</li>`).join('')}
-    </ul>
-    ${g.details.map(dt => `<p style="font-size:12px;margin:2px 0 0 18px;">${esc(dt)}</p>`).join('')}
-    ${g.reason === 'operational_delays' ? `<p style="font-size:12px;margin:2px 0 0 18px;">Of these ${g.count} trips, ${g.over94} route tankers achieved over 94% utilization.</p>` : ''}`).join('');
   return `
-      <p style="font-size:13px;font-weight:700;margin:16px 0 6px;">Tanker utilisation — under-utilised trips for approval</p>
-      <p style="font-size:12px;margin:0;">${esc(n.period)}: ${n.total} movements · above ${n.threshold}%: <b>${n.above}</b> ·
-        under ${n.threshold}%: <b>${n.below}</b>${n.untagged ? ` · <span style="color:#b45309;">${n.untagged} without a reason</span>` : ''}</p>
-      ${groups}
-      <p style="font-size:11px;color:#6b7280;margin:6px 0 0;">Your approval of this run approves these under-utilised trips (Tanker Utilisation sheet attached).</p>`;
+      <p style="font-size:13px;font-weight:700;margin:16px 0 6px;">Tanker utilisation — under-utilised trips</p>
+      ${status ? `<p style="font-size:12px;margin:0 0 6px;"><b>Utilisation approval:</b> ${esc(status)}</p>` : ''}
+      ${n.untagged ? `<p style="font-size:12px;color:#b45309;margin:0 0 6px;">${n.untagged} under-utilised trip(s) without a reason</p>` : ''}
+      ${noteTextHtml(text || n.text)}
+      ${plantSummaryHtml(n)}
+      <p style="font-size:11px;color:#6b7280;margin:6px 0 0;">The under-utilised trips are approved in their own L1–L3 utilisation approval raised by logistics (Tanker Utilisation sheet attached).</p>`;
 }
 
-module.exports = { buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD, REASON_LABELS, utilisationNote, utilisationNoteHtml };
+module.exports = { buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD, REASON_LABELS, utilisationNote, utilisationNoteHtml, plantSummaryHtml, noteTextHtml };
