@@ -29,7 +29,7 @@ const { autoWidth, stylePortalWorkbook } = require('../services/portalExcel');
 const { HISTORY_UNTIL, MONTH_NAMES } = require('../services/transportCumulative');
 const { fixedCostsInPeriod, normTanker } = require('../services/fixedCosts');
 const { portalPlantMap } = require('../services/plantNames');
-const { buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD, utilisationNote, utilisationNoteHtml } = require('../services/dayUtilisation');
+const { utilisationNote, utilisationNoteHtml } = require('../services/dayUtilisation');
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 const nf = (v, d = 2) => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -1109,22 +1109,8 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
   wsD.addRow(['GRAND TOTAL (Amount + Toll)', '', '', '', '', '', '', '', '', '', '', rN(runAmount + runToll), '', '', '']).font = { bold: true };
   for (let c = 4; c <= 15; c++) wsD.getColumn(c).numFmt = '0.00';
 
-  // Tanker Utilisation — the Day wise "By billing run" rows (owner, 2026-10-16),
-  // scoped to the vendors of a vendor workbook; ABOVE / BELOW the threshold.
-  const utilRows = (await buildDayUtilisation(null, null, UTILISATION_THRESHOLD, { runId: run.id, vendorIds: scoped ? vendorIds : undefined })).filter(r => !r.is_sale_tanker && !r.is_material).map((r, i) => ({ ...r, s_no: i + 1 }));
-  const utilHeads = [...UTIL_HEADERS.slice(0, 3), { title: 'Billing Date', key: 'billing_date', num: false }, ...UTIL_HEADERS.slice(3)];
-  const wsU = wb.addWorksheet('Tanker Utilisation');
-  wsU.addRow([`Tanker Payment Billing — Run #${runId} · Tanker Utilisation (threshold ${UTILISATION_THRESHOLD}%)`]).font = { bold: true, size: 13 };
-  wsU.addRow([]);
-  head(wsU, utilHeads.map(h => h.title));
-  utilRows.forEach(x => {
-    const row = wsU.addRow(utilHeads.map(h => h.num ? (x[h.key] == null ? null : parseFloat(x[h.key])) : (x[h.key] ?? '')));
-    const ui = utilHeads.findIndex(h => h.key === 'utilization') + 1;
-    if (x.utilization != null) row.getCell(ui).font = { bold: true, color: { argb: x.utilization >= UTILISATION_THRESHOLD ? 'FF1E8449' : 'FFC0392B' } };
-  });
-  utilHeads.forEach((h, i) => { if (h.num) wsU.getColumn(i + 1).numFmt = '#,##0.00'; });
-  const fleetU = utilRows.filter(x => x.utilization != null);
-  wsU.addRow([`${utilRows.length} trips · ${fleetU.filter(x => x.utilization >= UTILISATION_THRESHOLD).length} above ${UTILISATION_THRESHOLD}% · ${fleetU.filter(x => x.utilization < UTILISATION_THRESHOLD).length} below`]).font = { bold: true };
+  // The Tanker Utilisation sheet was removed (owner, 2026-10-16): utilisation
+  // goes with its own approval mail and Reports → Tanker Utilisation.
 
   stylePortalWorkbook(wb, 'Tanker Payment Billing');
   return { wb, run, trips, tankers, vendors };

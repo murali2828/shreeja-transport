@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- Billing run Excel: the **Tanker Utilisation** sheet is removed; utilisation travels with its own approval mail (attached workbook) and Reports → Tanker Utilisation (owner, 2026-10-16).
+
 ### Added
 - Tanker utilisation: material (buy-and-sell) trips are out of utilisation like sale tankers — no %, MATERIAL badge on Day wise, left out of the fleet total, above / below counts, the approval note and mail, its Excel attachment (also its All trips sheet) and the billing run Excel's Tanker Utilisation sheet (owner, 2026-10-16).
 - Tanker utilisation approval note: each plant line lists the trips' **route names** instead of BMCU names (Excel "By plant" column Routes); Regenerate from data rebuilds a saved draft (owner, 2026-10-16).
