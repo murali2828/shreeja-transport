@@ -151,7 +151,7 @@ const REASON_TEXT = {
 // generated from data in exactly the structure of logistics' fortnightly mail
 // to the approvers. Sale tankers are left out; below = utilisation <
 // threshold. Plants are delivery points, routes are the trips' route names
-// execution BMCU lines. Logistics may edit the text before submitting it
+// (route_name). Logistics may edit the text before submitting it
 // (utilisation_approvals.note_text, migration 074).
 async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
   const rr = await query('SELECT id, from_date, to_date, status FROM billing_runs WHERE id=$1', [runId]);
