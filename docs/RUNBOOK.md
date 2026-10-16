@@ -67,7 +67,7 @@ with login id) and its field-level Changes view.
 | Upload fails with a bare `413` before any app message | host nginx `client_max_body_size` missing (default 1 MB) — both `sites-enabled/tms…` and `qatms…` need `client_max_body_size 20M;` in the **443** server block (added 2026-09-29) | add the line, `nginx -t && systemctl reload nginx` |
 | `[DB SLOW]` lines, timeouts at 30 s | heavy report over a long range | narrow the range; check indexes (migrations 026, 039) |
 | Uploads gone after restore | uploads volume not restored | `ops/bin/backup.sh <tier> restore-uploads` |
-| Disk full | Docker images/logs or backups | `docker system prune` (images only), check `BACKUP_DIR` retention |
+| Disk full | Docker images/logs or backups; trip scans grow the uploads volume ~2.5 GB / month (ADR-025) | `docker system prune` (images only), check `BACKUP_DIR` retention; `du -sh` the uploads volume's `trip-scans/` and check the NAS quota |
 
 ## Backup and restore
 
@@ -80,7 +80,7 @@ ops/bin/backup.sh prod config                 # after any secret change (then: o
 ops/bin/restore.sh prod --time "2026-10-13 14:05"   # point in time → scratch cluster 127.0.0.1:5599 (safe)
 ops/bin/restore.sh prod --latest --swap       # replace the live DB, typed confirmation
 ops/bin/restore.sh prod --cleanup             # drop the scratch cluster
-ops/bin/backup.sh prod restore-uploads        # uploads volume back from the mirror
+ops/bin/backup.sh prod restore-uploads        # uploads volume back from the mirror (tanker documents, challans, material scans, trip-scans/)
 ops/bin/healthcheck.sh prod status            # watchdog view of every check
 ```
 Cron: 01:15 nightly backup, every 30 min check, every 4 h uploads + FTP mirror, Sunday
@@ -202,6 +202,8 @@ sheet replaces its rows (corrected workbook). Check: Reports → Tanker Utilisat
 4. Report: Quality → QA Dispatch Report → Excel (the team's column order). Duplicate tanker + BMCU + compartment + lifting date is refused; edit the existing row instead. Only admins delete.
 
 ## Routine tasks
+
+- Monthly: check free disk (`df -h`) and the NAS quota — trip scans (BMCU DCs, ack slips; `UPLOAD_DIR/trip-scans/YYYY/MM/`) add ~2.5 GB a month (~30 GB a year) to the uploads volume and its mirror; `ops/bin/backup.sh <tier> restore-uploads` brings them back with the other uploads. Pending scans: Reports → Scan Status; replace / delete requests: Scan Status → Scan changes.
 
 - Each month after finance approves the 9,000-km fixed cost: Reports → Tanker Utilisation → Fixed cost (9,000 km) → Upload approved sheet → check the preview total against the sheet → Confirm. Bulk / first load: `docker cp` the workbooks into the backend container, `docker exec -i shreeja-backend node scripts/import_fixed_costs.js /tmp/fc/*.xlsx` (dry run) then `--apply`.
 - Reports → Tanker Utilisation: Month Cumulative shows the chosen financial year; Year Cumulative compares financial years. Load the months before the portal once: Year Cumulative tab → History template → fill one row per FY start year × month (capacity, milk L / kg, kg fat / SNF, km, amount, trips, diesel) → Upload earlier years (admin). Re-uploading a month replaces it; portal months are never overwritten by history.
