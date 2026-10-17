@@ -62,6 +62,14 @@ export default function UtilisationDecision() {
                 Billing run #{info.run_id} ({info.period}) · Level L{info.level} · submitted by {info.submitted_by_name || '—'}
               </p>
             )}
+            {info && /^pending_l/.test(info.status) && (
+              <div style={{ background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 10, padding: '10px 12px', margin: '0 0 12px', fontSize: 13, color: '#92400e' }}>
+                Your decision is recorded only when you press <b>{isReject ? 'CONFIRM REJECTION' : 'CONFIRM APPROVAL'}</b>
+                {isReject ? ' at the bottom (remarks required).' : <> — <button onClick={submit} disabled={busy}
+                  style={{ background: accent, color: '#fff', border: 'none', padding: '6px 14px', borderRadius: 8, fontWeight: 700, cursor: 'pointer', marginLeft: 6 }}>
+                  {busy ? 'Recording…' : 'CONFIRM APPROVAL'}</button></>}
+              </div>
+            )}
             {info && (
               <div style={{ color: '#4b5563', fontSize: 13, margin: '0 0 14px', overflowX: 'auto' }}
                    dangerouslySetInnerHTML={{ __html: info.html }}/>
