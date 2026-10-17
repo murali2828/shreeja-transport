@@ -1266,7 +1266,7 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
   const thin = { style: 'thin', color: { argb: 'FF475569' } };
   const BOX = { top: thin, bottom: thin, left: thin, right: thin };
   const HEAD = ['SL', 'Date', 'Vehicle No.', 'Capacity (KL)', 'Transport Type', 'Route', 'Starting point → BMCUs → Delivery point', 'Kms', 'Rate', 'Amount'];
-  const WIDTHS = [4, 11, 12, 8, 13, 14, 38, 8, 7, 11];   // portrait A4: BMCU chain wraps
+  const WIDTHS = [4, 11, 12, 8, 9, 13, 44, 8, 7, 11];    // portrait A4: type, route and BMCU chain wrap
   const setup = ws => {
     ws.pageSetup = { orientation: 'portrait', paperSize: 9 /* A4 */, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
       horizontalCentered: true, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
@@ -1320,7 +1320,7 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
           type === 'Material' ? bmcuDetails(t.execution_id)
             : [t.start_point, bmcuDetails(t.execution_id), t.delivery_point].filter(x => x && x !== '—').join(' → '),
           num(t.billed_km), num(t.rate_per_km), num(t.amount)]);
-        r.eachCell({ includeEmpty: true }, (c, ci) => { c.border = BOX; c.alignment = { vertical: 'top', wrapText: ci === 7 || ci === 6 }; });
+        r.eachCell({ includeEmpty: true }, (c, ci) => { c.border = BOX; c.alignment = { vertical: 'top', wrapText: ci >= 5 && ci <= 7 }; });
         [8, 9, 10].forEach(ci => { r.getCell(ci).numFmt = '#,##0.00'; });
       });
       const last = ws.rowCount;
