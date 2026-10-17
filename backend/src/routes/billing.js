@@ -1022,12 +1022,13 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
     ws.addRow([]);
     // Finance's layout (2026-10-08): SAP vendor code, milk received in
     // litres and kgs with fat / SNF %, cost per litre and utilisation; no
-    // System / Google / Master KM, Excluded or Remarks columns (excluded
+    // System / Master KM, Excluded or Remarks columns — Google KM is back beside
+    // Billed KM for the approvers (owner, 2026-10-17) (excluded
     // lines still show ₹0). Remarks remain on screen.
     head(ws, ['Date', 'Tanker', 'Capacity (KL)', 'SAP Vendor Code', 'Vendor', 'Route', 'Start Point', 'Delivery Point',
       'Qty in Lts', 'Qty in Kgs', 'Fat %', 'Fat Kgs', 'SNF %', 'SNF Kgs', 'State', 'Transport Type',
-      'Billed KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %', 'BMCU Details']);
-    ws.getColumn(22).width = 60;
+      'Billed KM', 'Google KM', 'Rate/KM (₹)', 'Amount (₹)', 'Cost Per Ltr', 'Utilization %', 'BMCU Details']);
+    ws.getColumn(23).width = 60;
     const amt = t => t.excluded ? 0 : (+t.amount || 0);
     rows.forEach(t => {
       const l = +t.milk_litres || 0, cap = +t.capacity_litres || 0;
@@ -1035,18 +1036,19 @@ async function buildRunWorkbook(runId, { vendorIds } = {}) {
         t.vendor_sap_code, t.vendor_name, t.route_name, t.start_point, t.delivery_point,
         rN(t.milk_litres), rN(t.milk_kgs), rN(t.fat_pct), rN(t.kg_fat), rN(t.snf_pct), rN(t.kg_snf),
         t.state, t.transport_type,
-        rN(t.billed_km), rN(t.rate_per_km), rN(amt(t)), l > 0 ? rN(amt(t) / l) : null, cap > 0 && l > 0 ? rN(l / cap * 100) : null,
+        rN(t.billed_km), rN(t.google_km), rN(t.rate_per_km), rN(amt(t)), l > 0 ? rN(amt(t) / l) : null, cap > 0 && l > 0 ? rN(l / cap * 100) : null,
         bmcuDetails(t.execution_id)]);
     });
     const sumL = rows.reduce((s, t) => s + (+t.milk_litres || 0), 0), sumKg = rows.reduce((s, t) => s + (+t.milk_kgs || 0), 0);
     const sumCap = rows.reduce((s, t) => s + (+t.capacity_litres || 0), 0), sumAmt = rows.reduce((s, t) => s + amt(t), 0);
     const sumKf = rows.reduce((s, t) => s + (+t.kg_fat || 0), 0), sumKs = rows.reduce((s, t) => s + (+t.kg_snf || 0), 0);
     const sumKm = rows.reduce((s, t) => s + (+t.billed_km || 0), 0);
+    const sumGk = rows.reduce((s, t) => s + (+t.google_km || 0), 0);
     const totRow = ws.addRow(['TOTAL', '', '', '', '', '', '', '',
       rN(sumL), rN(sumKg), sumKg > 0 ? rN(sumKf / sumKg * 100) : '', rN(sumKf), sumKg > 0 ? rN(sumKs / sumKg * 100) : '', rN(sumKs), '', '',
-      rN(sumKm), sumKm > 0 ? rN(sumAmt / sumKm) : null,
+      rN(sumKm), rN(sumGk), sumKm > 0 ? rN(sumAmt / sumKm) : null,
       rN(sumAmt), sumL > 0 ? rN(sumAmt / sumL) : null, sumCap > 0 && sumL > 0 ? rN(sumL / sumCap * 100) : null, '']);
-    for (let c = 3; c <= 21; c++) if (c !== 4 && c !== 5 && c !== 6 && c !== 7 && c !== 8 && c !== 15 && c !== 16) ws.getColumn(c).numFmt = '0.00';
+    for (let c = 3; c <= 22; c++) if (c !== 4 && c !== 5 && c !== 6 && c !== 7 && c !== 8 && c !== 15 && c !== 16) ws.getColumn(c).numFmt = '0.00';
     totRow.font = { bold: true };
     return ws;
   };
