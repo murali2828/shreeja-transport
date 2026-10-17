@@ -502,6 +502,85 @@ router.get('/cost-drivers/excel', authenticate, authorizeOrModule('reports', 'ad
   }
 });
 
+// ─── Trends: month on month, this FY vs last FY, YTD (owner, 2026-10-17) ────
+// Milk, trips, km and cost come from services/transportCumulative.js (FY
+// workbook up to ANALYTICS_HISTORY_UNTIL, billing lines after, keyed history
+// for earlier FYs) so the figures match Reports → Tanker Utilisation. TS gain /
+// loss (Ack − RMRD) uses the dashboard's per-trip CTE grouped by month — portal
+// executions only, so workbook months show no TS (null, not 0).
+const { cumulativeData, fyLabel: fyLbl, fyOf: fyOfDate } = require('../services/transportCumulative');
+async function tsByMonth(fy) {
+  const r = await query(`WITH ${baseTripsCte}
+    SELECT EXTRACT(YEAR FROM plan_for_date)::int AS year, EXTRACT(MONTH FROM plan_for_date)::int AS month, ${aggSelect}
+    FROM per_trip GROUP BY 1, 2`, [`${fy}-04-01`, `${fy + 1}-03-31`, null, null, null]);
+  return new Map(r.rows.map(x => [`${x.year}-${x.month}`, mapAgg(x)]));
+}
+const TREND_KEYS = ['trips', 'milk_litres', 'milk_kgs', 'total_km', 'amount', 'toll_amount', 'fixed_cost', 'total_cost',
+  'cost_per_litre', 'cost_per_litre_all_in', 'utilisation_pct', 'avg_km', 'rate_per_km', 'diesel_price', 'source'];
+async function buildTrends(fy, status) {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const [cur, prev, tsCur, tsPrev] = await Promise.all([
+    cumulativeData({ from: `${fy}-04-01`, status }), cumulativeData({ from: `${fy - 1}-04-01`, status }),
+    tsByMonth(fy), tsByMonth(fy - 1)]);
+  const shape = (d, ts) => d.months.map(m => {
+    const t = ts.get(`${m.year}-${m.month}`);
+    const o = { year: m.year, month: m.month, label: `${m.month_name.slice(0, 1)}${m.month_name.slice(1, 3).toLowerCase()}-${String(m.year).slice(2)}` };
+    for (const k of TREND_KEYS) o[k] = k === 'trips' ? (m.trips || null) : (m.trips || m.source ? m[k] : null);
+    o.ts_gain_kg = t && t.acked_trips ? t.ts_gain : null;
+    o.qty_gain_kg = t && t.acked_trips ? t.qty_gain_kgs : null;
+    o.ts_gain_pct = t && t.acked_trips ? t.ts_gain_pct : null;
+    return o;
+  });
+  const months = shape(cur, tsCur), prevMonths = shape(prev, tsPrev);
+  // YTD = April up to the current month (whole FY for past years); the same
+  // months of the previous FY are the comparison.
+  const curFy = fyOfDate(today);
+  const n = fy < curFy ? 12 : fy > curFy ? 0 : FY_IDX(parseInt(today.slice(5, 7))) + 1;
+  const ytd = rows => {
+    const r = rows.slice(0, n);
+    const sum = k => { const v = r.filter(x => x[k] != null); return v.length ? v.reduce((s, x) => s + parseFloat(x[k]), 0) : null; };
+    const litres = sum('milk_litres'), cost = sum('total_cost'), cap = r.reduce((s, x, i) => s + (x.milk_litres != null && x.utilisation_pct ? x.milk_litres / x.utilisation_pct * 100 : 0), 0);
+    return { months: n, trips: sum('trips'), milk_litres: rN(litres), total_km: rN(sum('total_km')), amount: rN(sum('amount')),
+      toll_amount: rN(sum('toll_amount')), fixed_cost: rN(sum('fixed_cost')), total_cost: rN(cost),
+      cost_per_litre_all_in: litres > 0 && cost != null ? rN(cost / litres, 4) : null,
+      utilisation_pct: cap > 0 ? rN(litres / cap * 100) : null,
+      ts_gain_kg: rN(sum('ts_gain_kg')), ts_months: r.filter(x => x.ts_gain_kg != null).length };
+  };
+  return { fy_start_year: fy, fy_label: fyLbl(fy), prev_fy_label: fyLbl(fy - 1), status,
+    ytd_months: n, months, prev_months: prevMonths, ytd: ytd(months), prev_ytd: ytd(prevMonths) };
+}
+const FY_IDX = m => (m + 8) % 12; // April → 0 … March → 11
+const trendsQuery = q => {
+  const fy = q.fy ? parseInt(q.fy) : fyOfDate(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
+  return { fy: fy >= 2000 && fy <= 2100 ? fy : null, status: q.status === 'approved' ? 'approved' : 'all' };
+};
+router.get('/trends', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
+  const { fy, status } = trendsQuery(req.query);
+  if (!fy) return res.status(400).json({ error: 'fy must be a financial-year start year (e.g. 2026)' });
+  try {
+    res.json(await buildTrends(fy, status));
+  } catch (err) {
+    console.error('[analytics] trends error:', err);
+    res.status(500).json({ error: 'Failed to build the trends' });
+  }
+});
+// Trends sheet (month rows, this FY vs last FY) for the Excel workbooks.
+function addTrendsSheet(wb, t) {
+  const ws = wb.addWorksheet('Trends');
+  ws.addRow([`Trends FY ${t.fy_label} vs FY ${t.prev_fy_label} (billing lines: ${t.status === 'approved' ? 'approved runs' : 'all runs'}; TS = portal trips only)`]).font = { bold: true, size: 13 };
+  ws.addRow([]);
+  const F = [['Milk L', 'milk_litres'], ['Trips', 'trips'], ['Km', 'total_km'], ['Avg km/trip', 'avg_km'], ['Trip amount ₹', 'amount'], ['Toll ₹', 'toll_amount'],
+    ['Fixed cost ₹', 'fixed_cost'], ['Total cost ₹', 'total_cost'], ['₹/L all-in', 'cost_per_litre_all_in'], ['Utilisation %', 'utilisation_pct'], ['TS gain/loss kg', 'ts_gain_kg']];
+  const head = ['Month'];
+  F.forEach(([l]) => head.push(`${l} ${t.fy_label}`, `${l} ${t.prev_fy_label}`));
+  ws.addRow(head).font = { bold: true };
+  t.months.forEach((m, i) => { const p = t.prev_months[i]; const row = [m.label.slice(0, 3)]; F.forEach(([, k]) => row.push(m[k], p[k])); ws.addRow(row); });
+  const yr = ['YTD'], y = t.ytd, py = t.prev_ytd;
+  F.forEach(([, k]) => yr.push(y[k] ?? null, py[k] ?? null));
+  ws.addRow(yr).font = { bold: true };
+  ws.columns.forEach((c, i) => { c.width = i === 0 ? 10 : 15; if (i) c.numFmt = '#,##0.00'; });
+}
+
 // ─── Excel export of the current dashboard view ──────────────────────────────
 router.get('/export', authenticate, authorizeOrModule('reports', 'admin', 'planner', 'biller'), async (req, res) => {
   const { from, to } = req.query;
@@ -541,6 +620,7 @@ router.get('/export', authenticate, authorizeOrModule('reports', 'admin', 'plann
     sheet('Delivery Points', d.delivery_points, 'Delivery Point', 'delivery_point');
     sheet('Routes', d.routes, 'Route', 'route_name');
     sheet('Tankers', d.tankers, 'Tanker', 'tanker_number');
+    try { addTrendsSheet(wb, await buildTrends(fyOfDate(to), 'all')); } catch (e) { console.error('[analytics] trends sheet:', e.message); }
 
     const wsB = wb.addWorksheet('BMCUs');
     head(wsB, ['Code', 'BMCU', 'RMRD Kg', 'Dispatch Kg', 'Qty Gain/Loss Kg', 'TS Gain/Loss Kg', 'TS %']);

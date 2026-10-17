@@ -377,6 +377,7 @@ export const deleteDieselRate        = (id)    => api.delete(`/diesel-rates/${id
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 export const getAnalyticsSummary  = (p)     => api.get('/analytics/summary', { params: p });
+export const getAnalyticsTrends   = (p)     => api.get('/analytics/trends', { params: p });
 export const getCostDrivers       = (p)     => api.get('/analytics/cost-drivers', { params: p });
 export const downloadCostDriversExcel = (p) =>
   api.get('/analytics/cost-drivers/excel', { params: p, responseType: 'blob' }).then(r => {

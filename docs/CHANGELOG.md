@@ -8,6 +8,7 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
 ### Added
+- Reports → Analytics: **Trends** section at the top (own FY picker, default current FY vs previous FY, billing runs all / approved; independent of the page's date filter): YTD strip (milk received, trips, km, all-in transport cost, all-in ₹/L, utilisation %, TS gain/loss kg — this FY YTD vs the same months last FY with Δ and Δ %, green = good / red = bad), month-on-month milk bars + all-in ₹/L line, this FY vs last FY lines for milk, ₹/L and utilisation (95 % target line), stacked monthly cost (trip amount + toll + fixed cost), trips & km with avg km/trip, TS gain/loss per month (portal trips only; FY-workbook months show no TS). Figures from `services/transportCumulative.js` (same as Tanker Utilisation); API `GET /api/analytics/trends?fy=&status=`. Period charts above the tables: delivery point delivered kg and TS gain/loss, top 10 routes by TS loss, tankers by fill band (< 80 / 80–90 / 90–95 / ≥ 95 %) and lowest fill, day-of-week TS and trips. Analytics Excel gains a **Trends** sheet (month rows, FY vs last FY, YTD) (owner, 2026-10-17).
 - Utilisation approval mails, the decision page and the panel's Mail preview carry four summary charts drawn with table cells (render in Gmail / Outlook / phones, no images or scripts): above vs under 95 % split bar, under-95 % trips by reason, by plant, and trips by utilisation band (< 80, 80–90, 90–94, 94–95, ≥ 95 %) (owner, 2026-10-17).
 
 ### Changed

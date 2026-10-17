@@ -11,6 +11,7 @@ import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis,
   Tooltip, CartesianGrid, Cell, ReferenceLine,
 } from 'recharts';
+import AnalyticsTrends, { HBarChart, VBarChart, fillBands } from './AnalyticsTrends';
 
 const iso = d => d.toISOString().slice(0, 10);
 const today = () => iso(new Date());
@@ -427,6 +428,7 @@ export default function Analytics() {
   return (
     <div className="p-4 space-y-4">
       <MotionStyles />
+      <AnalyticsTrends />
       <div className="flex flex-wrap items-end gap-3 az-rise">
         <div>
           <h2 className="page-title">Analytics</h2>
@@ -682,6 +684,12 @@ export default function Analytics() {
         ]}
       />
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <VBarChart title="Tankers by average fill % (period)" rows={fillBands(util?.tankers)} labelKey="band" valueKey="n"
+          valueName="Tankers" colors={fillBands(util?.tankers).map(b => b.color)} />
+        <HBarChart title="Lowest average fill % · 10 tankers" rows={[...(util?.tankers || [])].filter(t => t.trips > 0 && t.avg_fill_pct != null).sort((a, b) => a.avg_fill_pct - b.avg_fill_pct)}
+          labelKey="tanker_number" valueKey="avg_fill_pct" valueName="Avg fill" unit=" %" />
+      </div>
       <LeaderTable
         title="Tanker Utilisation"
         accent={C.violet}
@@ -801,6 +809,11 @@ export default function Analytics() {
       </div>
 
       {/* Delivery point performance */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <HBarChart title="Delivered (Ack kg) by delivery point" rows={(data?.delivery_points || []).map(r => ({ ...r, ack_kgs_v: r.ack?.kgs }))}
+          labelKey="delivery_point" valueKey="ack_kgs_v" valueName="Ack kg" unit=" kg" />
+        <HBarChart title="TS gain / loss (kg) by delivery point" rows={data?.delivery_points} labelKey="delivery_point" valueKey="ts_gain" valueName="TS gain/loss" unit=" kg" signed />
+      </div>
       <LeaderTable
         title="Delivery Point Performance"
         accent={C.teal}
@@ -812,6 +825,8 @@ export default function Analytics() {
       />
 
       {/* Routes */}
+      <HBarChart title="Top 10 routes by TS loss (kg)" rows={(data?.routes || []).filter(r => r.ts_gain < 0).sort((a, b) => a.ts_gain - b.ts_gain)}
+        labelKey="route_name" valueKey="ts_gain" valueName="TS gain/loss" unit=" kg" signed />
       <LeaderTable
         title="Route Performance (Ack Vs RMRD · worst first)"
         accent={C.amber}
@@ -822,6 +837,10 @@ export default function Analytics() {
         cols={[{ key: 'route_name', label: 'Route' }, ...GAIN_COLS]}
       />
 
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <VBarChart title="Day of week · TS gain / loss (kg)" rows={(data?.day_of_week || []).map(r => ({ ...r, d3: r.dow.slice(0, 3) }))} labelKey="d3" valueKey="ts_gain" valueName="TS gain/loss" unit=" kg" signed />
+        <VBarChart title="Day of week · trips" rows={(data?.day_of_week || []).map(r => ({ ...r, d3: r.dow.slice(0, 3) }))} labelKey="d3" valueKey="trips" valueName="Trips" />
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <LeaderTable
           title="Shift Wise (milk shifts lifted: AM / PM / Mixed)"
