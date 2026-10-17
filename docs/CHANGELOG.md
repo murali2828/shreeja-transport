@@ -7,6 +7,8 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+## 2026-10-17 (4) — promoted to `main` 2026-10-17 (migration 076)
+
 ### Added
 - Billing → Toll Challans → **Pending from earlier cycles** on a run under approval / approved: **Request change** per tanker-period, so an earlier period's challan is added through the PP01-approved toll change request (recorded against that period, paid in this run) (owner, 2026-10-17).
 - Billing run Excel (approval attachment): **Google KM** beside Billed KM on Trip Wise / Material / Sale sheets (owner, 2026-10-17).
