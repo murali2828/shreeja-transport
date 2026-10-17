@@ -1257,6 +1257,7 @@ async function notifyBiller(runId, subject, bodyHtml) {
 // tanker × transport type (material trips in their own block), each block on
 // its own portrait A4 page with a SUM total and the vendor's signature line, so the
 // vendor prints, signs every page and returns it. Excluded lines never appear.
+const LETTERHEAD_ROWS = 10;   // space for the vendor's letterhead (owner, 2026-10-17)
 const CARD_TYPE_ORDER = { 'BMCU/CC to Dairy/CC': 0, 'Point to Point': 1, Material: 2 };
 async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDetails) {
   const num = v => (v == null || v === '' ? null : parseFloat(v));
@@ -1302,6 +1303,8 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
         r.getCell(1).alignment = { horizontal: opts.align || 'center' };
         return r;
       };
+      // Vendors print the cards on their letterhead: 10 blank rows on top of every page.
+      for (let i = 0; i < LETTERHEAD_ROWS; i++) ws.addRow([]);
       line('Shreeja MMPCL, Tirupati', { size: 14 });
       line(period, { size: 12 });
       line(`Vendor: ${vendorName}   ·   Tanker: ${tanker}   ·   ${type}   ·   State: ${st}`, { size: 10 });
@@ -1334,6 +1337,7 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
   // Summary page: state × tanker × type, tolls, total payable, signature.
   const sl = (text, size) => { const r = summary.addRow([text]); summary.mergeCells(r.number, 1, r.number, 6); r.getCell(1).font = { bold: true, size }; r.getCell(1).alignment = { horizontal: 'center' }; };
   ['State', 'Tanker', 'Type', 'Trips', 'Kms', 'Amount'].forEach((_, i) => { summary.getColumn(i + 1).width = [12, 16, 22, 8, 12, 16][i]; });
+  for (let i = 0; i < LETTERHEAD_ROWS; i++) summary.addRow([]);
   sl('Shreeja MMPCL, Tirupati', 14); sl(period, 12); sl(`Vendor: ${vendorName}   ·   Run #${run.id}`, 10);
   const sh = summary.addRow(['State', 'Tanker', 'Type', 'Trips', 'Kms', 'Amount']);
   sh.eachCell(c => { c.font = { bold: true }; c.border = BOX; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } }; });
