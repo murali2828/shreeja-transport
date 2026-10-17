@@ -513,7 +513,7 @@ export default function TankerBilling() {
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
                 <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Starting Point', 'Route', 'Delivery Point', 'BMCUs',
-                     'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
+                     'State *', 'Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
               <tbody>
@@ -555,7 +555,7 @@ export default function TankerBilling() {
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
                 <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Starting Point', 'Route', 'Delivery Point', 'BMCUs',
-                     'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
+                     'State *', 'Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
               <tbody>
@@ -588,7 +588,7 @@ export default function TankerBilling() {
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
                 <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Starting Point', 'Route', 'Delivery Point', 'BMCUs',
-                     'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
+                     'State *', 'Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
               <tbody>
@@ -1283,7 +1283,7 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
       <td className="px-2 py-1.5 text-center">{t.bmcu_count}</td>
       <td className="px-2 py-1.5">
         {editable
-          ? <select className="input py-0.5 px-1 text-xs min-w-[8rem]" value={val(t, 'state')}
+          ? <select className="input py-0.5 px-1 text-xs min-w-[6.5rem]" value={val(t, 'state')}
                     onChange={e => { setEdit(t.id, 'state', e.target.value); previewRate(t, e.target.value, val(t, 'transport_type')); }}>
               <option value="">— select —</option>
               {STATES.map(s => <option key={s}>{s}</option>)}
@@ -1292,14 +1292,14 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
       </td>
       <td className="px-2 py-1.5 whitespace-nowrap">
         {editable
-          ? <select className="input py-0.5 px-1 text-xs"
-                    title="Auto-derived from BMCU count — biller may override; rate refreshes"
+          ? <select className="input py-0.5 px-1 text-xs w-[5.5rem]"
+                    title={`${val(t, 'transport_type') || ''} — auto-derived from BMCU count; biller may override, rate refreshes`}
                     value={val(t, 'transport_type')}
                     onChange={e => { setEdit(t.id, 'transport_type', e.target.value); previewRate(t, val(t, 'state'), e.target.value); }}>
-              <option>BMCU/CC to Dairy/CC</option>
-              <option>Point to Point</option>
+              <option value="BMCU/CC to Dairy/CC">BMCU/CC</option>
+              <option value="Point to Point">P2P</option>
             </select>
-          : t.transport_type}
+          : <span title={t.transport_type}>{t.transport_type === 'Point to Point' ? 'P2P' : t.transport_type === 'BMCU/CC to Dairy/CC' ? 'BMCU/CC' : t.transport_type}</span>}
       </td>
       <td className="px-2 py-1.5 text-right" title={`Master ${nf(t.master_km)} + Google ${nf(t.google_km)} + Estimated ${nf(t.estimated_km)}`}>
         {nf(t.system_km)}
