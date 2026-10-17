@@ -369,3 +369,62 @@ export function printQaCoa(doc, printNo = 1) { qaWindow(`COA ${doc.challan_no}`,
 export function printQaCombined(doc, printNo = 1) {
   qaWindow(`COA ${doc.challan_no}`, `${qaDispatchBody(doc, printNo)}<div style="page-break-before:always"></div>${qaCoaBody(doc, printNo)}`);
 }
+
+// ─── RAW CHILLED MILK DISPATCH CHALLAN (QA form SMMPCL/F/T/006, owner 2026-10-17) ───
+// Stored in qa_trip_documents.data.dc; Seal No (Top) falls back to the
+// document's compartment seal numbers when not keyed on the challan.
+export const QA_DC_ROWS = [
+  ['scale_reading', 'Scale Reading'],
+  ['quantity', 'Quantity as per Scale Reading(Litres)'],
+  ['fat', 'Fat%'],
+  ['clr', 'CLR'],
+  ['snf', 'SNF%'],
+  ['milk_type', 'Type of Milk'],
+  ['compartment', 'Compartment(FC/MC/BC)'],
+  ['temperature', 'Temperature in ºC'],
+  ['organoleptic', 'Organoleptic Evaluation'],
+  ['cob', 'COB Test'],
+  ['acidity', 'T.Acidity(as % LA)'],
+  ['alcohol_cow', 'Alcohol Test(Min 68%-Cow Milk)'],
+  ['alcohol_buff', 'Alcohol Test(Min 60%-Buff Milk)'],
+  ['adulterants', 'Adulterants'],
+  ['seal_top', 'Seal No(Top)'],
+  ['seal_bottom', 'Seal No(Bottom)'],
+  ['broken_seal', 'Broken Seal No.'],
+];
+export function qaDcValue(data, rowKey, c) {
+  const v = data?.dc?.rows?.[rowKey]?.[c];
+  if ((v == null || v === '') && rowKey === 'seal_top' && c !== 'remarks') return data?.compartments?.[c]?.seal_no || '';
+  return v ?? '';
+}
+
+export function qaDispatchChallanBody(doc, printNo = 1) {
+  const d = doc.data || {}, dc = d.dc || {};
+  const plant = doc.delivery_point_name || d.ship_to?.name || '';
+  const rows = QA_DC_ROWS.map(([k, label], i) =>
+    `<tr><td class="c n">${i + 1}</td><td>${label}</td>${['FC', 'MC', 'BC', 'remarks'].map(c => `<td class="c n">${esc(qaDcValue(d, k, c))}</td>`).join('')}</tr>`).join('');
+  const F = (l, v) => `<td style="width:22%">${l}</td><td class="n" style="width:28%">${esc(v)}</td>`;
+  return `${qaDup(printNo)}
+    <table style="font-size:10pt">
+      <tr><td rowspan="3" class="c" style="width:22%;font-size:16pt;letter-spacing:2px">SHREEJA</td>
+        <td class="c" style="font-size:13pt">SHREEJA MAHILA MILK PRODUCER COMPANY LTD.,</td></tr>
+      <tr><td class="c n">3rd &amp; 4th Floors, Plot No.29 &amp; 30, Bachala Towers, S.G.S. Arts College Road, New Indira Nagar, Tirupati - 517501, Ph.: 0877 - 2242173, 2242727</td></tr>
+      <tr><td class="c">(FSSAI Lic No.: 10014044000870)</td></tr>
+    </table>
+    <table style="font-size:10pt">
+      <tr><td style="width:50%">Sr. No.: ${esc(doc.challan_no)}</td><td class="r">SMMPCL/F/T/ 006</td></tr>
+      <tr><td colspan="2" class="c" style="font-size:13pt">Raw Chilled Milk Dispatch Challan<br><span class="n" style="font-size:10pt">Milk for further processing, not for Direct Loose sale</span></td></tr>
+    </table>
+    <table style="font-size:10pt">
+      <tr>${F('Name of the BMC / MCC :', d.dispatch_from)}${F('Date :', fmtD(d.challan_date))}</tr>
+      <tr>${F('Dispatched to :', plant)}${F('Departure Time :', dc.departure_time)}</tr>
+      <tr>${F('Tanker No. :', doc.tanker_number || d.vehicle_no)}${F('Name of the Loader :', dc.loader_name)}</tr>
+      <tr><td colspan="4">Type of Milk (Cow/Buffalo/Mixed/Skimmed Milk/High Solid Milk/High TS Milk) : <span class="n">${esc(dc.milk_type_line)}</span></td></tr>
+    </table>
+    <table style="font-size:10pt">
+      <tr><th class="c" style="width:7%">Sl. No.</th><th style="width:33%">Particulars</th><th class="c">Front Compartment</th><th class="c">Middle Compartment</th><th class="c">Rear Compartment</th><th class="c">Remarks</th></tr>
+      ${rows}
+    </table>
+    <table class="nb" style="margin-top:50px;font-size:11pt"><tr><td style="font-weight:bold">Signature of the BMC Staff</td><td class="r" style="font-weight:bold">Authorised Signtory</td></tr></table>`;
+}
+export function printQaDispatchChallan(doc, printNo = 1) { qaWindow(`Dispatch Challan ${doc.challan_no}`, qaDispatchChallanBody(doc, printNo)); }

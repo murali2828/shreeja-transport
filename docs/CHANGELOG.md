@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Added
+- Quality → COA: **Dispatch Challan** section and **Print Dispatch Challan** button beside Print COA — QA's paper "Raw Chilled Milk Dispatch Challan" (SMMPCL/F/T/ 006, A4 portrait, SHREEJA header box, BMC / MCC, date, dispatched to, departure time, tanker, loader, type-of-milk line, 17-row Front / Middle / Rear compartment table with remarks, signatures). Prefilled from the QA entries per compartment (scale readings, litres split equally for multi-compartment entries, kg-weighted Fat / SNF, litre-weighted CLR, milk type, compartment label; MC blank on 2-compartment tankers), departure time from the trip's first gate-pass (OUT) time, Seal No (Top) from the document's compartment seals, defaults Temperature 4, Organoleptic Ok, COB / alcohol Negative, Adulterants Absent; all editable, saved in `qa_trip_documents.data.dc`, print count in `data.dc_print_count` (`POST /api/quality/docs/:id/printed?doc=dc`), DUPLICATE from the 2nd print; no migration (owner, 2026-10-17).
+
 ### Changed
 - Quality → **Dispatch & COA** renamed **COA**; one **Print COA** button prints the Milk Dispatch Voucher and the Certificate of Analysis together (page break between, DUPLICATE from the second print; both print counters recorded) (owner, 2026-10-17).
 

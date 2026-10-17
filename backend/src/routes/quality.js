@@ -506,7 +506,9 @@ async function docPrefill(date, tankerId) {
   if (!tk) return null;
   const entries = (await query(`SELECT * FROM qa_dispatch_entries WHERE lifting_date = $1 AND tanker_id = $2 ORDER BY id`, [date, tankerId])).rows;
   const plan = (await query(`
-    SELECT rm.route_name, sp.name AS start_point, tp.delivery_point_id, tp.driver_name
+    SELECT rm.route_name, sp.name AS start_point, tp.delivery_point_id, tp.driver_name,
+      (SELECT to_char(MIN(p.printed_at) AT TIME ZONE 'Asia/Kolkata', 'HH24:MI') FROM trip_document_prints p
+        WHERE p.trip_plan_id = tp.id AND p.doc_type = 'gate_pass') AS out_time
     FROM trip_plans tp
     LEFT JOIN route_masters rm ON rm.id = tp.route_id
     LEFT JOIN starting_points sp ON sp.id = tp.start_point_id
@@ -533,6 +535,45 @@ async function docPrefill(date, tankerId) {
   const mtWord = { Cow: 'RAW COW MILK', Buffalo: 'RAW BUFFALO MILK', Mixed: 'RAW MIXED MILK' };
   const compartments = {};
   for (const c of ['FC', 'MC', 'BC']) compartments[c] = { milk_type: typeOf(comp[c].types), litres: comp[c].litres ? r2(comp[c].litres) : '', seal_no: '' };
+  // Raw Chilled Milk Dispatch Challan (QA form SMMPCL/F/T/006, owner 2026-10-17):
+  // per-compartment figures from the QA entries; Fat / SNF kg-weighted, CLR
+  // litre-weighted, litres split equally over a multi-compartment entry.
+  const dcAgg = { FC: {}, MC: {}, BC: {} };
+  for (const c of Object.keys(dcAgg)) Object.assign(dcAgg[c], { sr: [], l: 0, kg: 0, kf: 0, ks: 0, clrL: 0, clrW: 0 });
+  for (const e of entries) {
+    const codes = String(e.compartment || 'FC').split(',').filter(c => dcAgg[c]);
+    for (const c of codes) {
+      const a = dcAgg[c], sh = 1 / codes.length, l = (parseFloat(e.d_qty_litres) || 0) * sh;
+      if (e.scale_reading != null && e.scale_reading !== '') a.sr.push(String(e.scale_reading));
+      a.l += l; a.kg += (parseFloat(e.d_qty_kgs) || 0) * sh;
+      a.kf += (parseFloat(e.d_kg_fat) || 0) * sh; a.ks += (parseFloat(e.d_kg_snf) || 0) * sh;
+      if (e.d_clr != null && l) { a.clrL += l; a.clrW += parseFloat(e.d_clr) * l; }
+    }
+  }
+  const tkCodes = compartmentCodes(tk.compartments);
+  const has = c => tkCodes.includes(c);
+  const row = f => Object.fromEntries([...['FC', 'MC', 'BC'].map(c => [c, has(c) ? f(c) : '']), ['remarks', '']]);
+  const v = x => (x || x === 0 ? x : '');
+  const dcRows = {
+    scale_reading: row(c => dcAgg[c].sr.join(', ')),
+    quantity: row(c => (dcAgg[c].l ? r2(dcAgg[c].l) : '')),
+    fat: row(c => (dcAgg[c].kg ? r2(dcAgg[c].kf / dcAgg[c].kg * 100) : '')),
+    clr: row(c => (dcAgg[c].clrL ? r2(dcAgg[c].clrW / dcAgg[c].clrL) : '')),
+    snf: row(c => (dcAgg[c].kg ? r2(dcAgg[c].ks / dcAgg[c].kg * 100) : '')),
+    milk_type: row(c => v(typeOf(comp[c].types))),
+    compartment: row(c => c),
+    temperature: row(() => '4'),
+    organoleptic: row(() => 'Ok'),
+    cob: row(() => 'Negative'),
+    acidity: row(() => ''),
+    alcohol_cow: row(() => 'Negative'),
+    alcohol_buff: row(() => 'Negative'),
+    adulterants: row(() => 'Absent'),
+    seal_top: row(() => ''),
+    seal_bottom: row(() => ''),
+    broken_seal: row(() => ''),
+  };
+  const dc = { departure_time: plan.out_time || '', loader_name: '', milk_type_line: [...allTypes].join(' / '), rows: dcRows };
   return {
     lifting_date: date, tanker_id: tk.id, tanker_number: tk.tanker_number, delivery_point_id: dpId,
     challan_no: '',
@@ -551,6 +592,7 @@ async function docPrefill(date, tankerId) {
       coa: { ...COA_DEFAULTS, appearance: milkType === 'Buffalo' ? 'White to cream colour, odour typical of fresh milk' : 'Cream to slight yellowish colour, odour typical of fresh cow milk',
              fat: fat ?? '', snf: snf ?? '', mbrt: mbrt != null ? `${mbrt} Minutes` : '' },
       totals: { litres: r2(litres), kgs: r2(kgs), fat, snf },
+      dc,
     },
     delivery_point_name: dp?.name || null,
   };
@@ -569,7 +611,11 @@ router.get('/docs', ...gate, async (req, res) => {
     const saved = (await query(`SELECT d.*, dp.name AS delivery_point_name FROM qa_trip_documents d
       LEFT JOIN delivery_points dp ON dp.id = d.delivery_point_id WHERE d.lifting_date = $1 AND d.tanker_id = $2`, [date, tanker_id])).rows[0];
     const delivery_points = (await query('SELECT id, name, bill_to, ship_to FROM delivery_points WHERE is_active = TRUE ORDER BY name')).rows;
-    if (saved) return res.json({ ...saved, saved: true, delivery_points });
+    if (saved) {
+      // Documents saved before the Dispatch Challan existed get its prefill.
+      if (!saved.data?.dc) { const pre = await docPrefill(date, tanker_id); if (pre) saved.data = { ...saved.data, dc: pre.data.dc }; }
+      return res.json({ ...saved, saved: true, delivery_points });
+    }
     const pre = await docPrefill(date, tanker_id);
     if (!pre) return res.status(404).json({ error: 'Tanker not found' });
     res.json({ ...pre, saved: false, delivery_points });
@@ -618,8 +664,17 @@ router.post('/docs', ...gate, async (req, res) => {
 
 // Count prints; the second and later prints carry a DUPLICATE banner.
 router.post('/docs/:id/printed', ...gate, async (req, res) => {
+  // Dispatch Challan has no column: its counter lives in data.dc_print_count.
+  if (req.query.doc === 'dc') {
+    try {
+      const r = await query(`UPDATE qa_trip_documents SET data = jsonb_set(COALESCE(data, '{}'::jsonb), '{dc_print_count}',
+          to_jsonb(COALESCE((data->>'dc_print_count')::int, 0) + 1)) WHERE id = $1 RETURNING (data->>'dc_print_count')::int AS count`, [req.params.id]);
+      if (!r.rows[0]) return res.status(404).json({ error: 'Document not found' });
+      return res.json({ count: r.rows[0].count });
+    } catch (err) { console.error('[quality] docs printed error:', err); return res.status(500).json({ error: 'Failed to record the print' }); }
+  }
   const col = req.query.doc === 'coa' ? 'print_count_coa' : req.query.doc === 'dispatch' ? 'print_count_dispatch' : null;
-  if (!col) return res.status(400).json({ error: 'doc must be dispatch or coa' });
+  if (!col) return res.status(400).json({ error: 'doc must be dispatch, coa or dc' });
   try {
     const r = await query(`UPDATE qa_trip_documents SET ${col} = ${col} + 1 WHERE id = $1 RETURNING ${col} AS count`, [req.params.id]);
     if (!r.rows[0]) return res.status(404).json({ error: 'Document not found' });

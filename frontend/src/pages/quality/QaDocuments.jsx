@@ -9,7 +9,7 @@ import { Save, Printer } from 'lucide-react';
 import toast from 'react-hot-toast';
 import SearchableSelect from '../../components/SearchableSelect';
 import { getQaDocTankers, getQaDocs, saveQaDocs, markQaDocPrinted } from '../../api/index';
-import { printQaCombined, QA_COA_TESTS } from '../../utils/printDocs';
+import { printQaCombined, printQaDispatchChallan, qaDcValue, QA_COA_TESTS, QA_DC_ROWS } from '../../utils/printDocs';
 import { useAuth } from '../../hooks/useAuth';
 import { canEdit } from '../../utils/roles';
 
@@ -93,6 +93,14 @@ export default function QaDocuments() {
       return r.data;
     } catch (e) { toast.error(e.response?.data?.error || e.message); return null; } finally { setBusy(false); }
   }
+  async function printDc() {
+    const saved = editable ? await save() : doc;
+    if (!saved?.id) return;
+    let n = 1;
+    try { n = (await markQaDocPrinted(saved.id, 'dc')).data.count || 1; } catch { /* print anyway */ }
+    setDoc(prev => ({ ...prev, data: { ...prev.data, dc_print_count: n } }));
+    printQaDispatchChallan({ ...doc, ...saved, data: doc.data }, n);
+  }
   async function print(kind) {
     const saved = editable ? await save() : doc;
     if (!saved?.id) return;
@@ -138,11 +146,12 @@ export default function QaDocuments() {
       {doc && !isFetching && (<>
         <div className="flex flex-wrap gap-2 items-center">
           <span className={`text-xs px-2 py-1 rounded ${doc.saved ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
-            {doc.saved ? `Saved · printed dispatch ${doc.print_count_dispatch || 0}× · COA ${doc.print_count_coa || 0}×` : 'Pre-filled — not saved yet'}</span>
+            {doc.saved ? `Saved · printed dispatch ${doc.print_count_dispatch || 0}× · COA ${doc.print_count_coa || 0}× · challan ${d.dc_print_count || 0}×` : 'Pre-filled — not saved yet'}</span>
           {d.totals && <span className="text-xs text-gray-600">QA entries: {d.totals.litres} L · {d.totals.kgs} kg · Fat {d.totals.fat ?? '—'} % · SNF {d.totals.snf ?? '—'} %</span>}
           <div className="flex-1"/>
           {editable && <button className="btn-secondary flex items-center gap-1" disabled={busy} onClick={save}><Save size={14}/> Save</button>}
           <button className="btn-primary flex items-center gap-1" disabled={busy} onClick={() => print()} title="Prints the Milk Dispatch Voucher and the Certificate of Analysis together"><Printer size={14}/> Print COA</button>
+          <button className="btn-primary flex items-center gap-1" disabled={busy} onClick={printDc} title="Raw Chilled Milk Dispatch Challan (SMMPCL/F/T/006)"><Printer size={14}/> Print Dispatch Challan</button>
         </div>
 
         <div className="card p-4 space-y-3">
@@ -205,6 +214,27 @@ export default function QaDocuments() {
                 <Pick value={d.item?.[`${k}_rate`]} options={TAX_RATES} onChange={v => set(`item.${k}_rate`, v)} disabled={!editable}/>
                 {inp(`item.${k}_amt`)}</div></Field>))}
             <Field label="Total">{inp('item.total')}</Field>
+          </div>
+        </div>
+
+        <div className="card p-4 space-y-3">
+          <h2 className="font-semibold">Dispatch Challan <span className="text-xs font-normal text-gray-500">Raw Chilled Milk Dispatch Challan · SMMPCL/F/T/ 006 · Sr. No. = challan no, BMC / MCC = Tanker sent from, Date = challan date, Dispatched to = delivering plant</span></h2>
+          <div className="grid sm:grid-cols-3 gap-2">
+            <Field label="Departure Time">{inp('dc.departure_time', { type: 'time' })}</Field>
+            <Field label="Name of the Loader">{inp('dc.loader_name')}</Field>
+            <Field label="Type of Milk (Cow/Buffalo/Mixed/Skimmed/High Solid/High TS)">{inp('dc.milk_type_line')}</Field>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[44rem]">
+              <thead><tr className="text-left text-gray-600"><th className="w-8">#</th><th>Particulars</th><th>Front (FC)</th><th>Middle (MC)</th><th>Rear (BC)</th><th>Remarks</th></tr></thead>
+              <tbody>{QA_DC_ROWS.map(([k, label], i) => (
+                <tr key={k} className="border-t">
+                  <td>{i + 1}</td><td className="pr-2">{label}</td>
+                  {['FC', 'MC', 'BC', 'remarks'].map(c => (
+                    <td key={c} className="pr-2 py-0.5"><input className="input w-full py-1" value={qaDcValue(d, k, c)} disabled={!editable}
+                      onChange={e => set(`dc.rows.${k}.${c}`, e.target.value)}/></td>))}
+                </tr>))}</tbody>
+            </table>
           </div>
         </div>
 
