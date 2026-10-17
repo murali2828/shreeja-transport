@@ -131,9 +131,6 @@ async function runExcel(a) {
   stylePortalWorkbook(wb, title);
   wb.eachSheet(ws => ws.eachRow((row, ri) => { if (ri > 3) row.eachCell(c => { if (typeof c.value === 'number' && !Number.isInteger(c.value)) c.numFmt = '#,##0.00'; }); }));
 
-  const nt = wb.addWorksheet('Approval note');
-  nt.getColumn(1).width = 140;
-  String(a.note_text || note.text || '').split('\n').forEach(l => { const row = nt.addRow([l]); row.getCell(1).alignment = { wrapText: true }; });
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -150,7 +147,7 @@ function approvalMailHtml(a, level, token) {
     ${chartsHtml(a.note_snapshot)}
     ${plantSummaryHtml(a.note_snapshot)}
     <div style="margin:18px 0;">${btn('approve', 'Approve', '#16a34a')}${btn('reject', 'Reject', '#dc2626')}</div>
-    <p style="font-size:11px;color:#9ca3af;">No login needed — the button opens a confirmation page; confirm there. The link works once and expires in ${TOKEN_DAYS} days. The attached Excel holds the summary, the under-utilised trips with their reasons, the plant summary, all trips of the run and the note.</p>
+    <p style="font-size:11px;color:#9ca3af;">No login needed — the button opens a confirmation page; confirm there. The link works once and expires in ${TOKEN_DAYS} days. The attached Excel holds the summary, the under-utilised trips with their reasons, the plant summary and all trips of the run.</p>
   </div>`;
 }
 
