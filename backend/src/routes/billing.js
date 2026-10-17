@@ -1265,7 +1265,7 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
   const period = `Road Tankers Movement Of BMCU's Details From ${dot(run.from_date)} To ${dot(run.to_date)}`;
   const thin = { style: 'thin', color: { argb: 'FF475569' } };
   const BOX = { top: thin, bottom: thin, left: thin, right: thin };
-  const HEAD = ['SL', 'Date', 'Vehicle No.', 'Capacity (KL)', 'Transport Type', 'Route', 'BMCUs', 'Kms', 'Rate', 'Amount'];
+  const HEAD = ['SL', 'Date', 'Vehicle No.', 'Capacity (KL)', 'Transport Type', 'Route', 'Starting point → BMCUs → Delivery point', 'Kms', 'Rate', 'Amount'];
   const WIDTHS = [4, 11, 12, 8, 13, 14, 38, 8, 7, 11];   // portrait A4: BMCU chain wraps
   const setup = ws => {
     ws.pageSetup = { orientation: 'portrait', paperSize: 9 /* A4 */, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
@@ -1316,7 +1316,10 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
         const r = ws.addRow([i + 1, fmtDateDisplay(t.plan_for_date), t.tanker_number,
           t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, type === 'Material' ? 'Material' : t.transport_type,
           type === 'Material' ? `${t.start_point || ''} → ${t.delivery_point || ''}` : t.route_name,
-          bmcuDetails(t.execution_id), num(t.billed_km), num(t.rate_per_km), num(t.amount)]);
+          // Full chain for the cards: starting point → BMCUs → delivery point (owner, 2026-10-17).
+          type === 'Material' ? bmcuDetails(t.execution_id)
+            : [t.start_point, bmcuDetails(t.execution_id), t.delivery_point].filter(x => x && x !== '—').join(' → '),
+          num(t.billed_km), num(t.rate_per_km), num(t.amount)]);
         r.eachCell({ includeEmpty: true }, (c, ci) => { c.border = BOX; c.alignment = { vertical: 'top', wrapText: ci === 7 || ci === 6 }; });
         [8, 9, 10].forEach(ci => { r.getCell(ci).numFmt = '#,##0.00'; });
       });
