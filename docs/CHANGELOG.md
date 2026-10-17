@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Fixed
+- Transport Cost Drivers failed with "Failed to build the cost driver analysis" for every period since the diesel carry-forward: the diesel query passed an unused parameter (owner, 2026-10-17).
+
 ## 2026-10-16 (2) — promoted to `main` 2026-10-16 (no migrations)
 
 ### Changed

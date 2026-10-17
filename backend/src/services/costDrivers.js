@@ -148,8 +148,8 @@ async function loadRateRows(from, to) {
 async function loadDieselRows(from, to) {
   const r = await query(`
     SELECT state, price_per_litre, effective_from::text AS effective_from, effective_to::text AS effective_to
-    FROM diesel_rates WHERE effective_from <= $2::date
-    ORDER BY effective_from DESC`, [from, to]);
+    FROM diesel_rates WHERE effective_from <= $1::date
+    ORDER BY effective_from DESC`, [to]);
   return r.rows;
 }
 // Price valid on the date; when the fortnight's price is not keyed yet, the
