@@ -1255,7 +1255,7 @@ async function notifyBiller(runId, subject, bodyHtml) {
 // Printable tanker cards for a vendor (owner, 2026-10-17; layout of the
 // logistics team's "Tanker Cards" workbook): a sheet per state, one block per
 // tanker × transport type (material trips in their own block), each block on
-// its own landscape A4 page with a SUM total and a signature line, so the
+// its own landscape A4 page with a SUM total and the vendor's signature line, so the
 // vendor prints, signs every page and returns it. Excluded lines never appear.
 const CARD_TYPE_ORDER = { 'BMCU/CC to Dairy/CC': 0, 'Point to Point': 1, Material: 2 };
 async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDetails) {
@@ -1323,8 +1323,8 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
       tot.eachCell({ includeEmpty: true }, c => { c.font = { bold: true }; c.border = BOX; });
       [8, 10].forEach(ci => { tot.getCell(ci).numFmt = '#,##0.00'; });
       ws.addRow([]); ws.addRow([]);
-      const sig = ws.addRow(['Vendor signature & seal: ____________________', '', '', '', '', 'Verified by (Shreeja): ____________________', '', 'Date: ____________']);
-      ws.mergeCells(sig.number, 1, sig.number, 5); ws.mergeCells(sig.number, 6, sig.number, 7); ws.mergeCells(sig.number, 8, sig.number, 10);
+      const sig = ws.addRow(['Vendor signature & seal: ____________________']);
+      ws.mergeCells(sig.number, 1, sig.number, 5);
       if (bi < keys.length - 1) sig.addPageBreak();
       const km = rows.reduce((a, t) => a + (parseFloat(t.billed_km) || 0), 0);
       const amt = rows.reduce((a, t) => a + (parseFloat(t.amount) || 0), 0);
@@ -1350,7 +1350,7 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
   const tp = summary.addRow(['TOTAL PAYABLE', '', '', '', '', { formula: `SUM(F${sLast + 1}:F${summary.rowCount})` }]);
   tp.eachCell({ includeEmpty: true }, c => { c.font = { bold: true }; c.border = BOX; }); tp.getCell(6).numFmt = '#,##0.00';
   summary.addRow([]); summary.addRow([]);
-  summary.addRow(['Vendor signature & seal: ____________________', '', '', 'Verified by (Shreeja): ____________________']);
+  summary.addRow(['Vendor signature & seal: ____________________']);
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
