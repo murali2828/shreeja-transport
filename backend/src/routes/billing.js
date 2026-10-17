@@ -1379,7 +1379,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds, user } = {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
   const scoped = Array.isArray(vendorIds) && vendorIds.length > 0;
   const allTrips = (await query(`
-    SELECT t.*, t.plan_for_date::text AS plan_for_date, v.email AS vendor_email,
+    SELECT t.*, t.plan_for_date::text AS plan_for_date, v.email AS vendor_email, v.extra_emails AS vendor_extra_emails,
            (t.is_sale_tanker OR t.tanker_number ILIKE 'SALE%') AS is_sale_tanker
     FROM billing_run_trips t LEFT JOIN vendors v ON v.id = t.vendor_id
     WHERE t.run_id=$1 ${scoped ? 'AND t.vendor_id = ANY($2)' : ''}
@@ -1427,8 +1427,9 @@ async function publishRunToVendors(runId, { draft = false, vendorIds, user } = {
   const byVendor = new Map();
   for (const t of trips) {
     const key = t.vendor_email ? t.vendor_email.trim().toLowerCase() : (t.vendor_id ? `id:${t.vendor_id}` : 'none');
-    if (!byVendor.has(key)) byVendor.set(key, { name: t.vendor_name || '— No vendor mapped —', email: t.vendor_email, trips: [], vendorIds: new Set() });
+    if (!byVendor.has(key)) byVendor.set(key, { name: t.vendor_name || '— No vendor mapped —', email: t.vendor_email, trips: [], vendorIds: new Set(), extra: new Set() });
     if (t.vendor_id) byVendor.get(key).vendorIds.add(t.vendor_id);
+    for (const e of t.vendor_extra_emails || []) if (e && e.toLowerCase() !== key) byVendor.get(key).extra.add(e);
     byVendor.get(key).trips.push(t);
   }
 
@@ -1524,7 +1525,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds, user } = {
       const vendorTransport = await createVendorTransport();
       await vendorTransport.sendMail({
         from: process.env.SMTP_FROM,
-        to: v.email,
+        to: [v.email, ...v.extra].join(', '),   // primary + extra email ids (migration 076)
         ...(vendorCc() ? { cc: vendorCc() } : {}),
         subject: `${draft ? '[DRAFT for verification] ' : ''}Shreeja Tanker Payment ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} — ${v.name} · ₹ ${nf(total)}`,
         html: draft ? `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">

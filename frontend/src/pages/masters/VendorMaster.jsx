@@ -7,7 +7,7 @@ import { getVendors, createVendor, updateVendor } from '../../api/index';
 import { Modal, Field, SaveButton, ActiveBadge, EmptyState, LoadingState, PageHeader } from '../../components/MasterTable';
 
 const EMPTY = {
-  vendor_code: '', vendor_name: '', contact_person: '', phone: '', email: '',
+  vendor_code: '', vendor_name: '', contact_person: '', phone: '', email: '', extra_emails: [],
   gst_number: '', pan_number: '', address: '', is_active: true,
 };
 
@@ -154,6 +154,17 @@ export default function VendorMaster() {
             <Field label="Email">
               <input type="email" className="input w-full" value={form.email}
                 onChange={e => set('email', e.target.value)}/>
+              {(form.extra_emails || []).map((em, i) => (
+                <div key={i} className="flex gap-1 mt-1">
+                  <input type="email" className="input w-full" placeholder={`Email id ${i + 2}`} value={em}
+                    onChange={e => set('extra_emails', form.extra_emails.map((x, j) => j === i ? e.target.value : x))}/>
+                  <button type="button" className="px-2 text-red-600 font-bold" title="Remove this email id"
+                    onClick={() => set('extra_emails', form.extra_emails.filter((_, j) => j !== i))}>×</button>
+                </div>
+              ))}
+              <button type="button" className="text-xs text-[#005ba3] underline mt-1"
+                onClick={() => set('extra_emails', [...(form.extra_emails || []), ''])}>+ Add email id</button>
+              <div className="text-[11px] text-gray-500">Push to Vendors mails every email id listed here.</div>
             </Field>
             <Field label="GST Number">
               <input className="input w-full" value={form.gst_number}
