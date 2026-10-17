@@ -168,6 +168,12 @@ function NotePanel({ runId }) {
       )}
       <textarea readOnly={!editable} className="input w-full text-xs font-mono" rows={Math.min(30, text.split('\n').length + 2)}
         value={text} onChange={e => { setText(e.target.value); setDirty(true); }}/>
+      {note.html && text === note.text && (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-[#005ba3] font-semibold">Mail preview (as approvers see it, with bold figures)</summary>
+          <div className="mt-2 p-3 bg-white rounded border" dangerouslySetInnerHTML={{ __html: note.html }}/>
+        </details>
+      )}
       {note.plantSummary?.length > 0 && (
         <table className="text-xs border-collapse">
           <thead><tr className="bg-gray-50"><th className="border px-2 py-1 text-left">Plant</th><th className="border px-2 py-1">Trips below {note.threshold}%</th><th className="border px-2 py-1">Avg util %</th></tr></thead>

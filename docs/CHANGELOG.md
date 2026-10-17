@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- Utilisation approval note: counts in bold in the mail (above / under trips, total movements, every "(N trips, avg util X%)"), Mail preview under the note; "Not yet categorised" block dropped and replaced by **Near-target trips (94 % to 95 %)** with per-plant counts (also in the Excel Summary / By plant); new closing line; each mail greets its approver (`BILLING_APPROVER_n_TITLE`, defaults Sir / Madam / Sir) and the initiator mail likewise (owner, 2026-10-17).
+
 ### Fixed
 - Transport Cost Drivers failed with "Failed to build the cost driver analysis" for every period since the diesel carry-forward: the diesel query passed an unused parameter (owner, 2026-10-17).
 

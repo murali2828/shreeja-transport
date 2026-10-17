@@ -190,20 +190,23 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
       plants: plantsOf(g),
     };
   }).filter(g => g.count > 0);
-  const untaggedRows = below.filter(r => !REASON_LABELS[r.reason]);
-  const untagged = untaggedRows.length;
-  const untaggedGroup = untagged ? { count: untagged, min: minOf(untaggedRows), avg: avgOf(untaggedRows), plants: plantsOf(untaggedRows) } : null;
+  const untagged = below.filter(r => !REASON_LABELS[r.reason]).length;
+  // Near-target trips (owner, 2026-10-17): below the threshold but above 94 %.
+  const nearRows = below.filter(r => r.utilization > 94);
+  const nearGroup = nearRows.length ? { count: nearRows.length, avg: avgOf(nearRows), plants: plantsOf(nearRows) } : null;
   const plantSummary = plantsOf(below).map(p => ({ plant: p.plant, count: p.count, avg: p.avg }));
 
-  const plantLine = (p, at) => `   - ${p.plant}: ${at} ${andList(p.routes) || '—'} (${p.count} trip${p.count === 1 ? '' : 's'}, avg util ${p.avg}%).`;
+  const tripsAvg = p => `(${p.count} trip${p.count === 1 ? '' : 's'}, avg util ${p.avg}%)`;
+  const plantLine = (p, at) => `   - ${p.plant}: ${at} ${andList(p.routes) || '—'} ${tripsAvg(p)}.`;
+  // The greeting is replaced per approver in each mail (Sir / Madam).
   const lines = [
-    'Dear Madam,',
+    'Dear Sir/Madam,',
     `Please find below the tanker utilization details for the ${period} for approval by the competent authorities.`,
     `During this period, we executed ${rows.length} total movements, categorized by capacity utilization:`,
     ` - Above ${threshold}% Utilization: ${above.length} trips`,
     ` - Under ${threshold}% Utilization: ${below.length} trips`,
   ];
-  if (groups.length || untaggedGroup) lines.push('The underutilized trips are attributed to the following operational factors:');
+  if (groups.length || nearGroup) lines.push('The underutilized trips are attributed to the following operational factors:');
   groups.forEach((g, i) => {
     const t = REASON_TEXT[g.reason];
     lines.push(`${i + 1}. ${g.label} (${g.count} Trips): ${t.sentence(andList(g.plants.map(p => p.plant)))}`);
@@ -215,16 +218,15 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
     if (g.reason === 'operational_delays') lines.push(`   - Of these ${g.count} trips, ${g.over94} route tankers achieved over 94% utilization.`);
     if (t.note) lines.push(`   - ${t.note}`);
   });
-  if (untaggedGroup) {
-    lines.push(`${groups.length + 1}. Not yet categorised (${untagged} Trips):`);
-    for (const p of untaggedGroup.plants) lines.push(plantLine(p, 'Trips at'));
-    lines.push(`   - Utilization of these trips: lowest ${untaggedGroup.min}%, average ${untaggedGroup.avg}%.`);
+  if (nearGroup) {
+    lines.push(`${groups.length + 1}. Near-target trips, 94% to ${threshold}% utilization (${nearGroup.count} Trips): these tankers missed the target by less than one percentage point.`);
+    for (const p of nearGroup.plants) lines.push(`   - ${p.plant}: ${tripsAvg(p)}.`);
   }
-  lines.push('We are actively working to reduce the number of underutilized tankers due to operational reasons.',
+  lines.push('We continue to work closely with the plants and our transport partners to improve tanker utilization, and will keep you updated on the progress in the coming fortnights.',
     'Please review and approve the underutilized tanker movements as detailed above.');
   return {
     run, period, threshold, total: rows.length, above: above.length, below: below.length,
-    untagged, groups, untaggedGroup, plantSummary, text: lines.join('\n'),
+    untagged, near: nearGroup ? nearGroup.count : 0, groups, nearGroup, plantSummary, text: lines.join('\n'),
   };
 }
 
@@ -253,19 +255,21 @@ function noteTextHtml(text) {
     out.push(`<ul style="margin:4px 0 8px ${lvl === 1 ? 18 : 40}px;padding:0;">`);
     list = lvl;
   };
-  const boldCounts = s => esc(s).replace(/(\d[\d,]*\s*(?:trips|Trips|total movements))/g, '<b>$1</b>');
+  const boldCounts = s => esc(s)
+    .replace(/(\(\d[\d,]* trips?, avg util [\d.]+%\))/gi, '<b>$1</b>')
+    .replace(/(?<!\()(\b\d[\d,]*\s*(?:trips|Trips|total movements)\b)(?![^<]*<\/b>)/g, '<b>$1</b>');
   for (const raw of String(text || '').split('\n')) {
     const line = raw.replace(/\s+$/, '');
     if (!line.trim()) { close(); continue; }
     let m;
-    if ((m = /^(\d+)\.\s+([^:]*?\(\d+ Trips?\)):?\s*(.*)$/i.exec(line))) {
+    if ((m = /^(\d+)\.\s+([^:]*?\([\d,]+ Trips?\)):?\s*(.*)$/i.exec(line))) {
       close();
-      out.push(`<p style="margin:12px 0 4px;"><b>${m[1]}. ${esc(m[2])}:</b> ${esc(m[3])}</p>`);
+      out.push(`<p style="margin:12px 0 4px;"><b>${m[1]}. ${esc(m[2])}:</b> ${boldCounts(m[3])}</p>`);
     } else if ((m = /^\s{3,}-\s+(.*)$/.exec(line))) {
       open(2);
       const t = m[1];
       const k = /^([^:]{2,60}):\s(.*)$/.exec(t);
-      out.push(`<li style="margin:2px 0;">${k && !/^(Note|Of these|Utilization)/i.test(t) ? `<b>${esc(k[1])}:</b> ${esc(k[2])}` : /^Note:/i.test(t) ? `<b>Note:</b> ${esc(t.slice(5).trim())}` : esc(t)}</li>`);
+      out.push(`<li style="margin:2px 0;">${k && !/^(Note|Of these|Utilization)/i.test(t) ? `<b>${esc(k[1])}:</b> ${boldCounts(k[2])}` : /^Note:/i.test(t) ? `<b>Note:</b> ${esc(t.slice(5).trim())}` : boldCounts(t)}</li>`);
     } else if ((m = /^\s{1,2}-\s+(.*)$/.exec(line))) {
       open(1);
       out.push(`<li style="margin:2px 0;">${boldCounts(m[1]).replace(/^([^:]+):/, '<b>$1</b>:')}</li>`);
@@ -294,4 +298,11 @@ function utilisationNoteHtml(n, { text, status } = {}) {
       <p style="font-size:11px;color:#6b7280;margin:6px 0 0;">The under-utilised trips are approved in their own L1–L3 utilisation approval raised by logistics (Tanker Utilisation sheet attached).</p>`;
 }
 
-module.exports = { buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD, REASON_LABELS, utilisationNote, utilisationNoteHtml, plantSummaryHtml, noteTextHtml };
+// Replace the note's first "Dear …," line with the recipient's salutation.
+function withSalutation(text, title) {
+  const t = String(text || '');
+  const greet = `Dear ${title || 'Sir/Madam'},`;
+  return /^\s*Dear\b[^\n]*/i.test(t) ? t.replace(/^\s*Dear\b[^\n]*/i, greet) : `${greet}\n${t}`;
+}
+
+module.exports = { withSalutation, buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD, REASON_LABELS, utilisationNote, utilisationNoteHtml, plantSummaryHtml, noteTextHtml };

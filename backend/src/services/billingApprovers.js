@@ -6,9 +6,10 @@ const { query } = require('../config/db');
 const { createTransport: baseTransport } = require('../config/mailer');
 
 const APPROVERS = [
-  { level: 1, email: process.env.BILLING_APPROVER_1 || 'Mahesh.k@shreejamilk.com',      name: 'Mahesh K' },
-  { level: 2, email: process.env.BILLING_APPROVER_2 || 'krithiga.a@shreejamilk.com',    name: 'Krithiga A' },
-  { level: 3, email: process.env.BILLING_APPROVER_3 || 'Thimmappa.sura@shreejamilk.com', name: 'Thimmappa Sura' },
+  // title: salutation in the utilisation approval mails (owner, 2026-10-17).
+  { level: 1, email: process.env.BILLING_APPROVER_1 || 'Mahesh.k@shreejamilk.com',      name: 'Mahesh K',       title: process.env.BILLING_APPROVER_1_TITLE || 'Sir' },
+  { level: 2, email: process.env.BILLING_APPROVER_2 || 'krithiga.a@shreejamilk.com',    name: 'Krithiga A',     title: process.env.BILLING_APPROVER_2_TITLE || 'Madam' },
+  { level: 3, email: process.env.BILLING_APPROVER_3 || 'Thimmappa.sura@shreejamilk.com', name: 'Thimmappa Sura', title: process.env.BILLING_APPROVER_3_TITLE || 'Sir' },
 ];
 const approverFor = level => APPROVERS.find(a => a.level === level) || null;
 

@@ -15,7 +15,7 @@ const ExcelJS = require('exceljs');
 const { pool, query } = require('../config/db');
 const { authenticate, hasRole, rolesOf, accessFor, isReadOnlyUser } = require('../middleware/auth');
 const { APPROVERS, approverFor, approverUser, billingTransport } = require('../services/billingApprovers');
-const { utilisationNote, plantSummaryHtml, noteTextHtml, buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD } = require('../services/dayUtilisation');
+const { withSalutation, utilisationNote, plantSummaryHtml, noteTextHtml, buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD } = require('../services/dayUtilisation');
 const { fmtDateDisplay } = require('../utils/date');
 const { stylePortalWorkbook } = require('../services/portalExcel');
 
@@ -104,7 +104,7 @@ async function runExcel(a) {
   sum.addRow([`Above ${T}% utilisation`, note.above]);
   sum.addRow([`Under ${T}% utilisation`, note.below]);
   for (const g of note.groups) sum.addRow([`  ${g.label}`, g.count, num(g.min), num(g.avg), g.over94, g.plants.map(p => p.plant).join(', ')]);
-  if (note.untaggedGroup) sum.addRow(['  Not yet categorised', note.untagged, num(note.untaggedGroup.min), num(note.untaggedGroup.avg), null, note.untaggedGroup.plants.map(p => p.plant).join(', ')]);
+  if (note.nearGroup) sum.addRow([`  Near-target (94% to ${T}%)`, note.nearGroup.count, null, num(note.nearGroup.avg), null, note.nearGroup.plants.map(p => p.plant).join(', ')]);
   sum.addRow(['Approval status', STATUS_LABEL[a.status] || a.status]);
   sum.addRow(['Submitted by', a.submitted_by_name || '']);
 
@@ -120,7 +120,7 @@ async function runExcel(a) {
   ps.addRow([`${title} — under ${T}% by plant and reason`]); ps.addRow([]);
   ps.addRow(['Reason', 'Plant', 'Trips', 'Avg util %', 'Routes', 'Details']);
   for (const g of note.groups) for (const p of g.plants) ps.addRow([g.label, p.plant, p.count, num(p.avg), p.routes.join(', '), p.details.join('; ')]);
-  if (note.untaggedGroup) for (const p of note.untaggedGroup.plants) ps.addRow(['Not yet categorised', p.plant, p.count, num(p.avg), p.routes.join(', '), '']);
+  if (note.nearGroup) for (const p of note.nearGroup.plants) ps.addRow([`Near-target (94% to ${T}%)`, p.plant, p.count, num(p.avg), p.routes.join(', '), '']);
 
   const at = wb.addWorksheet('All trips');
   at.addRow([`${title} — all trips of the run`]); at.addRow([]);
@@ -147,7 +147,7 @@ function approvalMailHtml(a, level, token) {
     <p style="font-size:12px;color:#4b5563;margin:0 0 10px;">Billing run #${a.run_id} (${esc(periodOf(a))}) · submitted by ${esc(a.submitted_by_name || '—')}</p>
     ${done ? `<ul style="font-size:12px;margin:0 0 10px 18px;padding:0;">${done}</ul>` : ''}
     ${a.note_snapshot?.untagged ? `<p style="font-size:12px;color:#b45309;">${a.note_snapshot.untagged} under-utilised trip(s) had no reason tagged at submission.</p>` : ''}
-    ${noteTextHtml(a.note_text || '')}
+    ${noteTextHtml(withSalutation(a.note_text || '', approverFor(level)?.title))}
     ${plantSummaryHtml(a.note_snapshot)}
     <div style="margin:18px 0;">${btn('approve', 'Approve', '#16a34a')}${btn('reject', 'Reject', '#dc2626')}</div>
     <p style="font-size:11px;color:#9ca3af;">No login needed — the button opens a confirmation page; confirm there. The link works once and expires in ${TOKEN_DAYS} days. The attached Excel holds the summary, the under-utilised trips with their reasons, the plant summary, all trips of the run and the note.</p>
@@ -174,7 +174,9 @@ async function mailInitiator(approvalId) {
   if (!u?.email) return;
   const rej = a.steps.find(s => s.decision === 'rejected');
   const subject = `Tanker utilisation ${a.status === 'approved' ? 'approved' : 'rejected'} — Billing run #${a.run_id} (${periodOf(a)})`;
+  const title = APPROVERS.find(x => x.email.toLowerCase() === String(u.email).toLowerCase())?.title || 'Sir/Madam';
   const html = `<div style="font-family:Verdana,Geneva,sans-serif;font-size:13px;color:#1f2937;">
+    <p style="font-size:13px;">Dear ${esc(title)},</p>
     <p style="font-size:13px;">The tanker utilisation approval of billing run #${a.run_id} (${esc(periodOf(a))}) was
       <b>${a.status === 'approved' ? 'approved at L3' : `rejected at L${rej?.level} by ${esc(rej?.decided_by || rej?.approver_name || '')}`}</b>.</p>
     ${rej?.remarks ? `<p style="font-size:13px;"><b>Remarks:</b> ${esc(rej.remarks)}</p>` : ''}
@@ -237,7 +239,7 @@ router.get('/decision-info', async (req, res) => {
     res.json({
       id: a.id, run_id: a.run_id, period: periodOf(a), level: st.level, status: a.status,
       submitted_by_name: a.submitted_by_name, note_text: a.note_text,
-      html: noteTextHtml(a.note_text || '') + plantSummaryHtml(a.note_snapshot),
+      html: noteTextHtml(withSalutation(a.note_text || '', approverFor(st.level)?.title)) + plantSummaryHtml(a.note_snapshot),
       steps: a.steps.map(s => ({ level: s.level, approver_name: s.approver_name, decision: s.decision, remarks: s.remarks, decided_at: s.decided_at })),
     });
   } catch (err) { res.status(500).json({ error: 'Failed to load the approval' }); }
