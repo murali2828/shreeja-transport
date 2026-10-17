@@ -202,9 +202,12 @@ export default function TankerBilling() {
       const results = r.data.results || [];
       const sent = results.filter(x => x.startsWith('✓')).length;
       const failed = results.filter(x => x.startsWith('✗'));
-      if (sent > 0) toast.success(`Draft tanker cards emailed to ${sent} vendor(s)${vendorFilter.length ? ' (selected only)' : ''} for verification`);
+      if (sent > 0) toast.success(run?.status === 'approved'
+        ? `Approved tanker cards emailed to ${sent} vendor(s)${vendorFilter.length ? ' (selected only)' : ''}`
+        : `Draft tanker cards emailed to ${sent} vendor(s)${vendorFilter.length ? ' (selected only)' : ''} for verification`);
       if (!sent && !failed.length) toast('Nothing to push — no billable trips for the current selection.', { icon: 'ℹ️', duration: 8000 });
       failed.forEach(msg => toast.error(msg, { duration: 12000 }));
+      qc.invalidateQueries(['billing-vendor-pushes', openRunId]);
       qc.invalidateQueries(['billing-run', openRunId]);
       qc.invalidateQueries(['billing-runs']);
     },
@@ -409,18 +412,22 @@ export default function TankerBilling() {
             <Undo2 size={13}/> {withdrawMut.isPending ? 'Withdrawing…' : 'Withdraw from approval'}
           </button>
         )}
-        {editable && ['draft', 'rejected', 'pending_vendor'].includes(run.status) && (
+        {((editable && ['draft', 'rejected', 'pending_vendor'].includes(run.status)) || (canEdit && run.status === 'approved')) && (() => {
+          const fin = run.status === 'approved';
+          const kind = fin ? 'APPROVED' : 'DRAFT';
+          return (
           <button className="btn-secondary text-xs flex items-center gap-1.5" disabled={pushVendorMut.isPending}
                   title={vendorFilter.length
-                    ? `Email draft tanker cards to only: ${vendorFilter.map(v => v.vendor_name).join(', ')}`
-                    : 'Email draft tanker cards to each vendor for review before final submission — safe to re-send after editing more trips'}
+                    ? `Email ${kind.toLowerCase()} tanker cards to only: ${vendorFilter.map(v => v.vendor_name).join(', ')}`
+                    : `Email ${kind.toLowerCase()} tanker cards to every vendor on this run`}
                   onClick={() => window.confirm(vendorFilter.length
-                      ? `Email DRAFT tanker cards to ${vendorFilter.length} selected vendor(s) only?`
-                      : 'Email DRAFT tanker cards to all vendors on this run for verification?') && pushVendorMut.mutate()}>
-            <Send size={13}/> {pushVendorMut.isPending ? 'Sending…' : (run.status === 'pending_vendor' ? 'Push to Vendors Again' : 'Push to Vendors')}
+                      ? `Email ${kind} tanker cards to ${vendorFilter.length} selected vendor(s) only?`
+                      : (fin ? 'Email the APPROVED (final) tanker cards to all vendors on this run? The run status does not change.'
+                             : 'Email DRAFT tanker cards to all vendors on this run for verification?')) && pushVendorMut.mutate()}>
+            <Send size={13}/> {pushVendorMut.isPending ? 'Sending…' : (fin ? 'Send approved cards to vendors' : run.status === 'pending_vendor' ? 'Push to Vendors Again' : 'Push to Vendors')}
             {vendorFilter.length ? ` (${vendorFilter.length})` : ''}
-          </button>
-        )}
+          </button>);
+        })()}
         {editable && (<>
           <button className="btn-secondary text-xs" disabled={!Object.keys(edits).length || saveMut.isPending}
                   onClick={() => {
@@ -621,6 +628,10 @@ export default function TankerBilling() {
       {tab === 'tolls' && (
         <TollPanel runId={openRunId} tolls={run?.tolls || []} pendingEarlier={run?.tolls_pending_earlier || []}
                    tankers={summary?.tankers || []} editable={editable} runStatus={run?.status}/>
+      )}
+
+      {tab === 'vendors' && canEdit && (
+        <VendorPushStatus runId={openRunId} vendorList={vendorList || []} onSelect={setVendorFilter}/>
       )}
 
       {tab === 'vendors' && unassignedTankers.length > 0 && editable && (
@@ -1088,6 +1099,65 @@ function VendorEmailToggle() {
           Save address
         </button>
       </>)}
+    </div>
+  );
+}
+
+// Which vendors of the run were mailed (draft / approved), failed or never sent
+// (billing_vendor_pushes, migration 075); "Select not-sent" fills the vendor filter.
+function VendorPushStatus({ runId, vendorList, onSelect }) {
+  const [open, setOpen] = useState(true);
+  const { data: rows = [] } = useQuery({
+    queryKey: ['billing-vendor-pushes', runId],
+    queryFn: () => api.get(`/billing/runs/${runId}/vendor-pushes`).then(r => r.data),
+    enabled: !!runId,
+  });
+  const sent = rows.filter(r => r.last_push?.status === 'sent').length;
+  const pending = rows.filter(r => r.vendor_id && (r.never_pushed || r.last_push?.status === 'failed'));
+  const fmtTs = ts => ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-') : '';
+  const badge = r => {
+    const st = r.last_push?.status;
+    const [l, bg, fg] = st === 'sent' ? ['Sent', '#dcfce7', '#166534'] : st === 'failed' ? ['Failed', '#fee2e2', '#991b1b']
+      : st === 'skipped' ? ['Skipped', '#fef3c7', '#92400e'] : ['Not sent', '#f1f5f9', '#475569'];
+    return <span className="px-2 py-0.5 rounded text-[11px] font-semibold" style={{ background: bg, color: fg }} title={r.last_push?.error || ''}>{l}</span>;
+  };
+  if (!rows.length) return null;
+  return (
+    <div className="card p-3 space-y-2">
+      <div className="flex items-center gap-3 flex-wrap">
+        <button className="text-sm font-semibold flex items-center gap-1" onClick={() => setOpen(o => !o)}>
+          {open ? <ChevronDown size={14}/> : <ChevronRight size={14}/>} Vendor mails
+        </button>
+        <span className="text-xs text-stone-600">{sent} of {rows.length} vendors sent · {rows.length - sent} not sent yet</span>
+        {pending.length > 0 && (
+          <button className="btn-secondary text-xs" onClick={() => {
+            onSelect(pending.map(r => vendorList.find(v => v.id === r.vendor_id) || { id: r.vendor_id, vendor_name: r.vendor_name }));
+            toast.success(`${pending.length} not-sent vendor(s) selected — use Push to Vendors to send just those`);
+          }}>Select not-sent vendors ({pending.length})</button>
+        )}
+      </div>
+      {open && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead><tr className="text-left text-stone-500">
+              <th className="py-1 pr-2">Vendor</th><th className="pr-2">Email</th><th className="pr-2 text-right">Trips</th>
+              <th className="pr-2 text-right">Amount (₹)</th><th className="pr-2">Last sent</th><th>Status</th>
+            </tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.vendor_id ?? 'none'} className="border-t border-stone-100">
+                  <td className="py-1 pr-2">{r.vendor_name}</td>
+                  <td className="pr-2">{r.email || <span className="text-red-600">no email</span>}</td>
+                  <td className="pr-2 text-right">{r.trips}</td>
+                  <td className="pr-2 text-right">{nf(r.amount)}</td>
+                  <td className="pr-2">{r.last_push ? `${fmtTs(r.last_push.sent_at)} · ${r.last_push.kind}${r.last_push.sent_by_name ? ` · ${r.last_push.sent_by_name}` : ''}` : '—'}</td>
+                  <td>{badge(r)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

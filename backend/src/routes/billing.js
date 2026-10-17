@@ -1354,7 +1354,21 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
+// Push log (migration 075): one row per vendor attempt. Never fails the send.
+async function recordVendorPush(row) {
+  try {
+    await query(`INSERT INTO billing_vendor_pushes
+      (run_id, vendor_id, vendor_name, email, kind, trips, amount, status, error, sent_by, sent_by_name)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [row.run_id, row.vendor_id || null, row.vendor_name || null, row.email || null, row.kind,
+        row.trips || 0, row.amount || 0, row.status, row.error || null, row.sent_by || null, row.sent_by_name || null]);
+  } catch (e) { console.error('[billing] vendor push log', e.message); }
+}
+// Every vendor push mail copies the billing team (env, comma list).
+const vendorCc = () => String(process.env.BILLING_VENDOR_CC ?? 'mahesh.k@shreejamilk.com,transport.billing@shreejamilk.com')
+  .split(',').map(x => x.trim()).filter(Boolean).join(', ');
+
+async function publishRunToVendors(runId, { draft = false, vendorIds, user } = {}) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
   const scoped = Array.isArray(vendorIds) && vendorIds.length > 0;
   const allTrips = (await query(`
@@ -1406,7 +1420,8 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
   const byVendor = new Map();
   for (const t of trips) {
     const key = t.vendor_email ? t.vendor_email.trim().toLowerCase() : (t.vendor_id ? `id:${t.vendor_id}` : 'none');
-    if (!byVendor.has(key)) byVendor.set(key, { name: t.vendor_name || '— No vendor mapped —', email: t.vendor_email, trips: [] });
+    if (!byVendor.has(key)) byVendor.set(key, { name: t.vendor_name || '— No vendor mapped —', email: t.vendor_email, trips: [], vendorIds: new Set() });
+    if (t.vendor_id) byVendor.get(key).vendorIds.add(t.vendor_id);
     byVendor.get(key).trips.push(t);
   }
 
@@ -1417,7 +1432,19 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
     const vendorTolls = vendorTankers.flatMap(tn => (tollBy.get(tn) || []).map(x => ({ tanker: tn, ...x })));
     const tollTotal = vendorTolls.reduce((s, t) => s + t.amount, 0);
     const total = tripTotal + tollTotal;
+    // One log row per vendor-master id sharing this mailbox (or one without id).
+    const logPush = async (status, error) => {
+      const ids = v.vendorIds.size ? [...v.vendorIds] : [null];
+      for (const vid of ids) {
+        const vt = vid ? v.trips.filter(t => t.vendor_id === vid) : v.trips;
+        await recordVendorPush({ run_id: runId, vendor_id: vid, vendor_name: (vt[0] && vt[0].vendor_name) || v.name, email: v.email,
+          kind: draft ? 'draft' : 'approved', trips: vt.length,
+          amount: vt.reduce((s, t) => s + (t.excluded ? 0 : (parseFloat(t.amount) || 0)), 0),
+          status, error, sent_by: user?.id, sent_by_name: user?.full_name || user?.user_id || null });
+      }
+    };
     if (!v.email) {
+      await logPush('skipped', key === 'none' ? 'No vendor mapped' : 'No email in Vendor master');
       results.push(`✗ ${v.name} — NOT sent (no ${key === 'none' ? 'vendor mapped' : 'email in Vendor master'}); ${v.trips.length} trips, ₹ ${nf(total)}`);
       continue;
     }
@@ -1491,6 +1518,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
       await vendorTransport.sendMail({
         from: process.env.SMTP_FROM,
         to: v.email,
+        ...(vendorCc() ? { cc: vendorCc() } : {}),
         subject: `${draft ? '[DRAFT for verification] ' : ''}Shreeja Tanker Payment ${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)} — ${v.name} · ₹ ${nf(total)}`,
         html: draft ? `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:13px;">
           <p>Dear ${esc(v.name)},</p>
@@ -1511,8 +1539,10 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
         attachments: [{ filename: `trip_sheet_${run.from_date}_${run.to_date}.xlsx`, content: buf },
           ...(cardsBuf ? [{ filename: `${v.name.replace(/[^A-Za-z0-9]+/g, '_').slice(0, 40)}_Tanker_Cards_${run.from_date}_${run.to_date}.xlsx`, content: cardsBuf }] : [])],
       });
+      await logPush('sent');
       results.push(`✓ ${v.name} — sent to ${v.email} (${v.trips.length} trips, ₹ ${nf(total)})`);
     } catch (e) {
+      await logPush('failed', e.message);
       results.push(`✗ ${v.name} — send FAILED to ${v.email}: ${e.message}`);
     }
   }
@@ -1522,21 +1552,56 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
 // ── POST /api/billing/runs/:id/push-vendor — send draft tanker cards to each
 // vendor for verification before finalizing. Run stays editable; biller can
 // still fix corrections the vendor reports back, then Submit as normal.
+// Approved runs (owner, 2026-10-17): sends the FINAL cards, status unchanged.
 router.post('/runs/:id/push-vendor', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
   try {
     const runId = req.params.id;
     const run = (await query('SELECT * FROM billing_runs WHERE id=$1', [runId])).rows[0];
     if (!run) return res.status(404).json({ error: 'Run not found' });
-    if (!['draft', 'rejected', 'pending_vendor'].includes(run.status))
-      return res.status(400).json({ error: 'Run is already submitted or approved' });
+    const approved = run.status === 'approved';
+    if (!approved && !['draft', 'rejected', 'pending_vendor'].includes(run.status))
+      return res.status(400).json({ error: 'Run is under approval — push to vendors is possible on draft, rejected or approved runs' });
 
     const vendorIds = Array.isArray(req.body?.vendor_ids) ? req.body.vendor_ids.map(Number).filter(Number.isFinite) : undefined;
-    const results = await publishRunToVendors(runId, { draft: true, vendorIds }); // reuses the per-vendor tanker-card mailer
+    const results = await publishRunToVendors(runId, { draft: !approved, vendorIds, user: req.user }); // reuses the per-vendor tanker-card mailer
+    if (approved) return res.json({ ok: true, status: run.status, results });
     await query(`UPDATE billing_runs SET status='pending_vendor', updated_at=NOW() WHERE id=$1`, [runId]);
     res.json({ ok: true, status: 'pending_vendor', results });
   } catch (err) {
     console.error('Billing push-vendor error:', err);
-    res.status(500).json({ error: 'Failed to push draft cards to vendors' });
+    res.status(500).json({ error: 'Failed to push cards to vendors' });
+  }
+});
+
+// ── GET /api/billing/runs/:id/vendor-pushes — per vendor of the run (non-excluded
+// lines) with its last push attempt, so the biller can resend to those not sent.
+router.get('/runs/:id/vendor-pushes', authenticate, authorizeOrModule('billing', ...canBill), async (req, res) => {
+  try {
+    const r = await query(`
+      WITH v AS (
+        SELECT t.vendor_id, MAX(COALESCE(vd.vendor_name, t.vendor_name)) AS vendor_name, MAX(vd.email) AS email,
+               COUNT(*)::int AS trips, COALESCE(SUM(t.amount), 0)::numeric(14,2) AS amount
+        FROM billing_run_trips t LEFT JOIN vendors vd ON vd.id = t.vendor_id
+        WHERE t.run_id = $1 AND NOT COALESCE(t.excluded, FALSE)
+        GROUP BY t.vendor_id)
+      SELECT v.*, p.kind AS last_kind, p.status AS last_status, p.sent_at AS last_sent_at,
+             p.sent_by_name AS last_sent_by_name, p.error AS last_error, COALESCE(c.n, 0)::int AS push_count
+      FROM v
+      LEFT JOIN LATERAL (SELECT * FROM billing_vendor_pushes bp WHERE bp.run_id = $1
+             AND bp.vendor_id IS NOT DISTINCT FROM v.vendor_id ORDER BY bp.sent_at DESC, bp.id DESC LIMIT 1) p ON TRUE
+      LEFT JOIN LATERAL (SELECT COUNT(*) AS n FROM billing_vendor_pushes bp WHERE bp.run_id = $1
+             AND bp.vendor_id IS NOT DISTINCT FROM v.vendor_id AND bp.status = 'sent') c ON TRUE
+      ORDER BY v.vendor_name NULLS LAST`, [req.params.id]);
+    res.json(r.rows.map(x => ({
+      vendor_id: x.vendor_id, vendor_name: x.vendor_name || '— No vendor mapped —', email: x.email,
+      trips: x.trips, amount: parseFloat(x.amount) || 0,
+      last_push: x.last_status ? { kind: x.last_kind, status: x.last_status, sent_at: x.last_sent_at,
+        sent_by_name: x.last_sent_by_name, error: x.last_error } : null,
+      push_count: x.push_count, never_pushed: x.push_count === 0,
+    })));
+  } catch (err) {
+    console.error('[billing] vendor-pushes', err.message);
+    res.status(500).json({ error: 'Failed to load vendor push status' });
   }
 });
 
