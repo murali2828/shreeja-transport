@@ -631,7 +631,7 @@ export default function TankerBilling() {
       )}
 
       {tab === 'vendors' && canEdit && (
-        <VendorPushStatus runId={openRunId} vendorList={vendorList || []} onSelect={setVendorFilter}/>
+        <VendorPushStatus runId={openRunId} vendorList={vendorList || []} onSelect={setVendorFilter} selected={vendorFilter}/>
       )}
 
       {tab === 'vendors' && unassignedTankers.length > 0 && editable && (
@@ -1105,7 +1105,7 @@ function VendorEmailToggle() {
 
 // Which vendors of the run were mailed (draft / approved), failed or never sent
 // (billing_vendor_pushes, migration 075); "Select not-sent" fills the vendor filter.
-function VendorPushStatus({ runId, vendorList, onSelect }) {
+function VendorPushStatus({ runId, vendorList, onSelect, selected = [] }) {
   const [open, setOpen] = useState(true);
   const { data: rows = [] } = useQuery({
     queryKey: ['billing-vendor-pushes', runId],
@@ -1129,6 +1129,13 @@ function VendorPushStatus({ runId, vendorList, onSelect }) {
           {open ? <ChevronDown size={14}/> : <ChevronRight size={14}/>} Vendor mails
         </button>
         <span className="text-xs text-stone-600">{sent} of {rows.length} vendors sent · {rows.length - sent} not sent yet</span>
+        {sent > 0 && (
+          <button className="btn-secondary text-xs" onClick={() => {
+            const s = rows.filter(r => r.vendor_id && r.last_push?.status === 'sent');
+            onSelect(s.map(r => vendorList.find(v => v.id === r.vendor_id) || { id: r.vendor_id, vendor_name: r.vendor_name }));
+            toast.success(`${s.length} already-sent vendor(s) selected — Push to Vendors re-sends to just those`);
+          }}>Select sent vendors ({sent})</button>
+        )}
         {pending.length > 0 && (
           <button className="btn-secondary text-xs" onClick={() => {
             onSelect(pending.map(r => vendorList.find(v => v.id === r.vendor_id) || { id: r.vendor_id, vendor_name: r.vendor_name }));
@@ -1141,7 +1148,7 @@ function VendorPushStatus({ runId, vendorList, onSelect }) {
           <table className="w-full text-xs">
             <thead><tr className="text-left text-stone-500">
               <th className="py-1 pr-2">Vendor</th><th className="pr-2">Email</th><th className="pr-2 text-right">Trips</th>
-              <th className="pr-2 text-right">Amount (₹)</th><th className="pr-2">Last sent</th><th>Status</th>
+              <th className="pr-2 text-right">Amount (₹)</th><th className="pr-2">Last sent</th><th className="pr-2">Status</th><th>Send</th>
             </tr></thead>
             <tbody>
               {rows.map(r => (
@@ -1151,7 +1158,15 @@ function VendorPushStatus({ runId, vendorList, onSelect }) {
                   <td className="pr-2 text-right">{r.trips}</td>
                   <td className="pr-2 text-right">{nf(r.amount)}</td>
                   <td className="pr-2">{r.last_push ? `${fmtTs(r.last_push.sent_at)} · ${r.last_push.kind}${r.last_push.sent_by_name ? ` · ${r.last_push.sent_by_name}` : ''}` : '—'}</td>
-                  <td>{badge(r)}</td>
+                  <td className="pr-2">{badge(r)}</td>
+                  <td>{r.vendor_id && r.email && (() => {
+                    const on = selected.some(v => v.id === r.vendor_id);
+                    return <label className="flex items-center gap-1 cursor-pointer" title="Tick to (re)send this vendor with Push to Vendors">
+                      <input type="checkbox" checked={on} onChange={() => onSelect(on ? selected.filter(v => v.id !== r.vendor_id)
+                        : [...selected, vendorList.find(v => v.id === r.vendor_id) || { id: r.vendor_id, vendor_name: r.vendor_name }])}/>
+                      {r.last_push?.status === 'sent' ? 'resend' : 'send'}
+                    </label>;
+                  })()}</td>
                 </tr>
               ))}
             </tbody>
