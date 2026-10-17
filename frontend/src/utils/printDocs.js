@@ -266,12 +266,12 @@ function qaWindow(title, body) {
 }
 const qaDup = n => (n > 1 ? `<div class="dup">DUPLICATE (print ${n})</div>` : '');
 
-export function printQaDispatch(doc, printNo = 1) {
+export function qaDispatchBody(doc, printNo = 1) {
   const d = doc.data || {}, bt = d.bill_to || {}, st = d.ship_to || {}, c = d.compartments || {}, it = d.item || {};
   const cell = (k, f) => esc(c[k]?.[f] ?? '');
   const L = (label, val) => `<td style="width:17%">${label}</td><td class="n" style="width:16%">${esc(val)}</td>`;
   const P = (label, val) => `<td style="width:17%">${label}</td><td class="c" style="width:17%">${esc(val)}</td>`;
-  qaWindow(`Dispatch ${doc.challan_no}`, `${qaDup(printNo)}
+  return `${qaDup(printNo)}
     <div class="ba c" style="font-weight:bold;font-size:12pt">SHREEJA MAHILA MILK PRODUCER COMPANY LIMITED<br>
       Address: 3rd &amp; 4th Floors, Plot No 29 &amp; 30, Bachala Towers, SGS Arts College Road, Tirupati<br>
       Tel: 0877-2242173, E-Mail: info@shreejamilk.com, Website: shreejamilk.com</div>
@@ -306,7 +306,7 @@ export function printQaDispatch(doc, printNo = 1) {
         <td class="c">${esc(it.igst_rate)}</td><td class="c">${esc(it.igst_amt)}</td><td class="c">${esc(it.total)}</td></tr>
       <tr><td></td><td class="c" colspan="11">${esc(it.description)}</td></tr>
     </table>
-    <table class="nb ba" style="margin-top:40px;font-weight:bold;font-size:12pt"><tr><td style="font-weight:bold">Signature:</td><td class="r" style="font-weight:bold">Shreeja Representative</td></tr></table>`);
+    <table class="nb ba" style="margin-top:40px;font-weight:bold;font-size:12pt"><tr><td style="font-weight:bold">Signature:</td><td class="r" style="font-weight:bold">Shreeja Representative</td></tr></table>`;
 }
 
 export const QA_COA_TESTS = [
@@ -339,11 +339,11 @@ export const QA_COA_TESTS = [
   ['boric_acid', 'Boric Acid', 'Negative'],
 ];
 
-export function printQaCoa(doc, printNo = 1) {
+export function qaCoaBody(doc, printNo = 1) {
   const d = doc.data || {}, o = d.coa || {};
   const rows = QA_COA_TESTS.map(([k, name, limit], i) =>
     `<tr><td class="c n">${i + 1}</td><td>${name}</td><td${limit.length < 30 ? ' class="c"' : ''}>${limit}</td><td class="c">${esc(o[k])}</td></tr>`).join('');
-  qaWindow(`COA ${doc.challan_no}`, `${qaDup(printNo)}
+  return `${qaDup(printNo)}
     <div class="c" style="font-weight:bold;margin-bottom:8px"><span style="font-size:13.5pt">Certificate of Analysis</span> <span style="font-size:9.5pt">(Annexure to Tanker Challan)</span></div>
     <table style="font-size:11pt;margin-bottom:8px">
       <tr><td style="width:45%">Milk Tanker being sent from:</td><td class="n">${esc(d.dispatch_from)}</td></tr>
@@ -359,5 +359,13 @@ export function printQaCoa(doc, printNo = 1) {
     <div style="font-size:11pt;margin-top:8px"><b>Note:1</b>. Rest Values of Tests (like Fat &amp; SNF) are mentioned in the main Tanker Challan<br>
       <b>2.</b> This milk is being sent for further processing and is not for direct sales<br>
       <b>3.</b> This document is to be prepared in duplicate; one to be sent as annexure to main copy of challan, and second to be preserved by the dispatch location.</div>
-    <div style="font-size:11pt;font-weight:bold;margin-top:40px">Signature of Despatcher<br>(In-charge MCC/ QA)</div>`);
+    <div style="font-size:11pt;font-weight:bold;margin-top:40px">Signature of Despatcher<br>(In-charge MCC/ QA)</div>`;
+}
+
+// Quality → COA (owner, 2026-10-17): one print = Milk Dispatch Voucher, page
+// break, Certificate of Analysis; the separate prints stay for reuse.
+export function printQaDispatch(doc, printNo = 1) { qaWindow(`Dispatch ${doc.challan_no}`, qaDispatchBody(doc, printNo)); }
+export function printQaCoa(doc, printNo = 1) { qaWindow(`COA ${doc.challan_no}`, qaCoaBody(doc, printNo)); }
+export function printQaCombined(doc, printNo = 1) {
+  qaWindow(`COA ${doc.challan_no}`, `${qaDispatchBody(doc, printNo)}<div style="page-break-before:always"></div>${qaCoaBody(doc, printNo)}`);
 }

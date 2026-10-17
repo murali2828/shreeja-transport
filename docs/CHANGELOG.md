@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- Quality → **Dispatch & COA** renamed **COA**; one **Print COA** button prints the Milk Dispatch Voucher and the Certificate of Analysis together (page break between, DUPLICATE from the second print; both print counters recorded) (owner, 2026-10-17).
+
 ## 2026-10-17 (4) — promoted to `main` 2026-10-17 (migration 076)
 
 ### Added

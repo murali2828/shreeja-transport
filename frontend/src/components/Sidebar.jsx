@@ -149,7 +149,7 @@ export default function Sidebar({ collapsed = false }) {
           {ni('/quality/entry', <ClipboardList size={15}/>, 'QA Dispatch Entry')}
           {ni('/quality/ack', <ClipboardCheck size={15}/>, 'QA Acknowledgement')}
           {ni('/quality/entries', <BarChart2 size={15}/>, 'QA Dispatch Report')}
-          {ni('/quality/documents', <Printer size={15}/>, 'Dispatch & COA')}
+          {ni('/quality/documents', <Printer size={15}/>, 'COA')}
         </NavSection>
       )}
 

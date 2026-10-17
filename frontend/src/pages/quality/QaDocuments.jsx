@@ -9,7 +9,7 @@ import { Save, Printer } from 'lucide-react';
 import toast from 'react-hot-toast';
 import SearchableSelect from '../../components/SearchableSelect';
 import { getQaDocTankers, getQaDocs, saveQaDocs, markQaDocPrinted } from '../../api/index';
-import { printQaDispatch, printQaCoa, QA_COA_TESTS } from '../../utils/printDocs';
+import { printQaCombined, QA_COA_TESTS } from '../../utils/printDocs';
 import { useAuth } from '../../hooks/useAuth';
 import { canEdit } from '../../utils/roles';
 
@@ -96,10 +96,14 @@ export default function QaDocuments() {
   async function print(kind) {
     const saved = editable ? await save() : doc;
     if (!saved?.id) return;
+    // One print covers both documents: record both counters, DUPLICATE from the 2nd print.
     let n = 1;
-    try { n = (await markQaDocPrinted(saved.id, kind)).data.count; } catch { /* print anyway */ }
+    try {
+      const [a, b] = await Promise.all([markQaDocPrinted(saved.id, 'dispatch'), markQaDocPrinted(saved.id, 'coa')]);
+      n = Math.max(a.data.count || 1, b.data.count || 1);
+    } catch { /* print anyway */ }
     const full = { ...doc, ...saved, data: doc.data };
-    kind === 'coa' ? printQaCoa(full, n) : printQaDispatch(full, n);
+    printQaCombined(full, n);
   }
 
   const inp = (path, props = {}) => {
@@ -121,7 +125,7 @@ export default function QaDocuments() {
 
   return (
     <div className="p-4 space-y-4 max-w-6xl">
-      <h1 className="text-xl font-semibold">Dispatch Challan &amp; COA</h1>
+      <h1 className="text-xl font-semibold">COA</h1>
       <div className="card p-4 grid sm:grid-cols-3 gap-3 items-end">
         <Field label="Lifting date"><input type="date" className="input w-full py-1.5" value={date} max={today()} onChange={e => setDate(e.target.value)}/></Field>
         <Field label="Tanker / route" className="sm:col-span-2">
@@ -138,8 +142,7 @@ export default function QaDocuments() {
           {d.totals && <span className="text-xs text-gray-600">QA entries: {d.totals.litres} L · {d.totals.kgs} kg · Fat {d.totals.fat ?? '—'} % · SNF {d.totals.snf ?? '—'} %</span>}
           <div className="flex-1"/>
           {editable && <button className="btn-secondary flex items-center gap-1" disabled={busy} onClick={save}><Save size={14}/> Save</button>}
-          <button className="btn-primary flex items-center gap-1" disabled={busy} onClick={() => print('dispatch')}><Printer size={14}/> Print Dispatch</button>
-          <button className="btn-primary flex items-center gap-1" disabled={busy} onClick={() => print('coa')}><Printer size={14}/> Print COA</button>
+          <button className="btn-primary flex items-center gap-1" disabled={busy} onClick={() => print()} title="Prints the Milk Dispatch Voucher and the Certificate of Analysis together"><Printer size={14}/> Print COA</button>
         </div>
 
         <div className="card p-4 space-y-3">
