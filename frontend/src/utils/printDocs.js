@@ -406,7 +406,7 @@ export function qaDispatchChallanBody(doc, printNo = 1) {
   const F = (l, v) => `<td style="width:22%">${l}</td><td class="n" style="width:28%">${esc(v)}</td>`;
   return `${qaDup(printNo)}
     <table style="font-size:10pt">
-      <tr><td rowspan="3" class="c" style="width:22%;font-size:16pt;letter-spacing:2px">SHREEJA</td>
+      <tr><td rowspan="3" class="c" style="width:22%"><img src="${window.location.origin}/shreeja-mmpc-logo.png" alt="Shreeja" style="max-width:100%;height:auto;max-height:60px"></td>
         <td class="c" style="font-size:13pt">SHREEJA MAHILA MILK PRODUCER COMPANY LTD.,</td></tr>
       <tr><td class="c n">3rd &amp; 4th Floors, Plot No.29 &amp; 30, Bachala Towers, S.G.S. Arts College Road, New Indira Nagar, Tirupati - 517501, Ph.: 0877 - 2242173, 2242727</td></tr>
       <tr><td class="c">(FSSAI Lic No.: 10014044000870)</td></tr>

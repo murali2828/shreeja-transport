@@ -25,9 +25,7 @@ export default function Layout() {
 
         {/* Shreeja wordmark */}
         <div className="flex items-center mr-4 select-none flex-1">
-          <span className="font-bold text-white text-[17px] italic tracking-tight" style={{fontFamily:"'Segoe UI',sans-serif"}}>
-            Shreeja
-          </span>
+          <img src="/shreeja-logo.png" alt="Shreeja" className="h-8 w-auto"/>
         </div>
 
         {/* Right controls */}

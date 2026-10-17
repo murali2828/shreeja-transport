@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import { Truck, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { login } from '../api/index';
 import { useAuth } from '../hooks/useAuth';
@@ -57,14 +57,8 @@ export default function Login() {
 
         {/* Logo area */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
-            style={{ background:'linear-gradient(135deg,#0078d4,#1a9dd9)',
-                     boxShadow:'0 6px 20px rgba(0,120,212,0.40)' }}>
-            <Truck size={30} className="text-white"/>
-          </div>
-          <div className="text-2xl font-bold text-gray-800" style={{ fontFamily:"'Segoe UI',sans-serif" }}>
-            <span className="italic text-[#0078d4]">Shreeja</span> Transport
-          </div>
+          <img src="/shreeja-logo.png" alt="Shreeja" className="h-16 w-auto mb-2"/>
+          <div className="text-2xl font-bold text-gray-800" style={{ fontFamily:"'Segoe UI',sans-serif" }}>Transport</div>
           <p className="text-sm text-gray-500 mt-1">Secondary Transport Management</p>
         </div>
 
