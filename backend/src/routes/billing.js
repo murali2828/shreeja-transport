@@ -1532,7 +1532,7 @@ async function publishRunToVendors(runId, { draft = false, vendorIds, user } = {
           <p>The tanker payment for <b>${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}</b> has been approved.
           Your trip sheet is attached: <b>${v.trips.length} trips · ₹ ${nf(tripTotal)}</b>${materialTrips.length ? ` (including ${materialTrips.length} material trip(s) listed in their own section)` : ''}${tollTotal > 0
             ? ` plus toll challan reimbursement <b>₹ ${nf(tollTotal)}</b> — total payable <b>₹ ${nf(total)}</b>` : ''}.</p>
-          <p>The <b>Tanker Cards</b> workbook is attached for printing — one landscape page per state, tanker and transport type; please sign every page and send the signed cards back to us.</p>
+          <p>The <b>Tanker Cards</b> workbook is attached for printing — one page per state, tanker and transport type; please sign every page and send the signed cards back to us.</p>
           <p>For any discrepancy in distances, contact the Shreeja billing team with the trip
           date and tanker number — corrections carry remarks and go through approval.</p>
           <p style="color:#9ca3af;font-size:11px;">Shreeja TMS — automated mail; do not reply.</p></div>`,
