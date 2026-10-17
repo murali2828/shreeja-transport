@@ -195,6 +195,9 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
   const nearRows = below.filter(r => r.utilization > 94);
   const nearGroup = nearRows.length ? { count: nearRows.length, avg: avgOf(nearRows), plants: plantsOf(nearRows) } : null;
   const plantSummary = plantsOf(below).map(p => ({ plant: p.plant, count: p.count, avg: p.avg }));
+  // Utilisation bands for the mail charts (owner, 2026-10-17).
+  const BANDS = [['Below 80%', 0, 80], ['80–90%', 80, 90], ['90–94%', 90, 94], [`94–${threshold}%`, 94, threshold], [`${threshold}% and above`, threshold, Infinity]];
+  const bands = BANDS.map(([label, lo, hi]) => ({ label, count: rows.filter(r => r.utilization != null && r.utilization >= lo && r.utilization < hi).length }));
 
   const tripsAvg = p => `(${p.count} trip${p.count === 1 ? '' : 's'}, avg util ${p.avg}%)`;
   const plantLine = (p, at) => `   - ${p.plant}: ${at} ${andList(p.routes) || '—'} ${tripsAvg(p)}.`;
@@ -226,7 +229,7 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
     'Please review and approve the underutilized tanker movements as detailed above.');
   return {
     run, period, threshold, total: rows.length, above: above.length, below: below.length,
-    untagged, near: nearGroup ? nearGroup.count : 0, groups, nearGroup, plantSummary, text: lines.join('\n'),
+    untagged, near: nearGroup ? nearGroup.count : 0, bands, groups, nearGroup, plantSummary, text: lines.join('\n'),
   };
 }
 
@@ -298,6 +301,42 @@ function utilisationNoteHtml(n, { text, status } = {}) {
       <p style="font-size:11px;color:#6b7280;margin:6px 0 0;">The under-utilised trips are approved in their own L1–L3 utilisation approval raised by logistics (Tanker Utilisation sheet attached).</p>`;
 }
 
+// Summary charts for the approval mails (owner, 2026-10-17): bars drawn with
+// table cells so they render in Gmail, Outlook and on phones without images,
+// scripts or SVG. Built from the note snapshot (counts at submission).
+function chartsHtml(n) {
+  if (!n || !n.total) return '';
+  const F = 'font-family:Verdana,Geneva,sans-serif;font-size:12px;color:#1f2937;';
+  const title = t => `<p style="${F}font-size:13px;font-weight:bold;color:#003a6b;margin:16px 0 6px;">${esc(t)}</p>`;
+  const bars = (items, color, max) => {
+    const m = max || Math.max(1, ...items.map(i => i.value));
+    return `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;${F}">${items.map(i => {
+      const w = Math.max(i.value ? 2 : 0, Math.round(i.value / m * 260));
+      return `<tr><td style="${F}padding:3px 10px 3px 0;white-space:nowrap;">${esc(i.label)}</td>
+        <td style="padding:3px 0;"><table cellpadding="0" cellspacing="0"><tr>${w ? `<td style="background:${i.color || color};width:${w}px;height:14px;font-size:1px;line-height:1px;">&nbsp;</td>` : ''}
+        <td style="${F}padding-left:6px;font-weight:bold;">${i.value}${i.note ? ` <span style="font-weight:normal;color:#6b7280;">${esc(i.note)}</span>` : ''}</td></tr></table></td></tr>`;
+    }).join('')}</table>`;
+  };
+  const pct = v => n.total ? `(${Math.round(v / n.total * 1000) / 10}%)` : '';
+  const aw = Math.round(n.above / n.total * 520), bw = 520 - aw;
+  const split = `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>
+    ${aw ? `<td style="background:#16a34a;width:${aw}px;height:22px;color:#fff;${F}color:#fff;font-weight:bold;text-align:center;">${n.above}</td>` : ''}
+    ${bw ? `<td style="background:#dc2626;width:${bw}px;height:22px;${F}color:#fff;font-weight:bold;text-align:center;">${n.below}</td>` : ''}
+  </tr></table>
+  <p style="${F}margin:4px 0 0;"><span style="color:#16a34a;">&#9632;</span> Above ${n.threshold}%: <b>${n.above}</b> ${pct(n.above)} &nbsp; <span style="color:#dc2626;">&#9632;</span> Under ${n.threshold}%: <b>${n.below}</b> ${pct(n.below)}</p>`;
+  const reasons = (n.groups || []).map(g => ({ label: g.label, value: g.count, note: `avg ${g.avg}%` }));
+  if (n.untagged) reasons.push({ label: 'Not tagged', value: n.untagged, color: '#9ca3af' });
+  const plants = (n.plantSummary || []).map(p => ({ label: p.plant, value: p.count, note: `avg ${p.avg}%` }));
+  const bandColors = ['#b91c1c', '#ea580c', '#f59e0b', '#84cc16', '#16a34a'];
+  const bands = (n.bands || []).map((b, i) => ({ label: b.label, value: b.count, color: bandColors[i] }));
+  return `<div style="border-top:1px solid #e5e7eb;margin-top:14px;padding-top:4px;">
+    ${title(`Summary — ${n.total} movements`)}${split}
+    ${reasons.length ? title(`Under-${n.threshold}% trips by reason`) + bars(reasons, '#2563eb') : ''}
+    ${plants.length ? title(`Under-${n.threshold}% trips by plant`) + bars(plants, '#0ea5e9') : ''}
+    ${bands.length ? title('Trips by utilisation band') + bars(bands, '#16a34a') : ''}
+  </div>`;
+}
+
 // Replace the note's first "Dear …," line with the recipient's salutation.
 function withSalutation(text, title) {
   const t = String(text || '');
@@ -305,4 +344,4 @@ function withSalutation(text, title) {
   return /^\s*Dear\b[^\n]*/i.test(t) ? t.replace(/^\s*Dear\b[^\n]*/i, greet) : `${greet}\n${t}`;
 }
 
-module.exports = { withSalutation, buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD, REASON_LABELS, utilisationNote, utilisationNoteHtml, plantSummaryHtml, noteTextHtml };
+module.exports = { chartsHtml, withSalutation, buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD, REASON_LABELS, utilisationNote, utilisationNoteHtml, plantSummaryHtml, noteTextHtml };

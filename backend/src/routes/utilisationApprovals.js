@@ -15,7 +15,7 @@ const ExcelJS = require('exceljs');
 const { pool, query } = require('../config/db');
 const { authenticate, hasRole, rolesOf, accessFor, isReadOnlyUser } = require('../middleware/auth');
 const { APPROVERS, approverFor, approverUser, billingTransport } = require('../services/billingApprovers');
-const { withSalutation, utilisationNote, plantSummaryHtml, noteTextHtml, buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD } = require('../services/dayUtilisation');
+const { chartsHtml, withSalutation, utilisationNote, plantSummaryHtml, noteTextHtml, buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD } = require('../services/dayUtilisation');
 const { fmtDateDisplay } = require('../utils/date');
 const { stylePortalWorkbook } = require('../services/portalExcel');
 
@@ -148,6 +148,7 @@ function approvalMailHtml(a, level, token) {
     ${done ? `<ul style="font-size:12px;margin:0 0 10px 18px;padding:0;">${done}</ul>` : ''}
     ${a.note_snapshot?.untagged ? `<p style="font-size:12px;color:#b45309;">${a.note_snapshot.untagged} under-utilised trip(s) had no reason tagged at submission.</p>` : ''}
     ${noteTextHtml(withSalutation(a.note_text || '', approverFor(level)?.title))}
+    ${chartsHtml(a.note_snapshot)}
     ${plantSummaryHtml(a.note_snapshot)}
     <div style="margin:18px 0;">${btn('approve', 'Approve', '#16a34a')}${btn('reject', 'Reject', '#dc2626')}</div>
     <p style="font-size:11px;color:#9ca3af;">No login needed — the button opens a confirmation page; confirm there. The link works once and expires in ${TOKEN_DAYS} days. The attached Excel holds the summary, the under-utilised trips with their reasons, the plant summary, all trips of the run and the note.</p>
@@ -239,7 +240,7 @@ router.get('/decision-info', async (req, res) => {
     res.json({
       id: a.id, run_id: a.run_id, period: periodOf(a), level: st.level, status: a.status,
       submitted_by_name: a.submitted_by_name, note_text: a.note_text,
-      html: noteTextHtml(withSalutation(a.note_text || '', approverFor(st.level)?.title)) + plantSummaryHtml(a.note_snapshot),
+      html: noteTextHtml(withSalutation(a.note_text || '', approverFor(st.level)?.title)) + chartsHtml(a.note_snapshot) + plantSummaryHtml(a.note_snapshot),
       steps: a.steps.map(s => ({ level: s.level, approver_name: s.approver_name, decision: s.decision, remarks: s.remarks, decided_at: s.decided_at })),
     });
   } catch (err) { res.status(500).json({ error: 'Failed to load the approval' }); }
