@@ -16,6 +16,7 @@ const REASON_LABELS = {
 };
 const UTILISATION_THRESHOLD = parseFloat(process.env.UTILISATION_THRESHOLD) || 95;
 
+// opts.runId may be one id or an array (whole month = both fortnights' runs, 2026-10-17).
 // opts.runId (owner, 2026-10-16): "By billing run" — exactly the lines of that
 // run (excluded and sale-tanker lines too), no date filter, ordered by billing
 // date (plan_for_date) then tanker; run-line facts go into the remarks.
@@ -54,7 +55,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold, { runId, vendorI
       FROM trip_execution_bmcus teb WHERE teb.execution_id=te.id AND teb.is_deleted=FALSE
     ) disp ON TRUE
     LEFT JOIN utilisation_remarks ur ON ur.execution_id=te.id
-    ${byRun ? `JOIN billing_run_trips brt ON brt.execution_id=te.id AND brt.run_id=$1
+    ${byRun ? `JOIN billing_run_trips brt ON brt.execution_id=te.id AND brt.run_id = ANY($1::int[])
     WHERE ${scoped ? 'brt.vendor_id = ANY($2)' : 'TRUE'}` : `WHERE te.status != 'cancelled' AND tp.status NOT IN ('cancelled','deleted')`}
     GROUP BY tp.id, tp.trip_kind, tp.trip_no, tp.plan_for_date, t.tanker_number, t.capacity_litres, tp.is_sale_tanker,
              rm.route_name, sp.name, dp.name, te.id, disp.litres, disp.kgs, disp.kg_fat, disp.kg_snf, ur.remark, ur.reason, ur.reason_detail${byRun ? ', brt.id' : ''}
@@ -62,7 +63,7 @@ async function buildDayUtilisation(fromDate, toDate, threshold, { runId, vendorI
       ? 'ORDER BY tp.plan_for_date, t.tanker_number, tp.trip_no'
       : `HAVING COALESCE(MIN(ta.ack_date), te.execution_date) BETWEEN $1 AND $2
     ORDER BY COALESCE(MIN(ta.ack_date), te.execution_date), tp.trip_no`}`,
-    byRun ? (scoped ? [runId, vendorIds] : [runId]) : [fromDate, toDate]);
+    byRun ? (scoped ? [[].concat(runId), vendorIds] : [[].concat(runId)]) : [fromDate, toDate]);
 
   return r.rows.map((x, i) => {
     const litres = parseFloat(x.ack_litres) || 0;

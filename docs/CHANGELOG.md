@@ -8,6 +8,7 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
 ### Added
+- Tanker Utilisation → Day wise → By billing run: fortnight picker gains **Whole month** — the latest run of 1–15 and of 16–month end together (rows, counts, search, reasons and Excel "Billing run #A + #B"); the approval note stays per run (`GET /api/reports/day-utilisation?run_ids=` + `/excel`) (owner, 2026-10-17).
 - Push to Vendors attaches a printable **Tanker Cards** workbook beside the trip sheet, in the logistics team's card layout: a Summary page (state × tanker × type trips, km, amount, toll challans, total payable) and one sheet per state with a block per tanker × transport type (material trips in their own block) — company line, "Road Tankers Movement Of BMCU's Details From … To …", SL / Date / Vehicle / Capacity / Type / Route / BMCUs / Kms / Rate / Amount, SUM total and a vendor-signature / verified-by line; every sheet landscape A4 fit to width, a page break after each block so each tanker × type prints on one page for signature (owner, 2026-10-17).
 
 ## 2026-10-17 (2) — promoted to `main` 2026-10-17 (no migrations)

@@ -1713,6 +1713,19 @@ function parseRunId(v) {
   if (!/^\d+$/.test(String(v)) || parseInt(v, 10) <= 0) return { error: 'run_id must be a positive integer' };
   return { runId: parseInt(v, 10) };
 }
+// run_ids=25,26 (owner, 2026-10-17): Day wise for a whole month = the runs of
+// both fortnights together; returns a run-like object spanning them.
+function parseRunIds(v) {
+  if (v == null || v === '') return { runIds: null };
+  const ids = String(v).split(',').map(x => x.trim()).filter(Boolean);
+  if (!ids.length || ids.length > 6 || ids.some(x => !/^\d+$/.test(x))) return { error: 'run_ids must be a comma list of run ids' };
+  return { runIds: ids.map(Number) };
+}
+async function loadRuns(ids) {
+  const r = await query('SELECT id, from_date, to_date, status FROM billing_runs WHERE id = ANY($1::int[]) ORDER BY from_date', [ids]);
+  if (r.rows.length !== ids.length) return null;
+  return { id: r.rows.map(x => x.id).join(' + #'), from_date: r.rows[0].from_date, to_date: r.rows[r.rows.length - 1].to_date };
+}
 async function loadRun(runId) {
   const r = await query('SELECT id, from_date, to_date, status FROM billing_runs WHERE id=$1', [runId]);
   return r.rows[0] || null;
@@ -1722,9 +1735,14 @@ router.get('/day-utilisation', authenticate, authorizeOrModule('reports', 'admin
   const { from_date, to_date } = req.query;
   const threshold = parseFloat(req.query.threshold) || 95;
   const { runId, error } = parseRunId(req.query.run_id);
-  if (error) return res.status(400).json({ error });
-  if (!runId && !from_date) return res.status(400).json({ error: 'from_date or run_id required' });
+  const { runIds, error: e2 } = parseRunIds(req.query.run_ids);
+  if (error || e2) return res.status(400).json({ error: error || e2 });
+  if (!runId && !runIds && !from_date) return res.status(400).json({ error: 'from_date or run_id required' });
   try {
+    if (runIds) {
+      if (!(await loadRuns(runIds))) return res.status(404).json({ error: 'Billing run not found' });
+      return res.json(await buildDayUtilisation(null, null, threshold, { runId: runIds }));
+    }
     if (runId) {
       if (!(await loadRun(runId))) return res.status(404).json({ error: 'Billing run not found' });
       return res.json(await buildDayUtilisation(null, null, threshold, { runId }));
@@ -1740,11 +1758,18 @@ router.get('/day-utilisation/excel', authenticate, authorizeOrModule('reports', 
   const { from_date, to_date } = req.query;
   const threshold = parseFloat(req.query.threshold) || 95;
   const { runId, error } = parseRunId(req.query.run_id);
-  if (error) return res.status(400).json({ error });
-  if (!runId && !from_date) return res.status(400).json({ error: 'from_date or run_id required' });
+  const { runIds, error: e2 } = parseRunIds(req.query.run_ids);
+  if (error || e2) return res.status(400).json({ error: error || e2 });
+  if (!runId && !runIds && !from_date) return res.status(400).json({ error: 'from_date or run_id required' });
   try {
     let wb, fname;
-    if (runId) {
+    if (runIds) {
+      const run = await loadRuns(runIds);
+      if (!run) return res.status(404).json({ error: 'Billing run not found' });
+      const rows = await buildDayUtilisation(null, null, threshold, { runId: runIds });
+      wb    = buildDayUtilisationWorkbook(rows, run.from_date, run.to_date, threshold, run);
+      fname = `day_utilisation_billing_runs_${runIds.join('_')}_${run.from_date}_${run.to_date}.xlsx`;
+    } else if (runId) {
       const run = await loadRun(runId);
       if (!run) return res.status(404).json({ error: 'Billing run not found' });
       const rows = await buildDayUtilisation(null, null, threshold, { runId });

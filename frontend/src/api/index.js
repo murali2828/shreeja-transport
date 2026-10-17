@@ -200,7 +200,7 @@ export const getReportBillingRuns = (p) => api.get('/reports/billing-runs', { pa
 // runId optional (owner, 2026-10-16): "By billing run" mode, dates ignored.
 export const downloadDayUtilisationExcel = (from, to, threshold, runId) =>
   api.get('/reports/day-utilisation/excel', {
-    params: runId ? { run_id: runId, threshold } : { from_date: from, to_date: to, threshold },
+    params: runId ? (String(runId).includes(',') ? { run_ids: runId, threshold } : { run_id: runId, threshold }) : { from_date: from, to_date: to, threshold },
     responseType: 'blob',
   }).then(r => {
     const url = URL.createObjectURL(r.data);

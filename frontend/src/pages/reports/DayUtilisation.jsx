@@ -242,21 +242,28 @@ function DayWise() {
   const fn = month ? fortnightRange(month, half) : null;
   const changeMode = m => { setMode(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* ignore */ } };
 
+  // Whole month (owner, 2026-10-17): the latest run of each fortnight together.
+  const wholeMonth = half === 'm';
   const { data: runs = [], isFetched: runsFetched } = useQuery({
-    queryKey: ['report-billing-runs', fn?.from, fn?.to],
-    queryFn:  () => getReportBillingRuns({ from: fn.from, to: fn.to }).then(r => r.data),
-    enabled:  byRun && !!fn,
+    queryKey: ['report-billing-runs', month, half],
+    queryFn:  async () => {
+      if (!wholeMonth) return getReportBillingRuns({ from: fn.from, to: fn.to }).then(r => r.data);
+      const [a, b] = await Promise.all(['1', '2'].map(h => { const x = fortnightRange(month, h); return getReportBillingRuns({ from: x.from, to: x.to }).then(r => r.data); }));
+      return [...(a.length ? [a[0]] : []), ...(b.length ? [b[0]] : [])];
+    },
+    enabled:  byRun && !!month,
   });
   // Runs of the fortnight, latest id first: pick the latest whenever the
-  // current choice is not one of them (none → clear).
+  // current choice is not one of them (none → clear). Whole month → "id,id".
   useEffect(() => {
     if (!byRun) return;
+    if (wholeMonth) { const ids = runs.map(r => r.id).join(','); if (ids !== runId) setRunId(ids); return; }
     if (!runs.some(r => String(r.id) === runId)) setRunId(runs.length ? String(runs[0].id) : '');
-  }, [byRun, runId, runs]);
+  }, [byRun, runId, runs, wholeMonth]);
 
   const { data: rows = [], isFetching } = useQuery({
     queryKey: ['day-utilisation', mode, byRun ? runId : from, byRun ? '' : to, threshold],
-    queryFn:  () => getDayUtilisation(byRun ? { run_id: runId, threshold } : { from_date: from, to_date: to, threshold }).then(r => r.data),
+    queryFn:  () => getDayUtilisation(byRun ? (runId.includes(',') ? { run_ids: runId, threshold } : { run_id: runId, threshold }) : { from_date: from, to_date: to, threshold }).then(r => r.data),
     enabled:  byRun ? !!runId : (!!from && !!to),
   });
   const exportExcel = () => downloadDayUtilisationExcel(from, to, threshold, byRun ? runId : null)
@@ -311,8 +318,14 @@ function DayWise() {
               <select className="input py-1.5 text-sm" value={half} onChange={e => setHalf(e.target.value)}>
                 <option value="1">1–15</option>
                 <option value="2">16–month end</option>
+                <option value="m">Whole month</option>
               </select>
-              {runs.length > 1 && (
+              {wholeMonth && runs.length > 0 && (
+                <span className="text-xs text-gray-600">
+                  {runs.map(r => `Run #${r.id} (${fmtDate(r.from_date)} → ${fmtDate(r.to_date)}, ${r.status})`).join(' + ')}
+                </span>
+              )}
+              {!wholeMonth && runs.length > 1 && (
                 <select className="input py-1.5 text-sm" value={runId} onChange={e => setRunId(e.target.value)}>
                   {runs.map(r => (
                     <option key={r.id} value={r.id}>
@@ -321,13 +334,13 @@ function DayWise() {
                   ))}
                 </select>
               )}
-              {runs.length === 1 && (
+              {!wholeMonth && runs.length === 1 && (
                 <span className="text-xs text-gray-600">
                   Run #{runs[0].id} · {runs[0].status} · {runs[0].trip_count} trips
                 </span>
               )}
               {runsFetched && runs.length === 0 && (
-                <span className="text-xs text-amber-700">No billing run for this fortnight yet</span>
+                <span className="text-xs text-amber-700">{wholeMonth ? 'No billing run for this month yet' : 'No billing run for this fortnight yet'}</span>
               )}
             </>
           ) : (
@@ -476,7 +489,8 @@ function DayWise() {
           </table>
         </div>
       </div>
-      {byRun && runId && <NotePanel runId={runId}/>}
+      {byRun && runId && !runId.includes(',') && <NotePanel runId={runId}/>}
+      {byRun && runId.includes(',') && <div className="card p-3 text-xs text-gray-500">The approval note is raised per billing run — pick 1–15 or 16–month end to tag reasons and submit.</div>}
     </div>
   );
 }
