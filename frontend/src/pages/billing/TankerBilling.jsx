@@ -512,7 +512,7 @@ export default function TankerBilling() {
           <div className="overflow-x-auto max-h-[62vh]">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
-                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Starting Point', 'Route', 'Delivery Point', 'BMCUs',
                      'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
@@ -554,7 +554,7 @@ export default function TankerBilling() {
           <div className="overflow-x-auto max-h-[62vh]">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
-                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Starting Point', 'Route', 'Delivery Point', 'BMCUs',
                      'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
@@ -587,7 +587,7 @@ export default function TankerBilling() {
           <div className="overflow-x-auto max-h-[62vh]">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
-                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Starting Point', 'Route', 'Delivery Point', 'BMCUs',
                      'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
@@ -1277,10 +1277,10 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
       </td>
       <td className="px-2 py-1.5 text-right">{t.capacity_litres ? (t.capacity_litres / 1000).toFixed(1) : '—'}</td>
       <td className="px-2 py-1.5">{t.vendor_name || <span className="text-red-600">no vendor</span>}</td>
+      <td className="px-2 py-1.5">{t.start_point || '—'}</td>
       <td className="px-2 py-1.5">{t.route_name || '—'}</td>
       <td className="px-2 py-1.5">{t.delivery_point || '—'}</td>
       <td className="px-2 py-1.5 text-center">{t.bmcu_count}</td>
-      <td className="px-2 py-1.5 text-right">{nf(t.ack_kgs, 0)}</td>
       <td className="px-2 py-1.5">
         {editable
           ? <select className="input py-0.5 px-1 text-xs min-w-[8rem]" value={val(t, 'state')}
