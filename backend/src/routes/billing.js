@@ -1267,7 +1267,7 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
   const HEAD = ['SL', 'Date', 'Vehicle No.', 'Capacity (KL)', 'Transport Type', 'Route', 'BMCUs', 'Kms', 'Rate', 'Amount'];
   const WIDTHS = [4, 11, 12, 8, 13, 14, 38, 8, 7, 11];   // portrait A4: BMCU chain wraps
   const setup = ws => {
-    ws.pageSetup = { orientation: 'portrait', paperSize: 1,   // 1 = Letter fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+    ws.pageSetup = { orientation: 'portrait', paperSize: 1 /* Letter */, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
       horizontalCentered: true, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
     ws.headerFooter = { oddFooter: `&L${vendorName}&CPage &P of &N&RRun #${run.id}` };
     WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
