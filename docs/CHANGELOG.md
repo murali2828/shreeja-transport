@@ -8,6 +8,8 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
 ### Added
+- Billing → Toll Challans → **Pending from earlier cycles** on a run under approval / approved: **Request change** per tanker-period, so an earlier period's challan is added through the PP01-approved toll change request (recorded against that period, paid in this run) (owner, 2026-10-17).
+- Billing run Excel (approval attachment): **Google KM** beside Billed KM on Trip Wise / Material / Sale sheets (owner, 2026-10-17).
 - Vendor master: **+ Add email id** for second / third email ids (× removes; validated, de-duplicated, up to 10; migration 076 `vendors.extra_emails`); Push to Vendors mails the primary email and every extra id in To (cc as before). Tanker Cards: 10 blank rows on top of every page for the vendor's letterhead, BMCU column shows starting point → BMCUs → delivery point, Transport Type wraps; Vendor mails card: tick any vendor (also already sent) to re-send, Select sent vendors (owner, 2026-10-17).
 
 ## 2026-10-17 (3) — promoted to `main` 2026-10-17 (migration 075)

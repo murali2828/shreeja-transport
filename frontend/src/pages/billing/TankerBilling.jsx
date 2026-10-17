@@ -985,6 +985,14 @@ function TollPanel({ runId, tolls, pendingEarlier, tankers, editable, runStatus 
                                 title="No toll for that period — clear it without a challan"
                                 onClick={() => markNoToll(p.tanker_number, p.run_id)}>No toll</button>
                       </>)}
+                      {/* Run already under approval / approved: add the earlier period's challan
+                          through the same PP01-approved change request (owner, 2026-10-17). */}
+                      {locked && (
+                        <button className="text-[11px] px-2 py-0.5 rounded border border-amber-400 text-amber-800 hover:bg-amber-50"
+                                onClick={() => setReq({ tn: p.tanker_number, forRunId: p.run_id, amount: '', remarks: '', noToll: false, reason: '', file: null })}>
+                          Request change
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
