@@ -412,7 +412,7 @@ export default function TankerBilling() {
             <Undo2 size={13}/> {withdrawMut.isPending ? 'Withdrawing…' : 'Withdraw from approval'}
           </button>
         )}
-        {((editable && ['draft', 'rejected', 'pending_vendor'].includes(run.status)) || (canEdit && run.status === 'approved')) && (() => {
+        {run && ((editable && ['draft', 'rejected', 'pending_vendor'].includes(run.status)) || (canEdit && run.status === 'approved')) && (() => {
           const fin = run.status === 'approved';
           const kind = fin ? 'APPROVED' : 'DRAFT';
           return (
