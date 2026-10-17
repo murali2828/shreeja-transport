@@ -512,7 +512,7 @@ export default function TankerBilling() {
           <div className="overflow-x-auto max-h-[62vh]">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
-                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Scans', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
                      'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
@@ -526,10 +526,10 @@ export default function TankerBilling() {
                     ratePreview={ratePreviews[t.id]} previewRate={previewRate} onRemove={removeTrip} />
                 ))}
                 {filteredTrips.length === 0 && (
-                  <tr><td colSpan={19} className="px-3 py-4 text-center text-gray-400">No trips match this search.</td></tr>
+                  <tr><td colSpan={18} className="px-3 py-4 text-center text-gray-400">No trips match this search.</td></tr>
                 )}
                 <tr className="bg-blue-100 font-bold">
-                  <td className="px-2 py-2" colSpan={13}>
+                  <td className="px-2 py-2" colSpan={12}>
                     TOTAL — {filteredTrips.length}{filteredTrips.length !== trips.length ? ` of ${trips.length}` : ''} trips
                     ({filteredTrips.filter(t => val(t,"excluded")).length} excluded)
                   </td>
@@ -554,7 +554,7 @@ export default function TankerBilling() {
           <div className="overflow-x-auto max-h-[62vh]">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
-                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Scans', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
                      'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
@@ -568,7 +568,7 @@ export default function TankerBilling() {
                     ratePreview={ratePreviews[t.id]} previewRate={previewRate} onRemove={removeTrip} />
                 ))}
                 <tr className="bg-blue-100 font-bold">
-                  <td className="px-2 py-2" colSpan={13}>TOTAL — {materialTrips.length} material trip(s) ({materialTrips.filter(t => val(t,"excluded")).length} excluded)</td>
+                  <td className="px-2 py-2" colSpan={12}>TOTAL — {materialTrips.length} material trip(s) ({materialTrips.filter(t => val(t,"excluded")).length} excluded)</td>
                   <td className="px-2 py-2 text-right">{nf(materialTrips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
                   <td className="px-2 py-2 text-right">{nf(materialTrips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
                   <td className="px-2 py-2 text-right">{nf(materialTrips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
@@ -587,7 +587,7 @@ export default function TankerBilling() {
           <div className="overflow-x-auto max-h-[62vh]">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-blue-50 text-left text-gray-600">
-                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Scans', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
+                <tr>{['', 'Excl.', 'Date', 'Tanker', 'Cap (KL)', 'Vendor', 'Route', 'Delivery Point', 'BMCUs', 'Ack Kgs',
                      'State *', 'Transport Type', 'System KM', 'Google KM', 'Billed KM', 'Rate/KM', 'Amount (₹)', 'Remarks']
                      .map(h => <th key={h} className="px-2 py-2 whitespace-nowrap">{h}</th>)}</tr>
               </thead>
@@ -601,10 +601,10 @@ export default function TankerBilling() {
                     ratePreview={ratePreviews[t.id]} previewRate={previewRate} onRemove={removeTrip} />
                 ))}
                 {saleTrips.length === 0 && (
-                  <tr><td colSpan={19} className="px-3 py-4 text-center text-gray-400">No Sale Tanker trips in this run.</td></tr>
+                  <tr><td colSpan={18} className="px-3 py-4 text-center text-gray-400">No Sale Tanker trips in this run.</td></tr>
                 )}
                 <tr className="bg-blue-100 font-bold">
-                  <td className="px-2 py-2" colSpan={13}>TOTAL — {saleTrips.length} Sale Tanker trip(s), not billed to vendors</td>
+                  <td className="px-2 py-2" colSpan={12}>TOTAL — {saleTrips.length} Sale Tanker trip(s), not billed to vendors</td>
                   <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.system_km || 0), 0))}</td>
                   <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+t.google_km || 0), 0))}</td>
                   <td className="px-2 py-2 text-right">{nf(saleTrips.reduce((s, t) => s + (+(edits[t.id]?.billed_km ?? t.billed_km) || 0), 0))}</td>
@@ -1275,9 +1275,6 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
         {t.tanker_number}
         {t.is_sale_tanker && <span className="ml-1 px-1 rounded bg-violet-600 text-white text-[10px]" title="Sale Tanker — milk sold directly at the BMCU, not billed to any vendor. Milk still counts in TS/Analytics reports.">Sale</span>}
       </td>
-      <td className="px-2 py-1.5 whitespace-nowrap">
-        {t.execution_id ? <ViewScansLink executionId={t.execution_id} className="font-normal"/> : '—'}
-      </td>
       <td className="px-2 py-1.5 text-right">{t.capacity_litres ? (t.capacity_litres / 1000).toFixed(1) : '—'}</td>
       <td className="px-2 py-1.5">{t.vendor_name || <span className="text-red-600">no vendor</span>}</td>
       <td className="px-2 py-1.5">{t.route_name || '—'}</td>
@@ -1295,7 +1292,7 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
       </td>
       <td className="px-2 py-1.5 whitespace-nowrap">
         {editable
-          ? <select className="input py-0.5 px-1 text-xs min-w-[10.5rem]"
+          ? <select className="input py-0.5 px-1 text-xs"
                     title="Auto-derived from BMCU count — biller may override; rate refreshes"
                     value={val(t, 'transport_type')}
                     onChange={e => { setEdit(t.id, 'transport_type', e.target.value); previewRate(t, val(t, 'state'), e.target.value); }}>
@@ -1332,7 +1329,8 @@ function FragmentRow({ t, editable, expanded, onToggle, val, setEdit, carried,
     {expanded && (
       <tr className="bg-gray-50">
         <td/>
-        <td colSpan={18} className="px-3 py-2">
+        <td colSpan={17} className="px-3 py-2">
+          {t.execution_id && <div className="mb-1.5 text-[11px]"><span className="font-semibold text-gray-600 mr-1">Scans (BMCU DCs, ack slip):</span><ViewScansLink executionId={t.execution_id}/></div>}
           <div className="text-[11px] font-semibold text-gray-600 mb-1">
             Distance legs — Master {nf(t.master_km)} km · Google {nf(t.google_km)} km · Estimated {nf(t.estimated_km)} km ·
             Total {nf(legsTotal)} km
