@@ -146,7 +146,6 @@ function approvalMailHtml(a, level, token) {
     <h2 style="color:#003a6b;font-size:17px;margin:0 0 6px;">Tanker utilisation approval — L${level}</h2>
     <p style="font-size:12px;color:#4b5563;margin:0 0 10px;">Billing run #${a.run_id} (${esc(periodOf(a))}) · submitted by ${esc(a.submitted_by_name || '—')}</p>
     ${done ? `<ul style="font-size:12px;margin:0 0 10px 18px;padding:0;">${done}</ul>` : ''}
-    ${a.note_snapshot?.untagged ? `<p style="font-size:12px;color:#b45309;">${a.note_snapshot.untagged} under-utilised trip(s) had no reason tagged at submission.</p>` : ''}
     ${noteTextHtml(withSalutation(a.note_text || '', approverFor(level)?.title))}
     ${chartsHtml(a.note_snapshot)}
     ${plantSummaryHtml(a.note_snapshot)}

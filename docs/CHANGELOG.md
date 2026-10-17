@@ -11,6 +11,7 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 - Utilisation approval mails, the decision page and the panel's Mail preview carry four summary charts drawn with table cells (render in Gmail / Outlook / phones, no images or scripts): above vs under 95 % split bar, under-95 % trips by reason, by plant, and trips by utilisation band (< 80, 80–90, 90–94, 94–95, ≥ 95 %) (owner, 2026-10-17).
 
 ### Changed
+- Utilisation approval mails no longer carry the "N under-utilised trip(s) had no reason tagged at submission" line (owner, 2026-10-17).
 - Utilisation approval note: counts in bold in the mail (above / under trips, total movements, every "(N trips, avg util X%)"), Mail preview under the note; "Not yet categorised" block dropped and replaced by **Near-target trips (94 % to 95 %)** with per-plant counts (also in the Excel Summary / By plant); new closing line; each mail greets its approver (`BILLING_APPROVER_n_TITLE`, defaults Sir / Madam / Sir) and the initiator mail likewise (owner, 2026-10-17).
 
 ### Fixed
