@@ -1255,7 +1255,7 @@ async function notifyBiller(runId, subject, bodyHtml) {
 // Printable tanker cards for a vendor (owner, 2026-10-17; layout of the
 // logistics team's "Tanker Cards" workbook): a sheet per state, one block per
 // tanker × transport type (material trips in their own block), each block on
-// its own landscape A4 page with a SUM total and the vendor's signature line, so the
+// its own portrait A4 page with a SUM total and the vendor's signature line, so the
 // vendor prints, signs every page and returns it. Excluded lines never appear.
 const CARD_TYPE_ORDER = { 'BMCU/CC to Dairy/CC': 0, 'Point to Point': 1, Material: 2 };
 async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDetails) {
@@ -1265,9 +1265,9 @@ async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDeta
   const thin = { style: 'thin', color: { argb: 'FF475569' } };
   const BOX = { top: thin, bottom: thin, left: thin, right: thin };
   const HEAD = ['SL', 'Date', 'Vehicle No.', 'Capacity (KL)', 'Transport Type', 'Route', 'BMCUs', 'Kms', 'Rate', 'Amount'];
-  const WIDTHS = [5, 11, 13, 9, 17, 16, 62, 9, 8, 12];
+  const WIDTHS = [4, 11, 12, 8, 13, 14, 38, 8, 7, 11];   // portrait A4: BMCU chain wraps
   const setup = ws => {
-    ws.pageSetup = { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+    ws.pageSetup = { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
       horizontalCentered: true, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
     ws.headerFooter = { oddFooter: `&L${vendorName}&CPage &P of &N&RRun #${run.id}` };
     WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
