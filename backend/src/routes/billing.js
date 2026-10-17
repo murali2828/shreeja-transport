@@ -1252,6 +1252,108 @@ async function notifyBiller(runId, subject, bodyHtml) {
 // ── Transporter publishing — on final approval, email each vendor an Excel of
 // THEIR trips (km, rate, amount). Vendors without an email in the Vendor
 // master are reported back to the biller instead.
+// Printable tanker cards for a vendor (owner, 2026-10-17; layout of the
+// logistics team's "Tanker Cards" workbook): a sheet per state, one block per
+// tanker × transport type (material trips in their own block), each block on
+// its own landscape A4 page with a SUM total and a signature line, so the
+// vendor prints, signs every page and returns it. Excluded lines never appear.
+const CARD_TYPE_ORDER = { 'BMCU/CC to Dairy/CC': 0, 'Point to Point': 1, Material: 2 };
+async function buildTankerCardsWorkbook(run, vendorName, trips, tollBy, bmcuDetails) {
+  const num = v => (v == null || v === '' ? null : parseFloat(v));
+  const dot = d => String(d || '').split('-').reverse().join('.');
+  const period = `Road Tankers Movement Of BMCU's Details From ${dot(run.from_date)} To ${dot(run.to_date)}`;
+  const thin = { style: 'thin', color: { argb: 'FF475569' } };
+  const BOX = { top: thin, bottom: thin, left: thin, right: thin };
+  const HEAD = ['SL', 'Date', 'Vehicle No.', 'Capacity (KL)', 'Transport Type', 'Route', 'BMCUs', 'Kms', 'Rate', 'Amount'];
+  const WIDTHS = [5, 11, 13, 9, 17, 16, 62, 9, 8, 12];
+  const setup = ws => {
+    ws.pageSetup = { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      horizontalCentered: true, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
+    ws.headerFooter = { oddFooter: `&L${vendorName}&CPage &P of &N&RRun #${run.id}` };
+    WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  };
+  const blocks = new Map();   // state → Map(tanker|type → trips)
+  for (const t of trips) {
+    const st = t.state || 'No state';
+    const type = t.trip_kind === 'material' ? 'Material' : (t.transport_type || '—');
+    if (!blocks.has(st)) blocks.set(st, new Map());
+    const k = `${t.tanker_number}|${type}`;
+    if (!blocks.get(st).has(k)) blocks.get(st).set(k, []);
+    blocks.get(st).get(k).push(t);
+  }
+  const wb = new ExcelJS.Workbook();
+  const summary = wb.addWorksheet('Summary');
+  setup(summary);
+  const summaryRows = [];
+  for (const st of [...blocks.keys()].sort()) {
+    const ws = wb.addWorksheet(`${st} cards`.slice(0, 31));
+    setup(ws);
+    const keys = [...blocks.get(st).keys()].sort((a, b) => {
+      const [ta, ya] = a.split('|'), [tb, yb] = b.split('|');
+      return ta.localeCompare(tb) || (CARD_TYPE_ORDER[ya] ?? 9) - (CARD_TYPE_ORDER[yb] ?? 9);
+    });
+    keys.forEach((k, bi) => {
+      const [tanker, type] = k.split('|');
+      const rows = blocks.get(st).get(k).sort((a, b) => a.plan_for_date.localeCompare(b.plan_for_date));
+      const line = (text, opts = {}) => {
+        const r = ws.addRow([text]);
+        ws.mergeCells(r.number, 1, r.number, HEAD.length);
+        r.getCell(1).font = { bold: true, size: opts.size || 11 };
+        r.getCell(1).alignment = { horizontal: opts.align || 'center' };
+        return r;
+      };
+      line('Shreeja MMPCL, Tirupati', { size: 14 });
+      line(period, { size: 12 });
+      line(`Vendor: ${vendorName}   ·   Tanker: ${tanker}   ·   ${type}   ·   State: ${st}`, { size: 10 });
+      const h = ws.addRow(HEAD);
+      h.eachCell(c => { c.font = { bold: true }; c.border = BOX; c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } }; });
+      const first = h.number + 1;
+      rows.forEach((t, i) => {
+        const r = ws.addRow([i + 1, fmtDateDisplay(t.plan_for_date), t.tanker_number,
+          t.capacity_litres ? rN(t.capacity_litres / 1000, 1) : null, type === 'Material' ? 'Material' : t.transport_type,
+          type === 'Material' ? `${t.start_point || ''} → ${t.delivery_point || ''}` : t.route_name,
+          bmcuDetails(t.execution_id), num(t.billed_km), num(t.rate_per_km), num(t.amount)]);
+        r.eachCell({ includeEmpty: true }, (c, ci) => { c.border = BOX; c.alignment = { vertical: 'top', wrapText: ci === 7 || ci === 6 }; });
+        [8, 9, 10].forEach(ci => { r.getCell(ci).numFmt = '#,##0.00'; });
+      });
+      const last = ws.rowCount;
+      const tot = ws.addRow(['Total', '', '', '', '', '', '', { formula: `SUM(H${first}:H${last})` }, '', { formula: `SUM(J${first}:J${last})` }]);
+      ws.mergeCells(tot.number, 1, tot.number, 7);
+      tot.eachCell({ includeEmpty: true }, c => { c.font = { bold: true }; c.border = BOX; });
+      [8, 10].forEach(ci => { tot.getCell(ci).numFmt = '#,##0.00'; });
+      ws.addRow([]); ws.addRow([]);
+      const sig = ws.addRow(['Vendor signature & seal: ____________________', '', '', '', '', 'Verified by (Shreeja): ____________________', '', 'Date: ____________']);
+      ws.mergeCells(sig.number, 1, sig.number, 5); ws.mergeCells(sig.number, 6, sig.number, 7); ws.mergeCells(sig.number, 8, sig.number, 10);
+      if (bi < keys.length - 1) sig.addPageBreak();
+      const km = rows.reduce((a, t) => a + (parseFloat(t.billed_km) || 0), 0);
+      const amt = rows.reduce((a, t) => a + (parseFloat(t.amount) || 0), 0);
+      summaryRows.push([st, tanker, type, rows.length, rN(km), rN(amt)]);
+    });
+  }
+  // Summary page: state × tanker × type, tolls, total payable, signature.
+  const sl = (text, size) => { const r = summary.addRow([text]); summary.mergeCells(r.number, 1, r.number, 6); r.getCell(1).font = { bold: true, size }; r.getCell(1).alignment = { horizontal: 'center' }; };
+  ['State', 'Tanker', 'Type', 'Trips', 'Kms', 'Amount'].forEach((_, i) => { summary.getColumn(i + 1).width = [12, 16, 22, 8, 12, 16][i]; });
+  sl('Shreeja MMPCL, Tirupati', 14); sl(period, 12); sl(`Vendor: ${vendorName}   ·   Run #${run.id}`, 10);
+  const sh = summary.addRow(['State', 'Tanker', 'Type', 'Trips', 'Kms', 'Amount']);
+  sh.eachCell(c => { c.font = { bold: true }; c.border = BOX; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } }; });
+  const sFirst = sh.number + 1;
+  summaryRows.forEach(r => { const x = summary.addRow(r); x.eachCell({ includeEmpty: true }, c => { c.border = BOX; }); x.getCell(5).numFmt = '#,##0.00'; x.getCell(6).numFmt = '#,##0.00'; });
+  const sLast = summary.rowCount;
+  const tt = summary.addRow(['Trips total', '', '', { formula: `SUM(D${sFirst}:D${sLast})` }, { formula: `SUM(E${sFirst}:E${sLast})` }, { formula: `SUM(F${sFirst}:F${sLast})` }]);
+  tt.eachCell({ includeEmpty: true }, c => { c.font = { bold: true }; c.border = BOX; }); tt.getCell(5).numFmt = '#,##0.00'; tt.getCell(6).numFmt = '#,##0.00';
+  const tollRowsList = [...new Set(trips.map(t => t.tanker_number))].flatMap(tn => (tollBy.get(tn) || []).map(x => [tn, x]));
+  for (const [tn, x] of tollRowsList) {
+    const r = summary.addRow(['Toll challan', tn, x.period || '', '', '', rN(x.amount)]);
+    r.eachCell({ includeEmpty: true }, c => { c.border = BOX; }); r.getCell(6).numFmt = '#,##0.00';
+  }
+  const tp = summary.addRow(['TOTAL PAYABLE', '', '', '', '', { formula: `SUM(F${sLast + 1}:F${summary.rowCount})` }]);
+  tp.eachCell({ includeEmpty: true }, c => { c.font = { bold: true }; c.border = BOX; }); tp.getCell(6).numFmt = '#,##0.00';
+  summary.addRow([]); summary.addRow([]);
+  summary.addRow(['Vendor signature & seal: ____________________', '', '', 'Verified by (Shreeja): ____________________']);
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
 async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
   const run = (await query('SELECT *, from_date::text AS from_date, to_date::text AS to_date FROM billing_runs WHERE id=$1', [runId])).rows[0];
   const scoped = Array.isArray(vendorIds) && vendorIds.length > 0;
@@ -1380,6 +1482,9 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
       ws.addRow(['TOLL CHALLAN', t.tanker, '', '', '', '', '', '', '', '', rN(t.amount), t.period]));
     ws.addRow(['TOTAL PAYABLE', '', '', '', '', '', '', '', '', '', rN(total), '']).font = { bold: true };
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    let cardsBuf = null;
+    try { cardsBuf = await buildTankerCardsWorkbook(run, v.name, v.trips, tollBy, bmcuDetails); }
+    catch (e) { console.error('[billing] tanker cards', e.message); }
 
     try {
       const vendorTransport = await createVendorTransport();
@@ -1399,10 +1504,12 @@ async function publishRunToVendors(runId, { draft = false, vendorIds } = {}) {
           <p>The tanker payment for <b>${fmtDateDisplay(run.from_date)} → ${fmtDateDisplay(run.to_date)}</b> has been approved.
           Your trip sheet is attached: <b>${v.trips.length} trips · ₹ ${nf(tripTotal)}</b>${materialTrips.length ? ` (including ${materialTrips.length} material trip(s) listed in their own section)` : ''}${tollTotal > 0
             ? ` plus toll challan reimbursement <b>₹ ${nf(tollTotal)}</b> — total payable <b>₹ ${nf(total)}</b>` : ''}.</p>
+          <p>The <b>Tanker Cards</b> workbook is attached for printing — one landscape page per state, tanker and transport type; please sign every page and send the signed cards back to us.</p>
           <p>For any discrepancy in distances, contact the Shreeja billing team with the trip
           date and tanker number — corrections carry remarks and go through approval.</p>
           <p style="color:#9ca3af;font-size:11px;">Shreeja TMS — automated mail; do not reply.</p></div>`,
-        attachments: [{ filename: `trip_sheet_${run.from_date}_${run.to_date}.xlsx`, content: buf }],
+        attachments: [{ filename: `trip_sheet_${run.from_date}_${run.to_date}.xlsx`, content: buf },
+          ...(cardsBuf ? [{ filename: `${v.name.replace(/[^A-Za-z0-9]+/g, '_').slice(0, 40)}_Tanker_Cards_${run.from_date}_${run.to_date}.xlsx`, content: cardsBuf }] : [])],
       });
       results.push(`✓ ${v.name} — sent to ${v.email} (${v.trips.length} trips, ₹ ${nf(total)})`);
     } catch (e) {
