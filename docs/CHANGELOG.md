@@ -7,6 +7,8 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+## 2026-10-17 (3) — promoted to `main` 2026-10-17 (migration 075)
+
 ### Added
 - Billing run: **Push to Vendors on approved runs** — the button reads "Send approved cards to vendors" and mails the final (APPROVED) trip sheet and Tanker Cards, honouring the vendor filter; the run status does not change (draft / rejected / pending_vendor keep the draft flow; runs under approval are refused). Every vendor push mail copies `BILLING_VENDOR_CC` (default mahesh.k@shreejamilk.com, transport.billing@shreejamilk.com; the QA redirect still drops cc). Each vendor attempt is logged (sent / failed / skipped, draft / approved, by whom; migration 075 `billing_vendor_pushes`); the Vendor Wise tab shows a **Vendor mails** card ("X of Y vendors sent", vendor, email, trips, amount, last sent, status) with **Select not-sent vendors** to push just those (`GET /api/billing/runs/:id/vendor-pushes`) (owner, 2026-10-17).
 - Tanker Utilisation → Day wise → By billing run: fortnight picker gains **Whole month** — the latest run of 1–15 and of 16–month end together (rows, counts, search, reasons and Excel "Billing run #A + #B"); the approval note stays per run (`GET /api/reports/day-utilisation?run_ids=` + `/excel`) (owner, 2026-10-17).

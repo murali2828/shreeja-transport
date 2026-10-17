@@ -57,6 +57,7 @@
 - @docs/DECISIONS.md
 
 ## Current state
+- 2026-10-17 (3): `main` fast-forwarded to 513e655 (migration 075): Push to Vendors attaches printable Tanker Cards (portrait A4, one page per tanker × type, vendor signature), works on approved runs (final cards, status unchanged), per-vendor push log + Vendor mails card ("Select not-sent vendors"), cc `BILLING_VENDOR_CC` (default mahesh.k + transport.billing); Tanker Utilisation Day wise Whole month.
 - 2026-10-17 (2): `main` fast-forwarded to b688c93 (no migrations, no env change): chart-first, shorter utilisation approval mail; billing run Type column compact (BMCU/CC / P2P).
 - 2026-10-17: `main` fast-forwarded to 540ccea (no migrations): Cost Drivers diesel-query fix, utilisation approval note polish (bold figures, near-target 94–95 %, Sir / Madam per approver via optional `BILLING_APPROVER_n_TITLE`, four table-cell charts, top Confirm button, no note sheet), billing run tables (Scans in line details, Starting Point instead of Ack Kgs, wider State), Analytics Trends (MoM, FY vs last FY, YTD) and section charts.
 - 2026-10-16 (2): `main` fast-forwarded to fce07da: Execution-Edit users (logistics) may tag utilisation reasons / approval remarks. No migration, no env change.
