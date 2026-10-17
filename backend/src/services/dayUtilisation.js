@@ -143,11 +143,13 @@ const REASON_TEXT = {
     sentence: p => `Tankers were used for batch preparation and lifting buffalo, mixed, or cow milk for the ${p} plants.`,
     at: 'Batch preparation at',
     note: 'Note: Due to batch preparation (cow/buffalo separation), selected cow milk routes were underutilized based on available tanker capacity.',
+    short: 'Cow / buffalo batch preparation and plant-specific milk requirements.',
   },
   operational_delays: {
     sentence: p => `Higher-capacity vehicles were deployed to ensure timely milk lifting from BMCUs to avoid milk accumulation across shifts, despite facing slow unloading, RMT movement issues, or unscheduled maintenance at ${p} plants.`,
     at: 'Trips at',
     note: '',
+    short: 'Slow unloading, RMT movement or plant maintenance; higher-capacity tankers kept BMCU lifting on time.',
   },
 };
 
@@ -200,33 +202,29 @@ async function utilisationNote(runId, threshold = UTILISATION_THRESHOLD) {
   const bands = BANDS.map(([label, lo, hi]) => ({ label, count: rows.filter(r => r.utilization != null && r.utilization >= lo && r.utilization < hi).length }));
 
   const tripsAvg = p => `(${p.count} trip${p.count === 1 ? '' : 's'}, avg util ${p.avg}%)`;
-  const plantLine = (p, at) => `   - ${p.plant}: ${at} ${andList(p.routes) || '—'} ${tripsAvg(p)}.`;
-  // The greeting is replaced per approver in each mail (Sir / Madam).
+  const pct = n => rows.length ? `${Math.round(n / rows.length * 1000) / 10}%` : '—';
+  const plantsShort = g => g.plants.map(p => `${p.plant} ${p.count}`).join(' · ');
+  // Compact text (owner, 2026-10-17): the mail leads with the charts; routes
+  // per plant live in the attached Excel ("By plant").
   const lines = [
     'Dear Sir/Madam,',
-    `Please find below the tanker utilization details for the ${period} for approval by the competent authorities.`,
-    `During this period, we executed ${rows.length} total movements, categorized by capacity utilization:`,
-    ` - Above ${threshold}% Utilization: ${above.length} trips`,
-    ` - Under ${threshold}% Utilization: ${below.length} trips`,
+    `Please find the tanker utilization summary for the ${period} for your approval.`,
+    `Of ${rows.length} total movements, ${above.length} trips (${pct(above.length)}) were above ${threshold}% and ${below.length} trips (${pct(below.length)}) under ${threshold}% utilization.`,
   ];
-  if (groups.length || nearGroup) lines.push('The underutilized trips are attributed to the following operational factors:');
+  if (groups.length || nearGroup) lines.push('Reasons for the under-utilized trips:');
   groups.forEach((g, i) => {
-    const t = REASON_TEXT[g.reason];
-    lines.push(`${i + 1}. ${g.label} (${g.count} Trips): ${t.sentence(andList(g.plants.map(p => p.plant)))}`);
-    for (const p of g.plants) {
-      lines.push(plantLine(p, t.at));
-      p.details.forEach(dt => lines.push(`     ${dt}`));
-    }
-    lines.push(`   - Utilization of these trips: lowest ${g.min}%, average ${g.avg}%.`);
-    if (g.reason === 'operational_delays') lines.push(`   - Of these ${g.count} trips, ${g.over94} route tankers achieved over 94% utilization.`);
-    if (t.note) lines.push(`   - ${t.note}`);
+    lines.push(`${i + 1}. ${g.label} (${g.count} Trips): ${REASON_TEXT[g.reason].short} Avg utilization ${g.avg}%.`);
+    lines.push(`   - Plants: ${plantsShort(g)}`);
+    if (g.reason === 'operational_delays' && g.over94) lines.push(`   - ${g.over94} of these trips were above 94% utilization.`);
+    g.details.forEach(dt => lines.push(`   - ${dt}`));
   });
   if (nearGroup) {
-    lines.push(`${groups.length + 1}. Near-target trips, 94% to ${threshold}% utilization (${nearGroup.count} Trips): these tankers missed the target by less than one percentage point.`);
-    for (const p of nearGroup.plants) lines.push(`   - ${p.plant}: ${tripsAvg(p)}.`);
+    lines.push(`${groups.length + 1}. Near-target, 94% to ${threshold}% (${nearGroup.count} Trips): missed the target by less than one percentage point.`);
+    lines.push(`   - Plants: ${plantsShort(nearGroup)}`);
   }
-  lines.push('We continue to work closely with the plants and our transport partners to improve tanker utilization, and will keep you updated on the progress in the coming fortnights.',
-    'Please review and approve the underutilized tanker movements as detailed above.');
+  lines.push('Route-wise details are in the attached Excel.',
+    'We continue to work closely with the plants and our transport partners to improve tanker utilization.',
+    'Kindly review and approve.');
   return {
     run, period, threshold, total: rows.length, above: above.length, below: below.length,
     untagged, near: nearGroup ? nearGroup.count : 0, bands, groups, nearGroup, plantSummary, text: lines.join('\n'),
@@ -344,4 +342,14 @@ function withSalutation(text, title) {
   return /^\s*Dear\b[^\n]*/i.test(t) ? t.replace(/^\s*Dear\b[^\n]*/i, greet) : `${greet}\n${t}`;
 }
 
-module.exports = { chartsHtml, withSalutation, buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD, REASON_LABELS, utilisationNote, utilisationNoteHtml, plantSummaryHtml, noteTextHtml };
+// Mail body (owner, 2026-10-17): greeting, charts first, then the compact note.
+function approvalBodyHtml(text, snapshot, title) {
+  const t = withSalutation(text || '', title);
+  // Greeting and the first two sentences, then the charts, then the reasons.
+  const ls = t.split('\n');
+  const head = ls.slice(0, 3).join('\n');
+  const rest = ls.slice(3).join('\n');
+  return noteTextHtml(head) + chartsHtml(snapshot) + '<div style="height:12px"></div>' + noteTextHtml(rest);
+}
+
+module.exports = { approvalBodyHtml, chartsHtml, withSalutation, buildDayUtilisation, UTIL_HEADERS, UTILISATION_THRESHOLD, REASON_LABELS, utilisationNote, utilisationNoteHtml, plantSummaryHtml, noteTextHtml };

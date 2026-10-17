@@ -31,7 +31,7 @@ const { createTransport } = require('../config/mailer');
 const { calcKgs, calcKgFat, calcKgSnf } = require('../services/executionData');
 const { fmtDateDisplay } = require('../utils/date');
 const { saleTankerSql } = require('../utils/saleTanker');
-const { buildDayUtilisation, UTIL_HEADERS, REASON_LABELS, utilisationNote, noteTextHtml, plantSummaryHtml, chartsHtml } = require('../services/dayUtilisation');
+const { buildDayUtilisation, UTIL_HEADERS, REASON_LABELS, utilisationNote, noteTextHtml, plantSummaryHtml, chartsHtml, approvalBodyHtml } = require('../services/dayUtilisation');
 
 const rN = (v, d = 2) => v == null ? null : Math.round(parseFloat(v) * 10 ** d) / 10 ** d;
 
@@ -1847,7 +1847,7 @@ router.get('/day-utilisation/note', authenticate, authorizeOrModule('reports', '
   try {
     const note = await utilisationNote(runId);
     if (!note) return res.status(404).json({ error: 'Billing run not found' });
-    res.json({ ...note, html: noteTextHtml(note.text) + chartsHtml(note) + plantSummaryHtml(note) });
+    res.json({ ...note, html: approvalBodyHtml(note.text, note) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

@@ -7,6 +7,9 @@ first. Seeded from `git log --since=2026-07-01 --no-merges` (history in this clo
 
 ## [Unreleased] — on `qa`, pending promotion to `main`
 
+### Changed
+- Utilisation approval mail is chart-first and shorter: greeting and a two-line summary, then the four charts, then one line per reason (trips, short cause, average utilisation, plants with counts, the over-94 % count, logistics' details) and the near-target line; route lists and the plant table move to the attached Excel. Same layout on the decision page and the Mail preview; Regenerate from data builds the short text (owner, 2026-10-17).
+
 ## 2026-10-17 — promoted to `main` 2026-10-17 (no migrations)
 
 ### Added
